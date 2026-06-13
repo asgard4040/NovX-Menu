@@ -1,0 +1,6 @@
+{
+  "name": "NovX AI Menu Platform",
+  "description": "An AI-powered electronic menu platform for restaurants, including admin, restaurant, waiter, and customer interfaces with Iraqi dialect support.",
+  "requestFramePermissions": ["camera", "geolocation"],
+  "majorCapabilities": ["AI Assistant", "Real-time Orders", "QR Code Generation", "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
