@@ -1,0 +1,39 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Prata&family=Tajawal:wght@300;400;500;700;900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-brand-primary: #2D3A27;
+  --color-brand-secondary: #4A5D43;
+  --color-brand-gold: #B19470;
+  --color-bg-paper: #FCFBF7;
+  --color-bg-card: #FFFFFF;
+  --color-text-main: #1C1C1C;
+  --color-text-muted: #666666;
+  --color-border-delicate: #E5E2D9;
+  
+  --font-sans: "Tajawal", "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Prata", serif;
+  --font-display: "Tajawal", "Playfair Display", serif;
+}
+
+@layer base {
+  body {
+    @apply bg-bg-paper text-text-main font-sans min-h-screen selection:bg-brand-primary/10;
+  }
+}
+
+.card-editorial {
+  @apply bg-white border border-border-delicate shadow-[0_4px_20px_rgba(0,0,0,0.02)] transition-all duration-500 hover:shadow-[0_8px_30px_rgba(45,58,39,0.05)];
+}
+
+.section-title {
+  @apply font-display text-4xl font-medium tracking-tight text-brand-primary;
+}
+
+.text-gradient {
+  @apply bg-clip-text text-transparent bg-gradient-to-br from-brand-primary to-brand-gold;
+}
+
+.organic-shape {
+  border-radius: 64% 36% 27% 73% / 55% 58% 42% 45%;
+}

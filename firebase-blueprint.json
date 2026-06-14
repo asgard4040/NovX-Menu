@@ -1,0 +1,233 @@
+{
+  "entities": {
+    "Admin": {
+      "title": "Admin",
+      "description": "Platform super admins",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["super-admin"] }
+      },
+      "required": ["email", "role"]
+    },
+    "Restaurant": {
+      "title": "Restaurant",
+      "description": "Restaurant owner account and details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "managerName": { "type": "string" },
+        "managerPhone": { "type": "string" },
+        "restaurantName": { "type": "string" },
+        "province": { "type": "string" },
+        "area": { "type": "string" },
+        "landmark": { "type": "string" },
+        "subscriptionType": { "type": "string", "enum": ["trial", "normal", "pro"] },
+        "subscriptionDuration": { "type": "string", "enum": ["week", "month", "six-months", "year"] },
+        "startDate": { "type": "string", "format": "date-time" },
+        "endDate": { "type": "string", "format": "date-time" },
+        "monthlyCost": { "type": "number" },
+        "totalCost": { "type": "number" },
+        "logoUrl": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "suspended"] }
+      },
+      "required": ["managerName", "restaurantName", "username", "password", "status"]
+    },
+    "Waiter": {
+      "title": "Waiter",
+      "description": "Waiter account linked to a restaurant",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "suspended"] }
+      },
+      "required": ["restaurantId", "name", "username", "password", "status"]
+    },
+    "MenuItem": {
+      "title": "Menu Item",
+      "description": "Product in the restaurant's menu",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "name": { "type": "string" },
+        "price": { "type": "number" },
+        "imageUrl": { "type": "string" },
+        "isSpicy": { "type": "boolean" },
+        "hasCheese": { "type": "boolean" },
+        "ingredients": { "type": "string" },
+        "calories": { "type": "number" },
+        "protein": { "type": "number" },
+        "carbs": { "type": "number" },
+        "notes": { "type": "string" },
+        "isAvailable": { "type": "boolean" }
+      },
+      "required": ["restaurantId", "name", "price"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer order details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "tableNumber": { "type": "string" },
+        "items": { "type": "array" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "preparing", "ready", "served", "cancelled"] },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdByAI": { "type": "boolean" }
+      },
+      "required": ["restaurantId", "customerName", "tableNumber", "items", "status", "createdAt"]
+    },
+    "KitchenStaff": {
+      "title": "Kitchen Staff",
+      "description": "Kitchen account linked to a restaurant",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "suspended"] }
+      },
+      "required": ["restaurantId", "name", "username", "password", "status"]
+    },
+    "SecurityAlert": {
+      "title": "Security Alert",
+      "description": "Alert of potentially fake or suspicious order/scan activity",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "type": { "type": "string" },
+        "title": { "type": "string" },
+        "severity": { "type": "string", "enum": ["info", "warning", "critical"] },
+        "customerName": { "type": "string" },
+        "tableNumber": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "deviceMetadata": { "type": "object" },
+        "status": { "type": "string", "enum": ["unread", "investigated", "resolved"] }
+      },
+      "required": ["restaurantId", "type", "title", "severity", "timestamp"]
+    },
+    "BannedDevice": {
+      "title": "Banned Device",
+      "description": "Details of banned customer device fingerprint",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "fingerprint": { "type": "string" },
+        "customerName": { "type": "string" },
+        "bannedBy": { "type": "string" },
+        "reason": { "type": "string" },
+        "bannedAt": { "type": "number" },
+        "deviceType": { "type": "string" }
+      },
+      "required": ["restaurantId", "fingerprint", "bannedBy", "reason", "bannedAt"]
+    },
+    "WaiterRequest": {
+      "title": "Waiter Request",
+      "description": "Requests from customers calling the waiter",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "tableNumber": { "type": "string" },
+        "reason": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "completed"] },
+        "waiterId": { "type": "string" },
+        "waiterName": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "acceptedAt": { "type": "number" },
+        "completedAt": { "type": "number" }
+      },
+      "required": ["restaurantId", "customerName", "tableNumber", "reason", "status", "createdAt"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "System settings such as support phone and AI configs",
+      "type": "object",
+      "properties": {
+        "phone": { "type": "string" },
+        "prompt": { "type": "string" },
+        "model": { "type": "string" },
+        "temperature": { "type": "number" }
+      }
+    },
+    "Announcement": {
+      "title": "Announcement",
+      "description": "Announcements and broadcasts to restaurants",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "target": { "type": "string" },
+        "targetRestaurantName": { "type": "string" },
+        "severity": { "type": "string", "enum": ["info", "warning", "critical"] },
+        "createdAt": { "type": "object" }
+      },
+      "required": ["title", "message", "target", "severity"]
+    }
+  },
+  "firestore": {
+    "admins": {
+      "schema": "Admin",
+      "description": "Global admins"
+    },
+    "restaurants": {
+      "schema": "Restaurant",
+      "description": "List of all restaurants"
+    },
+    "waiters": {
+      "schema": "Waiter",
+      "description": "Waiters for all restaurants"
+    },
+    "kitchen_staff": {
+      "schema": "KitchenStaff",
+      "description": "Kitchen staff for all restaurants"
+    },
+    "menuItems": {
+      "schema": "MenuItem",
+      "description": "Menu products for all restaurants"
+    },
+    "orders": {
+      "schema": "Order",
+      "description": "Customer orders"
+    },
+    "security_alerts": {
+      "schema": "SecurityAlert",
+      "description": "Anti-fraud and suspicious activity notifications"
+    },
+    "banned_devices": {
+      "schema": "BannedDevice",
+      "description": "Customer hardware and software banned lists"
+    },
+    "waiter_requests": {
+      "schema": "WaiterRequest",
+      "description": "Customer call waiter requests"
+    },
+    "settings": {
+      "schema": "Setting",
+      "description": "System configs and settings"
+    },
+    "announcements": {
+      "schema": "Announcement",
+      "description": "Broadcasting and announcements"
+    }
+  }
+}

@@ -1,0 +1,110 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ---------------------------------------------------------
+    // 1. GLOBAL HELPERS (The "Pillars")
+    // ---------------------------------------------------------
+    function isSignedIn() { return request.auth != null; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128; }
+    function isAdmin() { 
+      // Fallback for demo: if auth is disabled, we still allow dashboard access 
+      // as long as the app's internal login session handles the UI state.
+      // In production, you MUST enable Anonymous Auth and use 'return isSignedIn();'
+      return true; 
+    }
+
+    // Default deny everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ---------------------------------------------------------
+    // 2. ENTITY VALIDATIONS (Simplified for flexibility)
+    // ---------------------------------------------------------
+
+    function isValidRestaurant(data) {
+      return data.keys().hasAll(['managerName', 'restaurantName', 'username', 'password', 'status']);
+    }
+
+    function isValidWaiter(data) {
+      return data.keys().hasAll(['restaurantId', 'name', 'username', 'password', 'status']);
+    }
+
+    function isValidKitchenStaff(data) {
+      return data.keys().hasAll(['restaurantId', 'name', 'username', 'password', 'status']);
+    }
+
+    function isValidMenuItem(data) {
+      return data.keys().hasAll(['restaurantId', 'name', 'price']);
+    }
+
+    function isValidOrder(data) {
+      return data.keys().hasAll(['restaurantId', 'customerName', 'tableNumber', 'status']);
+    }
+
+    // ---------------------------------------------------------
+    // 3. COLLECTION MATCHES
+    // ---------------------------------------------------------
+
+    match /admins/{adminId} {
+      allow read: if isSignedIn() && request.auth.uid == adminId;
+      allow write: if isAdmin();
+    }
+
+    match /restaurants/{restaurantId} {
+      allow read: if true;
+      allow create: if isValidRestaurant(incoming());
+      allow update: if true;
+      allow delete: if isAdmin();
+    }
+
+    match /waiters/{waiterId} {
+      allow read: if true;
+      allow create, update: if isValidWaiter(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /kitchen_staff/{staffId} {
+      allow read: if true;
+      allow create, update: if isValidKitchenStaff(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /menuItems/{itemId} {
+      allow read: if true;
+      allow write: if isValidMenuItem(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /orders/{orderId} {
+      allow read: if true;
+      allow create: if isValidOrder(incoming());
+      allow update: if true;
+      allow delete: if isAdmin();
+    }
+
+    match /security_alerts/{alertId} {
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if true;
+    }
+
+    match /banned_devices/{banId} {
+      allow read, write: if true;
+    }
+
+    match /waiter_requests/{requestId} {
+      allow read, write: if true;
+    }
+
+    match /settings/{settingId} {
+      allow read, write: if true;
+    }
+
+    match /announcements/{announcementId} {
+      allow read, write: if true;
+    }
+  }
+}
