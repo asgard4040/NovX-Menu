@@ -1,0 +1,15 @@
+{
+  "name": "المنيو الالكتروني",
+  "short_name": "المنيو الالكتروني",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fffff",
+  "theme_color": "#fffff",
+  "icons": [
+    {
+      "src": "/novx-1.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
