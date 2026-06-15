@@ -3,8 +3,8 @@
   "short_name": "المنيو الالكتروني",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#fffff",
-  "theme_color": "#fffff",
+  "background_color": "#000000",
+  "theme_color": "#000000",
   "icons": [
     {
       "src": "/novx-1.jpg",
