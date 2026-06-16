@@ -1,233 +1,126 @@
 {
   "entities": {
-    "Admin": {
-      "title": "Admin",
-      "description": "Platform super admins",
-      "type": "object",
-      "properties": {
-        "email": { "type": "string" },
-        "role": { "type": "string", "enum": ["super-admin"] }
-      },
-      "required": ["email", "role"]
-    },
-    "Restaurant": {
-      "title": "Restaurant",
-      "description": "Restaurant owner account and details",
+    "User": {
+      "title": "User Profile",
+      "description": "User account for a Field Agent or Board Administrator",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "managerName": { "type": "string" },
-        "managerPhone": { "type": "string" },
-        "restaurantName": { "type": "string" },
-        "province": { "type": "string" },
-        "area": { "type": "string" },
-        "landmark": { "type": "string" },
-        "subscriptionType": { "type": "string", "enum": ["trial", "normal", "pro"] },
-        "subscriptionDuration": { "type": "string", "enum": ["week", "month", "six-months", "year"] },
-        "startDate": { "type": "string", "format": "date-time" },
-        "endDate": { "type": "string", "format": "date-time" },
-        "monthlyCost": { "type": "number" },
-        "totalCost": { "type": "number" },
-        "logoUrl": { "type": "string" },
-        "username": { "type": "string" },
-        "password": { "type": "string" },
-        "status": { "type": "string", "enum": ["active", "suspended"] }
-      },
-      "required": ["managerName", "restaurantName", "username", "password", "status"]
-    },
-    "Waiter": {
-      "title": "Waiter",
-      "description": "Waiter account linked to a restaurant",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "restaurantId": { "type": "string" },
         "name": { "type": "string" },
-        "phone": { "type": "string" },
         "username": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
         "password": { "type": "string" },
-        "status": { "type": "string", "enum": ["active", "suspended"] }
-      },
-      "required": ["restaurantId", "name", "username", "password", "status"]
-    },
-    "MenuItem": {
-      "title": "Menu Item",
-      "description": "Product in the restaurant's menu",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "restaurantId": { "type": "string" },
-        "name": { "type": "string" },
-        "price": { "type": "number" },
-        "imageUrl": { "type": "string" },
-        "isSpicy": { "type": "boolean" },
-        "hasCheese": { "type": "boolean" },
-        "ingredients": { "type": "string" },
-        "calories": { "type": "number" },
-        "protein": { "type": "number" },
-        "carbs": { "type": "number" },
-        "notes": { "type": "string" },
-        "isAvailable": { "type": "boolean" }
-      },
-      "required": ["restaurantId", "name", "price"]
-    },
-    "Order": {
-      "title": "Order",
-      "description": "Customer order details",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "restaurantId": { "type": "string" },
-        "customerName": { "type": "string" },
-        "tableNumber": { "type": "string" },
-        "items": { "type": "array" },
-        "totalAmount": { "type": "number" },
-        "status": { "type": "string", "enum": ["pending", "preparing", "ready", "served", "cancelled"] },
-        "notes": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "createdByAI": { "type": "boolean" }
-      },
-      "required": ["restaurantId", "customerName", "tableNumber", "items", "status", "createdAt"]
-    },
-    "KitchenStaff": {
-      "title": "Kitchen Staff",
-      "description": "Kitchen account linked to a restaurant",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "restaurantId": { "type": "string" },
-        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["ADMIN", "SUPERVISOR", "FOLLOW_UP", "TECHNICAL", "AGENT"] },
         "phone": { "type": "string" },
-        "username": { "type": "string" },
-        "password": { "type": "string" },
-        "status": { "type": "string", "enum": ["active", "suspended"] }
+        "city": { "type": "string" },
+        "avatar": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "SUSPENDED"] }
       },
-      "required": ["restaurantId", "name", "username", "password", "status"]
+      "required": ["id", "name", "username", "role", "status"]
     },
-    "SecurityAlert": {
-      "title": "Security Alert",
-      "description": "Alert of potentially fake or suspicious order/scan activity",
+    "SystemProduct": {
+      "title": "System Product",
+      "description": "Information about a field software system available for schools with tier pricing",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "restaurantId": { "type": "string" },
-        "type": { "type": "string" },
-        "title": { "type": "string" },
-        "severity": { "type": "string", "enum": ["info", "warning", "critical"] },
-        "customerName": { "type": "string" },
-        "tableNumber": { "type": "string" },
-        "timestamp": { "type": "number" },
-        "deviceMetadata": { "type": "object" },
-        "status": { "type": "string", "enum": ["unread", "investigated", "resolved"] }
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "tiers": {
+          "type": "array",
+          "description": "Collection of subscription pricing configurations for a system"
+        }
       },
-      "required": ["restaurantId", "type", "title", "severity", "timestamp"]
+      "required": ["id", "name", "description"]
     },
-    "BannedDevice": {
-      "title": "Banned Device",
-      "description": "Details of banned customer device fingerprint",
+    "SalesRequest": {
+      "title": "Field Sales Request",
+      "description": "A visitation or system request reported by a field agent to board admin",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "restaurantId": { "type": "string" },
-        "fingerprint": { "type": "string" },
-        "customerName": { "type": "string" },
-        "bannedBy": { "type": "string" },
-        "reason": { "type": "string" },
-        "bannedAt": { "type": "number" },
-        "deviceType": { "type": "string" }
+        "agentId": { "type": "string" },
+        "agentName": { "type": "string" },
+        "institutionName": { "type": "string" },
+        "systemId": { "type": "string" },
+        "systemName": { "type": "string" },
+        "subscriptionType": { "type": "string" },
+        "location": { "type": "string" },
+        "contactName": { "type": "string" },
+        "contactPhone": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING", "ACCEPTED", "REJECTED", "NEED_INFO"] },
+        "rejectionReason": { "type": "string" },
+        "adminNote": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
       },
-      "required": ["restaurantId", "fingerprint", "bannedBy", "reason", "bannedAt"]
+      "required": ["id", "agentId", "agentName", "institutionName", "systemId", "systemName", "status", "createdAt", "updatedAt"]
     },
-    "WaiterRequest": {
-      "title": "Waiter Request",
-      "description": "Requests from customers calling the waiter",
+    "Institution": {
+      "title": "Visited School/Institution",
+      "description": "A persistent archive of schools and educational institutions visited/engaged in the field",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "restaurantId": { "type": "string" },
-        "customerName": { "type": "string" },
-        "tableNumber": { "type": "string" },
-        "reason": { "type": "string" },
-        "status": { "type": "string", "enum": ["pending", "accepted", "completed"] },
-        "waiterId": { "type": "string" },
-        "waiterName": { "type": "string" },
-        "createdAt": { "type": "number" },
-        "acceptedAt": { "type": "number" },
-        "completedAt": { "type": "number" }
+        "name": { "type": "string" },
+        "city": { "type": "string" },
+        "address": { "type": "string" },
+        "lastVisitedBy": { "type": "string" },
+        "lastVisitDate": { "type": "string" },
+        "offeredSystem": { "type": "string" },
+        "status": { "type": "string", "enum": ["CUSTOMER", "INTERESTED", "NOT_INTERESTED", "REJECTED", "LATER"] }
       },
-      "required": ["restaurantId", "customerName", "tableNumber", "reason", "status", "createdAt"]
+      "required": ["id", "name", "city", "address", "lastVisitedBy", "lastVisitDate", "status"]
     },
-    "Setting": {
-      "title": "Setting",
-      "description": "System settings such as support phone and AI configs",
-      "type": "object",
-      "properties": {
-        "phone": { "type": "string" },
-        "prompt": { "type": "string" },
-        "model": { "type": "string" },
-        "temperature": { "type": "number" }
-      }
-    },
-    "Announcement": {
-      "title": "Announcement",
-      "description": "Announcements and broadcasts to restaurants",
+    "Notification": {
+      "title": "User Notification",
+      "description": "Status alert sent to a Field Agent regarding request approval/rejection",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "userId": { "type": "string" },
         "title": { "type": "string" },
         "message": { "type": "string" },
-        "target": { "type": "string" },
-        "targetRestaurantName": { "type": "string" },
-        "severity": { "type": "string", "enum": ["info", "warning", "critical"] },
-        "createdAt": { "type": "object" }
+        "type": { "type": "string", "enum": ["SUCCESS", "DANGER", "INFO"] },
+        "isRead": { "type": "boolean" },
+        "createdAt": { "type": "string" }
       },
-      "required": ["title", "message", "target", "severity"]
+      "required": ["id", "userId", "title", "message", "type", "isRead", "createdAt"]
+    },
+    "SystemSettings": {
+      "title": "System Settings",
+      "description": "Global custom configurations for application branding and support details",
+      "type": "object",
+      "properties": {
+        "logoUrl": { "type": "string" },
+        "supportPhone": { "type": "string" }
+      }
     }
   },
   "firestore": {
-    "admins": {
-      "schema": "Admin",
-      "description": "Global admins"
+    "users": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Collection of all system users including admins, supervision nodes, and deployment agents"
     },
-    "restaurants": {
-      "schema": "Restaurant",
-      "description": "List of all restaurants"
+    "systems": {
+      "schema": { "$ref": "#/entities/SystemProduct" },
+      "description": "Registered systems available for school installation"
     },
-    "waiters": {
-      "schema": "Waiter",
-      "description": "Waiters for all restaurants"
+    "requests": {
+      "schema": { "$ref": "#/entities/SalesRequest" },
+      "description": "Operational pipeline tracking log of field agent customer visits and requests"
     },
-    "kitchen_staff": {
-      "schema": "KitchenStaff",
-      "description": "Kitchen staff for all restaurants"
+    "institutions": {
+      "schema": { "$ref": "#/entities/Institution" },
+      "description": "Registry of field schools mapped by the team"
     },
-    "menuItems": {
-      "schema": "MenuItem",
-      "description": "Menu products for all restaurants"
-    },
-    "orders": {
-      "schema": "Order",
-      "description": "Customer orders"
-    },
-    "security_alerts": {
-      "schema": "SecurityAlert",
-      "description": "Anti-fraud and suspicious activity notifications"
-    },
-    "banned_devices": {
-      "schema": "BannedDevice",
-      "description": "Customer hardware and software banned lists"
-    },
-    "waiter_requests": {
-      "schema": "WaiterRequest",
-      "description": "Customer call waiter requests"
+    "notifications": {
+      "schema": { "$ref": "#/entities/Notification" },
+      "description": "Transactional messages destined for active field agents"
     },
     "settings": {
-      "schema": "Setting",
-      "description": "System configs and settings"
-    },
-    "announcements": {
-      "schema": "Announcement",
-      "description": "Broadcasting and announcements"
+      "schema": { "$ref": "#/entities/SystemSettings" },
+      "description": "Global system configurations and helpline properties"
     }
   }
 }
