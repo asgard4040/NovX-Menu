@@ -97,10 +97,16 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
 
   const updateStatus = async (orderId: string, newStatus: OrderStatus) => {
     try {
-      await updateDoc(doc(db, 'orders', orderId), { 
+      const updateFields: any = { 
         status: newStatus,
         updatedAt: Timestamp.now()
-      });
+      };
+      if (newStatus === "preparing") {
+        updateFields.approvedAt = Date.now();
+      } else if (newStatus === "ready") {
+        updateFields.readyAt = Date.now();
+      }
+      await updateDoc(doc(db, 'orders', orderId), updateFields);
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
     }

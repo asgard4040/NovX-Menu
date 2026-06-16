@@ -34,6 +34,7 @@ import {
   updateDoc,
   runTransaction,
   Timestamp,
+  onSnapshot,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { handleFirestoreError, OperationType } from "../lib/firestore-utils";
@@ -117,7 +118,63 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
   const [customerName, setCustomerName] = useState(() => localStorage.getItem("customer_name") || "");
   const [tableNumber, setTableNumber] = useState(() => localStorage.getItem("table_number") || "");
   const [notes, setNotes] = useState("");
-  const [orderComplete, setOrderComplete] = useState<Order | null>(null);
+  const [showOrderTrackingModal, setShowOrderTrackingModal] = useState(false);
+  const [orderComplete, setOrderComplete] = useState<Order | null>(() => {
+    try {
+      if (typeof window !== "undefined") {
+        const activeOrderId = localStorage.getItem("novix_active_order_id");
+        if (activeOrderId) {
+          return { id: activeOrderId, status: "pending", items: [], totalAmount: 0 } as any;
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return null;
+  });
+  const [isOnline, setIsOnline] = useState(() => typeof navigator !== "undefined" ? navigator.onLine : true);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!orderComplete?.id) return;
+    const unsub = onSnapshot(
+      doc(db, "orders", orderComplete.id),
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data && data.status === "served") {
+            try {
+              localStorage.removeItem("novix_active_order_id");
+            } catch (e) {
+              console.error(e);
+            }
+          }
+          setOrderComplete({ id: snap.id, ...data } as Order);
+        } else {
+          try {
+            localStorage.removeItem("novix_active_order_id");
+          } catch (e) {
+            console.error(e);
+          }
+          setOrderComplete(null);
+        }
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.GET, `orders/${orderComplete.id}`);
+      }
+    );
+    return () => unsub();
+  }, [orderComplete?.id]);
 
   // Waiter Call States
   const [showWaiterModal, setShowWaiterModal] = useState(false);
@@ -499,7 +556,13 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
         },
       };
       const docRef = await addDoc(collection(db, collectionPath), orderData);
+      try {
+        localStorage.setItem("novix_active_order_id", docRef.id);
+      } catch (e) {
+        console.error(e);
+      }
       setOrderComplete({ id: docRef.id, ...orderData } as Order);
+      setShowOrderTrackingModal(true);
       setCart({});
       setShowCart(false);
     } catch (err) {
@@ -581,7 +644,13 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       };
 
       const docRef = await addDoc(collection(db, "orders"), orderData);
+      try {
+        localStorage.setItem("novix_active_order_id", docRef.id);
+      } catch (e) {
+        console.error(e);
+      }
       setOrderComplete({ id: docRef.id, ...orderData } as Order);
+      setShowOrderTrackingModal(true);
       
       setCustomerName(orderInfo.customerName);
       setTableNumber(orderInfo.tableNumber);
@@ -725,84 +794,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
     );
   }
 
-  if (orderComplete) {
-    return (
-      <div
-        className="min-h-screen bg-bg-paper flex items-center justify-center p-4 font-sans"
-        dir="rtl"
-      >
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="bg-white w-full max-w-md p-12 rounded-[2rem] shadow-[0_20px_60px_rgba(45,58,39,0.08)] space-y-10 text-center border border-border-delicate"
-        >
-          <div className="w-20 h-20 bg-brand-primary/5 text-brand-primary rounded-full flex items-center justify-center mx-auto border border-brand-primary/10">
-            <CheckCircle2 className="w-10 h-10" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-display text-brand-primary tracking-tight">
-              تم استلام طلبك!
-            </h1>
-            <p className="text-text-muted mt-3 font-medium">
-              رقم الطلب:{" "}
-              {orderComplete.orderNumber ? (
-                <span className="font-sans font-bold text-brand-gold italic text-2xl">
-                  {orderComplete.orderNumber}
-                </span>
-              ) : (
-                <span className="font-sans font-bold text-brand-gold italic text-xl">
-                  #{orderComplete.id.slice(-6).toUpperCase()}
-                </span>
-              )}
-            </p>
-          </div>
-          <div className="bg-bg-paper/50 p-8 rounded-2xl text-right space-y-5 border border-border-delicate shadow-inner relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-2 h-full bg-brand-gold opacity-30" />
-            <p className="text-sm font-bold flex justify-between text-text-muted uppercase tracking-widest">
-              الاسم:{" "}
-              <span className="text-text-main">
-                {orderComplete.customerName}
-              </span>
-            </p>
-            <p className="text-sm font-bold flex justify-between text-text-muted uppercase tracking-widest">
-              الطاولة:{" "}
-              <span className="text-text-main">
-                {orderComplete.tableNumber}
-              </span>
-            </p>
-            <div className="pt-5 border-t border-border-delicate space-y-3">
-              {orderComplete.items.map((item, i) => (
-                <p
-                  key={i}
-                  className="text-xs text-text-muted py-1 flex justify-between font-medium"
-                >
-                  <span>
-                    {item.name} x{item.quantity}
-                  </span>
-                  <span className="font-bold text-text-main">
-                    {(item.price * item.quantity).toLocaleString()} IQD
-                  </span>
-                </p>
-              ))}
-            </div>
-            <p className="pt-5 font-display text-brand-primary flex justify-between border-t border-border-delicate text-xl italic">
-              المجموع الكلي:{" "}
-              <span>{orderComplete.totalAmount.toLocaleString()} IQD</span>
-            </p>
-          </div>
-          <p className="text-[11px] text-text-muted uppercase tracking-widest leading-relaxed">
-            الضيافة الرفيعة هي رحلة في عوالم النكهات. <br /> جاري تحضير وجبتك بكل حب وعناية.
-          </p>
-          <button
-            onClick={() => setOrderComplete(null)}
-            className="w-full py-5 bg-brand-primary text-white rounded-xl font-bold shadow-xl shadow-brand-primary/10 hover:bg-brand-secondary transition-all"
-          >
-            اطلب شيئاً آخر
-          </button>
-        </motion.div>
-      </div>
-    );
-  }
+
 
   const filteredMenuItems = menuItems.filter((item) => {
     const matchesCategory =
@@ -823,6 +815,14 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       className="min-h-screen bg-bg-paper font-sans pb-28 text-text-main selection:bg-brand-primary/10"
       dir="rtl"
     >
+      {/* Offline Alert Banner */}
+      {!isOnline && (
+        <div className="bg-amber-600 text-white text-xs py-2.5 px-4 text-center font-bold relative z-[110] flex items-center justify-center gap-2 border-b border-amber-700/50 shadow-inner" dir="rtl">
+          <span className="inline-block w-2.5 h-2.5 rounded-full bg-white animate-ping" />
+          <span>عيني زبائننا الكرام، جهازكم غير متصل بالإنترنت حالياً. لا تشيلون هم دقيقة، المنيو متوفر أوفلاين وسنحاول إعادة الاتصال تلقائياً لتحديث طلبكم فوراً!</span>
+        </div>
+      )}
+
       {/* Texture Overlay */}
       <div className="fixed inset-0 pointer-events-none opacity-[0.03] z-[100] bg-[url('https://www.transparenttextures.com/patterns/natural-paper.png')]" />
 
@@ -982,8 +982,8 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
               نهتم بتقديم وجبات ومأكولات طازجة ومحضرة يومياً بأعلى درجات الجودة والنظافة لتنال رضاكم.
             </p>
 
-            {/* Callouts Section: AI Assistant & Waiter Request */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-3xl mt-6">
+            {/* Callouts Section: AI Assistant, Waiter Request, & Live Order Status Tracking */}
+            <div className={`grid grid-cols-1 ${orderComplete ? 'lg:grid-cols-3 max-w-5xl' : 'md:grid-cols-2 max-w-3xl'} gap-4 w-full mt-6`}>
               {/* AI Assistant Callout Indicator */}
               <motion.div
                 whileHover={{ scale: 1.02 }}
@@ -994,7 +994,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                 <div className="w-12 h-12 rounded-xl bg-brand-primary flex items-center justify-center text-brand-gold shadow-md shadow-brand-primary/10 shrink-0">
                   <Sparkles className="w-6 h-6 animate-pulse" />
                 </div>
-                <div className="space-y-0.5 flex-1">
+                <div className="space-y-0.5 flex-1 select-none">
                   <h4 className="text-sm font-bold text-brand-primary flex items-center gap-2">
                     اطلب الآن بالذكاء الاصطناعي ✨
                     <span className="text-[9px] bg-green-500/10 text-green-700 px-2 py-0.5 rounded-full font-bold shrink-0">نشط</span>
@@ -1015,7 +1015,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                 <div className="w-12 h-12 rounded-xl bg-brand-gold flex items-center justify-center text-white shadow-md shadow-brand-gold/10 shrink-0">
                   <Bell className="w-6 h-6 animate-bounce" />
                 </div>
-                <div className="space-y-0.5 flex-1">
+                <div className="space-y-0.5 flex-1 select-none">
                   <h4 className="text-sm font-bold text-brand-primary flex items-center gap-2">
                     طلب الويتر الآن 🔔
                     <span className="text-[9px] bg-green-500/10 text-green-700 px-2 py-0.5 rounded-full font-bold shrink-0">نشط</span>
@@ -1025,6 +1025,67 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                   </p>
                 </div>
               </motion.div>
+
+              {/* Live Order Status Tracking Card (The requested Third Rectangle!) */}
+              {orderComplete && (
+                <motion.div
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => setShowOrderTrackingModal(true)}
+                  className="cursor-pointer flex items-center gap-4 p-5 bg-gradient-to-r from-emerald-500/5 via-brand-gold/5 to-emerald-500/5 hover:from-emerald-500/10 hover:to-emerald-500/10 border border-emerald-500/20 hover:border-emerald-500/40 rounded-2xl text-right transition-all duration-300 shadow-sm relative overflow-hidden group"
+                >
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-white shadow-md shrink-0 relative ${
+                    orderComplete.status === "pending"
+                      ? "bg-amber-500 shadow-amber-500/10"
+                      : orderComplete.status === "preparing"
+                        ? "bg-blue-500 shadow-blue-500/10 animate-pulse"
+                        : orderComplete.status === "ready"
+                          ? "bg-emerald-500 shadow-emerald-500/10 scale-105"
+                          : orderComplete.status === "served"
+                            ? "bg-gray-500 shadow-gray-500/10"
+                            : "bg-red-500 shadow-red-500/10"
+                  }`}>
+                    {orderComplete.status === "pending" && <span className="text-xl">⌛</span>}
+                    {orderComplete.status === "preparing" && <span className="text-xl">🍳</span>}
+                    {orderComplete.status === "ready" && <span className="text-xl">🎉</span>}
+                    {orderComplete.status === "served" && <span className="text-xl">🍽️</span>}
+                    {orderComplete.status === "rejected" && <span className="text-xl">⚠️</span>}
+                    <span className="absolute -top-1.5 -right-1.5 flex h-3 w-3">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
+                    </span>
+                  </div>
+                  <div className="space-y-0.5 flex-1 min-w-0 text-right">
+                    <h4 className="text-sm font-bold text-brand-primary flex items-center gap-2">
+                      تتبع حالة طلبك الحالي 📊
+                      <span className={`text-[9.5px] px-2.5 py-0.5 rounded-full font-bold shrink-0 ${
+                        orderComplete.status === "pending"
+                          ? "bg-amber-500/10 text-amber-700 font-bold"
+                          : orderComplete.status === "preparing"
+                            ? "bg-blue-500/10 text-blue-700 font-bold"
+                            : orderComplete.status === "ready"
+                              ? "bg-emerald-500/10 text-emerald-700 font-bold"
+                              : orderComplete.status === "served"
+                                ? "bg-gray-500/10 text-gray-700 font-bold"
+                                : "bg-red-500/10 text-red-700 font-bold"
+                      }`}>
+                        {orderComplete.status === "pending" && "بإنتظار الموافقة"}
+                        {orderComplete.status === "preparing" && "قيد التحضير"}
+                        {orderComplete.status === "ready" && "جاهز للتسليم"}
+                        {orderComplete.status === "served" && "تم تسليم الطلب"}
+                        {orderComplete.status === "rejected" && "مرفوض"}
+                      </span>
+                    </h4>
+                    <p className="text-xs text-text-muted leading-relaxed font-medium truncate">
+                      {orderComplete.status === "pending" && "بإنتظار موافقة كابتن الصالة لتأكيد طاولتك..."}
+                      {orderComplete.status === "preparing" && "المطبخ يعمل الآن على تحضير وجبتك بكل حب! 🍳"}
+                      {orderComplete.status === "ready" && "نور الصالة! وجبتك جاهزة للتقديم والتسليم.. 🎉"}
+                      {orderComplete.status === "served" && "🍽️ بالهناء والشفاء! نتمنى لك وقتاً طيباً ووجبة شهية."}
+                      {orderComplete.status === "rejected" && `⚠️ نعتذر، تم رفض الطلب: ${orderComplete.rejectionReason || "تواصل معنا"}`}
+                    </p>
+                  </div>
+                </motion.div>
+              )}
             </div>
           </motion.div>
         </div>
@@ -1558,6 +1619,202 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                     <Send className="w-5 h-5 rotate-[180deg]" />
                   </button>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Real-time Order Tracking Modal */}
+      <AnimatePresence>
+        {showOrderTrackingModal && orderComplete && (
+          <div className="fixed inset-0 z-[1200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 30 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 30 }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              className="bg-white w-full max-w-lg p-6 sm:p-10 rounded-[2rem] shadow-[0_24px_70px_rgba(45,58,39,0.15)] space-y-6 text-center border border-border-delicate relative my-8 overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <div className="absolute inset-0 pointer-events-none opacity-[0.02] bg-[url('https://www.transparenttextures.com/patterns/natural-paper.png')]" />
+
+              {/* Scrollable Container inside modal */}
+              <div className="overflow-y-auto space-y-6 flex-1 pr-1 pl-1 py-1 no-scrollbar text-right">
+                <div className="text-center space-y-4">
+                  <div className="w-16 h-16 bg-brand-primary/5 text-brand-primary rounded-full flex items-center justify-center mx-auto border border-brand-primary/10">
+                    <CheckCircle2 className="w-8 h-8 animate-bounce" />
+                  </div>
+                  <div>
+                    <h1 className="text-2xl font-display text-brand-primary tracking-tight">
+                      حالة وتفاصيل طلبك النشط ✨
+                    </h1>
+                    <p className="text-text-muted mt-1 text-sm font-medium">
+                      رقم الطلب:{" "}
+                      {orderComplete.orderNumber ? (
+                        <span className="font-sans font-bold text-brand-gold italic text-xl">
+                          {orderComplete.orderNumber}
+                        </span>
+                      ) : (
+                        <span className="font-sans font-bold text-brand-gold italic text-lg">
+                          #{orderComplete.id.slice(-6).toUpperCase()}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-bg-paper/50 p-6 rounded-2xl text-right space-y-4 border border-border-delicate shadow-inner relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-2 h-full bg-brand-gold opacity-30" />
+                  <p className="text-xs font-bold flex justify-between text-text-muted uppercase tracking-widest">
+                    الاسم:{" "}
+                    <span className="text-text-main">
+                      {orderComplete.customerName || "زبون مجهول"}
+                    </span>
+                  </p>
+                  <p className="text-xs font-bold flex justify-between text-text-muted uppercase tracking-widest">
+                    الطاولة:{" "}
+                    <span className="text-text-main">
+                      {orderComplete.tableNumber || "غير محددة"}
+                    </span>
+                  </p>
+                  <div className="pt-4 border-t border-border-delicate space-y-2">
+                    {orderComplete.items && orderComplete.items.length > 0 ? (
+                      orderComplete.items.map((item, i) => (
+                        <p
+                          key={i}
+                          className="text-xs text-text-muted py-0.5 flex justify-between font-medium"
+                        >
+                          <span>
+                            {item.name} x{item.quantity}
+                          </span>
+                          <span className="font-bold text-text-main">
+                            {(item.price * item.quantity).toLocaleString()} IQD
+                          </span>
+                        </p>
+                      ))
+                    ) : (
+                      <p className="text-xs text-text-muted italic text-center">جاري جلب تفاصيل المواد من السيرفر...</p>
+                    )}
+                  </div>
+                  <p className="pt-4 font-display text-brand-primary flex justify-between border-t border-border-delicate text-lg italic">
+                    المجموع الكلي:{" "}
+                    <span>{(orderComplete.totalAmount || 0).toLocaleString()} IQD</span>
+                  </p>
+                </div>
+
+                {/* Real-time Order Status Live Road */}
+                <div className="bg-bg-paper p-5 rounded-2xl border border-border-delicate text-right space-y-3">
+                  <h4 className="text-xs font-bold text-brand-gold uppercase tracking-widest flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
+                    تتبع حالة طلبك المباشرة
+                  </h4>
+
+                  {orderComplete.status === "rejected" ? (
+                    <div className="p-3 bg-red-50 border border-red-100 rounded text-red-700 text-xs">
+                      <p className="font-bold underline">⚠️ تم إلغاء / رفض هذا الطلب:</p>
+                      <p className="mt-1">{orderComplete.rejectionReason || "تواصل مع كابتن الصالة لمعرفة السبب."}</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-1 relative mt-1 pt-1">
+                      {/* Visual Line Background Tracks Wrapper */}
+                      <div className="absolute top-4 left-10 right-10 h-1 -z-0">
+                        {/* Gray Background Track */}
+                        <div className="absolute inset-0 bg-border-delicate" />
+                        {/* Golden Active Track */}
+                        <div 
+                          className="absolute top-0 right-0 h-full bg-brand-gold transition-all duration-500" 
+                          style={{
+                            width: orderComplete.status === "pending" 
+                              ? "0%" 
+                              : orderComplete.status === "preparing" 
+                                ? "50%" 
+                                : "100%"
+                          }}
+                        />
+                      </div>
+
+                      {/* Step 1: Pending */}
+                      <div className="flex flex-col items-center text-center relative z-10">
+                        <div className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+                          orderComplete.status === "pending" 
+                            ? "bg-brand-primary text-white scale-110 shadow-lg" 
+                            : "bg-brand-gold text-white"
+                        }`}>
+                          <span className="text-[9px] font-bold">1</span>
+                        </div>
+                        <span className={`text-[8px] font-bold mt-1 leading-tight ${orderComplete.status === "pending" ? "text-brand-primary" : "text-text-muted"}`}>
+                          موافقة الكابتن
+                        </span>
+                      </div>
+
+                      {/* Step 2: Preparing */}
+                      <div className="flex flex-col items-center text-center relative z-10">
+                        <div className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+                          orderComplete.status === "preparing" 
+                            ? "bg-brand-primary text-white scale-110 shadow-lg animate-pulse" 
+                            : (orderComplete.status === "ready" || orderComplete.status === "served")
+                              ? "bg-brand-gold text-white" 
+                              : "bg-border-delicate text-text-muted"
+                        }`}>
+                          <span className="text-[9px] font-bold">2</span>
+                        </div>
+                        <span className={`text-[8px] font-bold mt-1 leading-tight ${orderComplete.status === "preparing" ? "text-brand-primary font-bold" : "text-text-muted"}`}>
+                          قيد التحضير
+                        </span>
+                      </div>
+
+                      {/* Step 3: Ready */}
+                      <div className="flex flex-col items-center text-center relative z-10">
+                        <div className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+                          (orderComplete.status === "ready" || orderComplete.status === "served")
+                            ? "bg-emerald-500 text-white scale-110 shadow-lg" 
+                            : "bg-border-delicate text-text-muted"
+                        }`}>
+                          <span className="text-[9px] font-bold">3</span>
+                        </div>
+                        <span className={`text-[8px] font-bold mt-1 leading-tight ${
+                          (orderComplete.status === "ready" || orderComplete.status === "served") ? "text-emerald-600 font-bold" : "text-text-muted"
+                        }`}>
+                          جاهز للتسليم
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {orderComplete.status === "ready" && (
+                    <div className="mt-3 p-2 bg-emerald-50 border border-emerald-100 rounded text-emerald-800 text-[11px] font-bold text-center leading-relaxed">
+                      🎉 وجبتك جاهزة للتسليم! سيوصلها كابتن الصالة إلى طاولتك الآن!
+                    </div>
+                  )}
+                  {orderComplete.status === "served" && (
+                    <div className="mt-3 p-2 bg-brand-primary/5 border border-brand-primary/10 rounded text-brand-primary text-[11px] font-bold text-center leading-relaxed font-display">
+                      🍽️ تم تقديم الوجبة لك بنجاح، نتمنى لك وقتاً طيباً ووجبة شهية ممتعة!
+                    </div>
+                  )}
+                </div>
+
+                <p className="text-[10px] text-text-muted uppercase tracking-widest text-center leading-relaxed">
+                  الضيافة الرفيعة هي رحلة في عوالم النكهات. <br /> جاري تحضير وجبتك بكل حب وعناية.
+                </p>
+              </div>
+
+              <div className="space-y-2 pt-2 border-t border-border-delicate">
+                <button
+                  onClick={() => {
+                    if (orderComplete.status === 'served' || orderComplete.status === 'rejected') {
+                      try {
+                        localStorage.removeItem("novix_active_order_id");
+                      } catch (e) {
+                        console.error(e);
+                      }
+                      setOrderComplete(null);
+                    }
+                    setShowOrderTrackingModal(false);
+                  }}
+                  className="w-full py-4 bg-brand-primary text-white rounded-xl font-bold shadow-xl shadow-brand-primary/10 hover:bg-brand-secondary transition-all text-xs"
+                >
+                  {orderComplete.status === 'served' || orderComplete.status === 'rejected' ? "موافق وبدء طلب جديد 🍽️" : "متابعة التصفح بالخلفية 🥣"}
+                </button>
               </div>
             </motion.div>
           </div>

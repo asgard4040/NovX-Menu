@@ -76,6 +76,8 @@ export interface Order {
   status: OrderStatus;
   notes?: string;
   createdAt: number;
+  approvedAt?: number;
+  readyAt?: number;
   orderNumber?: number;
   createdByAI?: boolean;
   clearedForStaff?: boolean;

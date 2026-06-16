@@ -97,6 +97,20 @@ export default function RestaurantDashboard({
     item?: MenuItem;
   } | null>(null);
   const [banningOrder, setBanningOrder] = useState<Order | null>(null);
+  const [selectedOrderForTimeline, setSelectedOrderForTimeline] = useState<Order | null>(null);
+  const [isOnline, setIsOnline] = useState(() => typeof navigator !== "undefined" ? navigator.onLine : true);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
   const [staffLinkCopied, setStaffLinkCopied] = useState(false);
 
   const [supportPhone, setSupportPhone] = useState(() => localStorage.getItem("novix_support_phone") || "07740064528");
@@ -486,7 +500,13 @@ export default function RestaurantDashboard({
 
   const updateOrderStatus = async (orderId: string, newStatus: OrderStatus) => {
     try {
-      await updateDoc(doc(db, "orders", orderId), { status: newStatus });
+      const updateFields: any = { status: newStatus };
+      if (newStatus === "preparing") {
+        updateFields.approvedAt = Date.now();
+      } else if (newStatus === "ready") {
+        updateFields.readyAt = Date.now();
+      }
+      await updateDoc(doc(db, "orders", orderId), updateFields);
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
     }
@@ -640,6 +660,14 @@ export default function RestaurantDashboard({
 
   return (
     <div className="space-y-12" dir="rtl">
+      {/* Offline Alert Banner */}
+      {!isOnline && (
+        <div className="p-4 bg-red-600 text-white rounded-none flex items-center justify-center gap-3 text-right font-sans font-bold text-xs" id="admin-offline-banner">
+          <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping" />
+          <span>تنبيه الاتصال: إنترنت الإدارة غير مستقر أو منقطع حالياً! لا تقلق، البيانات مخزنة أوفلاين وسيقوم المتصفح بإرسال جميع تحديثات الطلبات فور إعادة الاتصال بالشبكة.</span>
+        </div>
+      )}
+
       {/* Expiry alerts */}
       {isWarningBefore && (
         <div className="p-6 bg-amber-50 border border-amber-200 text-amber-900 rounded-none flex items-center gap-4 text-right">
@@ -1051,6 +1079,7 @@ export default function RestaurantDashboard({
                 type="pending"
                 onUpdate={updateOrderStatus}
                 onBan={(order) => setBanningOrder(order)}
+                onShowTimeline={(order) => setSelectedOrderForTimeline(order)}
               />
               <OrderColumn
                 title="قيد التحضير بالمطبخ"
@@ -1058,6 +1087,7 @@ export default function RestaurantDashboard({
                 type="preparing"
                 onUpdate={updateOrderStatus}
                 onBan={(order) => setBanningOrder(order)}
+                onShowTimeline={(order) => setSelectedOrderForTimeline(order)}
               />
               <OrderColumn
                 title="جاهزة للتسليم"
@@ -1065,6 +1095,7 @@ export default function RestaurantDashboard({
                 type="ready"
                 onUpdate={updateOrderStatus}
                 onBan={(order) => setBanningOrder(order)}
+                onShowTimeline={(order) => setSelectedOrderForTimeline(order)}
               />
               <OrderColumn
                 title="طلبات منتهية وتاريخية"
@@ -1072,6 +1103,7 @@ export default function RestaurantDashboard({
                 type="served"
                 onUpdate={updateOrderStatus}
                 onBan={(order) => setBanningOrder(order)}
+                onShowTimeline={(order) => setSelectedOrderForTimeline(order)}
                 isHistory
               />
               <OrderColumn
@@ -1080,6 +1112,7 @@ export default function RestaurantDashboard({
                 type="rejected"
                 onUpdate={updateOrderStatus}
                 onBan={(order) => setBanningOrder(order)}
+                onShowTimeline={(order) => setSelectedOrderForTimeline(order)}
                 isHistory
               />
             </div>
@@ -2141,6 +2174,134 @@ export default function RestaurantDashboard({
             }}
           />
         )}
+        {selectedOrderForTimeline && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[70] flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white max-w-lg w-full p-6 sm:p-10 border border-border-delicate relative my-8 text-right font-sans rounded-none"
+              dir="rtl"
+            >
+              <button
+                onClick={() => setSelectedOrderForTimeline(null)}
+                className="absolute top-4 left-4 text-text-muted hover:text-brand-primary transition-colors h-[32px] w-[32px] flex items-center justify-center border border-border-delicate hover:bg-bg-paper"
+                id="close-timeline-modal"
+              >
+                <X className="w-4 h-4" />
+              </button>
+              
+              <div className="absolute top-0 right-0 w-full h-1 bg-brand-gold" />
+              
+              <div className="space-y-6 text-right">
+                <p className="text-[10px] sm:text-xs font-bold text-brand-gold uppercase tracking-widest">تتبع الكفاءة والزمن (Timeline)</p>
+                <h3 className="text-xl font-display text-brand-primary font-bold italic">
+                  التسلسل الزمني للطلب: {selectedOrderForTimeline.orderNumber ? `رقم ${selectedOrderForTimeline.orderNumber}` : `#${selectedOrderForTimeline.id.slice(-6).toUpperCase()}`}
+                </h3>
+                <div className="bg-bg-paper p-4 border border-border-delicate text-xs text-text-muted leading-relaxed space-y-1">
+                  <p>الزبون: <strong className="text-brand-primary">{selectedOrderForTimeline.customerName}</strong></p>
+                  <p>الطاولة: <strong className="text-brand-primary">{selectedOrderForTimeline.tableNumber}</strong></p>
+                  {selectedOrderForTimeline.notes && (
+                    <p>ملاحظات الزبون: <span className="italic">"{selectedOrderForTimeline.notes}"</span></p>
+                  )}
+                </div>
+
+                <div className="mt-8 relative border-r-2 border-brand-gold/20 mr-4 pr-6 space-y-8 text-right">
+                  {/* Step 1: Placed */}
+                  <div className="relative">
+                    <span className="absolute -right-[31px] top-1 flex items-center justify-center w-4 h-4 rounded-full bg-emerald-500 text-white ring-8 ring-white">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                    </span>
+                    <div>
+                      <h4 className="text-xs font-bold text-brand-primary uppercase">1. وقت إرسال الطلب من الزبون</h4>
+                      <p className="text-xs font-mono text-brand-gold mt-1" dir="ltr">
+                        {selectedOrderForTimeline.createdAt ? new Date(selectedOrderForTimeline.createdAt).toLocaleString("ar-IQ", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true, day: "numeric", month: "numeric" }) : "—"}
+                      </p>
+                      <p className="text-[10px] text-text-muted mt-0.5">تم استلام الطلب وبانتظار الموافقة.</p>
+                    </div>
+                  </div>
+
+                  {/* Step 2: Approved */}
+                  <div className="relative">
+                    <span className={`absolute -right-[31px] top-1 flex items-center justify-center w-4 h-4 rounded-full ${selectedOrderForTimeline.approvedAt ? "bg-emerald-500 text-white" : "bg-amber-100 text-amber-600 animate-pulse"} ring-8 ring-white`}>
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                    </span>
+                    <div>
+                      <h4 className="text-xs font-bold text-brand-primary uppercase">2. وقت موافقة الكابتن على طلب الزبون</h4>
+                      {selectedOrderForTimeline.approvedAt ? (
+                        <>
+                          <p className="text-xs font-mono text-brand-gold mt-1" dir="ltr">
+                            {new Date(selectedOrderForTimeline.approvedAt).toLocaleString("ar-IQ", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true, day: "numeric", month: "numeric" })}
+                          </p>
+                          {selectedOrderForTimeline.approvedAt > selectedOrderForTimeline.createdAt && (
+                            <p className="text-[10px] text-emerald-600 mt-1 font-bold">
+                              ⏱️ وقت الاستجابة للموافقة: {(() => {
+                                const diff = selectedOrderForTimeline.approvedAt - selectedOrderForTimeline.createdAt;
+                                const sec = Math.floor(diff / 1000) % 60;
+                                const min = Math.floor(diff / 60000);
+                                return min > 0 ? `${min} دقيقة و ${sec} ثانية` : `${sec} ثانية`;
+                              })()}
+                            </p>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-xs italic text-amber-600 mt-1">بانتظار موافقة كابتن الصالة والبدء بالتحضير الفعلي...</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Step 3: Ready */}
+                  <div className="relative">
+                    <span className={`absolute -right-[31px] top-1 flex items-center justify-center w-4 h-4 rounded-full ${selectedOrderForTimeline.readyAt ? "bg-emerald-500 text-white" : "bg-gray-100 text-gray-400"} ring-8 ring-white`}>
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                    </span>
+                    <div>
+                      <h4 className="text-xs font-bold text-brand-primary uppercase">3. وقت جهوزية الطلب للتسليم</h4>
+                      {selectedOrderForTimeline.readyAt ? (
+                        <>
+                          <p className="text-xs font-mono text-brand-gold mt-1" dir="ltr">
+                            {new Date(selectedOrderForTimeline.readyAt).toLocaleString("ar-IQ", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true, day: "numeric", month: "numeric" })}
+                          </p>
+                          {selectedOrderForTimeline.approvedAt && selectedOrderForTimeline.readyAt > selectedOrderForTimeline.approvedAt && (
+                            <p className="text-[10px] text-emerald-600 mt-1 font-bold">
+                              🍳 مدة التحضير الفعلي بالمطبخ: {(() => {
+                                const diff = selectedOrderForTimeline.readyAt! - selectedOrderForTimeline.approvedAt!;
+                                const sec = Math.floor(diff / 1000) % 60;
+                                const min = Math.floor(diff / 60000);
+                                return min > 0 ? `${min} دقيقة و ${sec} ثانية` : `${sec} ثانية`;
+                              })()}
+                            </p>
+                          )}
+                          {selectedOrderForTimeline.readyAt > selectedOrderForTimeline.createdAt && (
+                            <p className="text-[10px] text-brand-primary mt-2 font-extrabold border-t border-border-delicate pt-2">
+                              🕒 إجمالي كفاءة الخدمة (الطلب حتى الجاهزية): {(() => {
+                                const diff = selectedOrderForTimeline.readyAt! - selectedOrderForTimeline.createdAt;
+                                const sec = Math.floor(diff / 1000) % 60;
+                                const min = Math.floor(diff / 60000);
+                                return min > 0 ? `${min} دقيقة و ${sec} ثانية` : `${sec} ثانية`;
+                              })()}
+                            </p>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-xs italic text-text-muted mt-1">جاري العمل على الوجبات في القسم المختص...</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-8 border-t border-border-delicate pt-6 flex justify-end">
+                  <button
+                    onClick={() => setSelectedOrderForTimeline(null)}
+                    className="px-6 py-2.5 bg-brand-primary text-white text-xs font-bold uppercase tracking-widest hover:bg-brand-secondary transition-all"
+                  >
+                    إغلاق التفاصيل
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
         {showResetConfirmModal && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[70] flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
             <motion.div
@@ -2307,6 +2468,7 @@ function OrderColumn({
   onUpdate,
   onBan,
   isHistory = false,
+  onShowTimeline,
 }: {
   title: string;
   orders: Order[];
@@ -2314,6 +2476,7 @@ function OrderColumn({
   onUpdate: (id: string, s: OrderStatus) => void;
   onBan?: (order: Order) => void;
   isHistory?: boolean;
+  onShowTimeline?: (order: Order) => void;
 }) {
   return (
     <div className="space-y-8">
@@ -2389,19 +2552,33 @@ function OrderColumn({
                 </div>
               )}
 
-              <div className="flex justify-between items-center">
-                <p className="text-base font-display not-italic text-brand-primary">
-                  <span className="font-sans font-bold">{order.totalAmount.toLocaleString()}</span> د.ع
-                </p>
+              <div className="flex flex-col gap-3 pt-3 border-t border-border-delicate">
+                <div className="flex justify-between items-center">
+                  <p className="text-base font-display not-italic text-brand-primary">
+                    <span className="font-sans font-bold">{order.totalAmount.toLocaleString()}</span> د.ع
+                  </p>
+                  {onShowTimeline && (
+                    <button
+                      onClick={() => onShowTimeline(order)}
+                      type="button"
+                      className="text-[10px] font-bold text-brand-gold hover:text-brand-primary border border-brand-gold/25 hover:border-brand-primary/20 px-3 py-1.5 rounded transition-all flex items-center gap-1 h-[36px]"
+                      title="عرض المخطط الزمني وتتبع الكفاءة"
+                    >
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>⏱️ تفاصيل الأوقات</span>
+                    </button>
+                  )}
+                </div>
+
                 {!isHistory && (
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center justify-end gap-4 mt-1">
                     {order.deviceMetadata?.fingerprint && onBan && (
                       <button
                         onClick={() => onBan(order)}
                         className="text-[10px] font-bold text-red-600 hover:text-red-700 hover:bg-red-50 px-2.5 py-1.5 border border-red-100 rounded transition-all duration-300 flex items-center gap-1 shrink-0 h-[36px]"
                         title="حظر هذا العميل من المنيو الرقمي نهائياً"
                       >
-                        🚫 حظر الزبون
+                        🚫 حظر
                       </button>
                     )}
                     <button
@@ -2413,7 +2590,7 @@ function OrderColumn({
                         };
                         onUpdate(order.id, nextMap[order.status] || "served");
                       }}
-                      className="flex items-center gap-4 text-[9px] font-bold text-brand-gold uppercase tracking-widest group/btn border border-border-delicate hover:border-brand-primary/20 px-4 py-1.5 rounded transition-all h-[36px]"
+                      className="flex items-center gap-2 text-[9px] font-bold text-brand-gold uppercase tracking-widest group/btn border border-border-delicate hover:border-brand-primary/20 px-4 py-1.5 rounded transition-all h-[36px] flex-1 justify-center"
                     >
                       {order.status === "pending"
                         ? "إرسال للمطبخ"

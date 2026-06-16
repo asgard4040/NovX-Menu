@@ -212,7 +212,13 @@ export default function WaiterDashboard({
 
   const updateStatus = async (orderId: string, newStatus: OrderStatus) => {
     try {
-      await updateDoc(doc(db, "orders", orderId), { status: newStatus });
+      const updateFields: any = { status: newStatus };
+      if (newStatus === "preparing") {
+        updateFields.approvedAt = Date.now();
+      } else if (newStatus === "ready") {
+        updateFields.readyAt = Date.now();
+      }
+      await updateDoc(doc(db, "orders", orderId), updateFields);
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
     }
@@ -287,6 +293,7 @@ export default function WaiterDashboard({
         status: "preparing", // straight to cooking
         notes: notes.trim(),
         createdAt: new Date().getTime(),
+        approvedAt: new Date().getTime(),
         placedByWaiter: true,
         waiterName: staffName || "كابتن الصالة",
         orderNumber,
