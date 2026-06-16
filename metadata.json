@@ -1,8 +1,6 @@
 {
-  "name": "مندوبي - منصة إدارة المبيعات الميدانية",
-  "description": "منصة شاملة لإدارة المندوبين الميدانيين وتتبع مبيعات الأنظمة البرمجية للمؤسسات التعليمية، تتميز بواجهتين منفصلتين للمندوبين وفريق الإدارة مع نظام تقارير متقدم ودعم كامل للغة العربية.",
-  "requestFramePermissions": [
-    "geolocation"
-  ],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "name": "NovX AI Menu Platform",
+  "description": "An AI-powered electronic menu platform for restaurants, including admin, restaurant, waiter, and customer interfaces with Iraqi dialect support.",
+  "requestFramePermissions": ["camera", "geolocation"],
+  "majorCapabilities": ["AI Assistant", "Real-time Orders", "QR Code Generation", "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
