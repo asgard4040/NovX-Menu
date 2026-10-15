@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import app from "../server";
+import app from "../server.js";
 
 // Vercel sends every /api/* request here. Restore the public path for the
 // existing Express router; keep the original query string for tracking tokens.
