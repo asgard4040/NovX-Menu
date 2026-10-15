@@ -1,16 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Utensils, Lock, User, Eye, EyeOff, AlertCircle, ChevronRight, Building2 } from 'lucide-react';
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
-import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
+import { supabase } from '../lib/supabase';
 import { UserSession } from '../types';
+import { useLanguage } from '../lib/i18n';
 
 interface LoginPageProps {
   onLogin: (user: UserSession) => void;
 }
 
 export default function LoginPage({ onLogin }: LoginPageProps) {
+  const { dir, tr } = useLanguage();
   const [role, setRole] = useState<'admin' | 'restaurant' | 'waiter' | 'kitchen'>('admin');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -18,9 +18,6 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  const [restaurantsList, setRestaurantsList] = useState<{ id: string; restaurantName: string }[]>([]);
-  const [selectedRestaurantId, setSelectedRestaurantId] = useState<string>('');
-
   // Customized login settings
   const [loginRestaurantId, setLoginRestaurantId] = useState<string | null>(null);
   const [customRestaurant, setCustomRestaurant] = useState<{
@@ -36,53 +33,22 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     const rid = params.get('loginRestaurantId');
     setLoginRestaurantId(rid);
 
-    const fetchRestaurants = async () => {
-      try {
-        const snapshot = await getDocs(collection(db, 'restaurants'));
-        const list = snapshot.docs
-          .map(doc => ({ id: doc.id, restaurantName: doc.data().restaurantName, status: doc.data().status }))
-          .filter(r => r.status === 'active');
-        setRestaurantsList(list);
-        if (list.length > 0) {
-          setSelectedRestaurantId(list[0].id);
-        }
-      } catch (err) {
-        console.error("Error fetching restaurants list for login:", err);
-      }
-    };
-
     const fetchCustomRestaurant = async (id: string) => {
       setFetchingCustomRest(true);
       setError(null);
       try {
-        const docRef = doc(db, 'restaurants', id);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          if (data.status === 'suspended') {
-            setError('هذا الاشتراك معطل حالياً من قبل الإدارة العامة.');
-          } else {
-            setCustomRestaurant({
-              id: docSnap.id,
-              restaurantName: data.restaurantName,
-              logoUrl: data.logoUrl,
-              status: data.status
-            });
-            // Auto switch role to restaurant on specific login page
-            setRole('restaurant');
-          }
-        } else {
-          setError('رابط تسجيل دخول المطعم المخصص غير صحيح أو تالف.');
-        }
+        const response = await fetch(`/api/public/restaurants/${encodeURIComponent(id)}?branding=1`);
+        if (!response.ok) throw new Error(String(response.status));
+        const data = (await response.json()).restaurant;
+        setCustomRestaurant({ id, restaurantName: data.restaurantName, logoUrl: data.logoUrl, status: 'active' });
+        setRole('restaurant');
       } catch (err) {
         console.error("Error loading custom restaurant info:", err);
-        setError('حدث خطأ أثناء تحميل معلومات بوابة هذا المطعم.');
+        setError(tr('حدث خطأ أثناء تحميل معلومات بوابة هذا المطعم.', 'Could not load this restaurant portal.'));
       } finally {
         setFetchingCustomRest(false);
       }
     };
-
-    fetchRestaurants();
 
     if (rid) {
       fetchCustomRestaurant(rid);
@@ -97,129 +63,27 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     setError(null);
 
     try {
-      if (role === 'admin') {
-        if (loginRestaurantId) {
-          setError('الحساب الشخصي للمشرف العام متاح فقط من خلال البوابة الرئيسية.');
-          setLoading(false);
-          return;
-        }
-        // System Admin credentials updated to request specification
-        if (username === 'novx.team' && password === 'naolvix0508') {
-          onLogin({ role: 'admin', name: 'Super Admin' });
-        } else {
-          setError('خطأ في اسم المستخدم أو كلمة المرور للأدمن');
-        }
-      } else if (role === 'restaurant') {
-        if (!loginRestaurantId) {
-          setError('عذراً، لأسباب أمنية؛ لا يمكن لمالك المطعم تسجيل الدخول إلا من خلال الرابط الأمني المخصص لمطعمه فقط.');
-          setLoading(false);
-          return;
-        }
-
-        const collectionPath = 'restaurants';
-        try {
-          const q = query(
-            collection(db, collectionPath), 
-            where('username', '==', username), 
-            where('password', '==', password)
-          );
-          const snapshot = await getDocs(q);
-          if (!snapshot.empty) {
-            const docId = snapshot.docs[0].id;
-            const restaurantData = snapshot.docs[0].data();
-
-            if (docId !== loginRestaurantId) {
-              setError('معلومات الدخول المدخلة غير تابعة للمطعم الحالي! يرجى الانتقال إلى رابط الدخول المخصص لمطعمك.');
-            } else if (restaurantData.status === 'suspended') {
-              setError('هذا الاشتراك معطل حالياً، يرجى مراجعة الإدارة');
-            } else {
-              onLogin({ 
-                role: 'restaurant', 
-                id: docId, 
-                restaurantId: docId,
-                name: restaurantData.restaurantName 
-              });
-            }
-          } else {
-            setError('خطأ في معلومات تسجيل دخول المطعم');
-          }
-        } catch (err) {
-          handleFirestoreError(err, OperationType.LIST, collectionPath);
-        }
-      } else if (role === 'waiter') {
-        if (!loginRestaurantId) {
-          setError('عذراً، لأسباب أمنية؛ لا يمكن لموظفي الصالة تسجيل الدخول إلا من خلال الرابط الأمني المخصص لمطعمهم فقط.');
-          setLoading(false);
-          return;
-        }
-
-        const collectionPath = 'waiters';
-        try {
-          const q = query(
-            collection(db, collectionPath), 
-            where('username', '==', username), 
-            where('password', '==', password),
-            where('restaurantId', '==', loginRestaurantId)
-          );
-          const snapshot = await getDocs(q);
-          if (!snapshot.empty) {
-            const waiterData = snapshot.docs[0].data();
-            if (waiterData.status === 'suspended') {
-              setError('حساب الويتر معطل حالياً');
-            } else {
-               onLogin({ 
-                role: 'waiter', 
-                id: snapshot.docs[0].id, 
-                restaurantId: waiterData.restaurantId,
-                name: waiterData.name,
-                restaurantName: waiterData.restaurantName
-              });
-            }
-          } else {
-            setError('خطأ في معلومات تسجيل دخول الويتر الخاصة بهذا المطعم.');
-          }
-        } catch (err) {
-          handleFirestoreError(err, OperationType.LIST, collectionPath);
-        }
-      } else if (role === 'kitchen') {
-        if (!loginRestaurantId) {
-          setError('عذراً، لأسباب أمنية؛ لا يمكن لموظفي المطبخ تسجيل الدخول إلا من خلال الرابط الأمني المخصص لمطعمهم فقط.');
-          setLoading(false);
-          return;
-        }
-
-        const collectionPath = 'kitchen_staff';
-        try {
-          const q = query(
-            collection(db, collectionPath), 
-            where('username', '==', username), 
-            where('password', '==', password),
-            where('restaurantId', '==', loginRestaurantId)
-          );
-          const snapshot = await getDocs(q);
-          if (!snapshot.empty) {
-            const kitchenData = snapshot.docs[0].data();
-            if (kitchenData.status === 'suspended') {
-              setError('حساب المطبخ معطل حالياً');
-            } else {
-               onLogin({ 
-                role: 'kitchen', 
-                id: snapshot.docs[0].id, 
-                restaurantId: kitchenData.restaurantId,
-                name: kitchenData.name,
-                restaurantName: kitchenData.restaurantName
-              });
-            }
-          } else {
-            setError('خطأ في معلومات تسجيل دخول طاقم المطبخ الخاصة بهذا المطعم.');
-          }
-        } catch (err) {
-          handleFirestoreError(err, OperationType.LIST, collectionPath);
-        }
-      }
+      if (role !== 'admin' && !loginRestaurantId) throw new Error('restaurant_required');
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role, username, password, restaurantId: loginRestaurantId }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'invalid_credentials');
+      const { error: sessionError } = await supabase.auth.setSession({ access_token: result.accessToken, refresh_token: result.refreshToken });
+      if (sessionError) throw sessionError;
+      onLogin(result.session as UserSession);
     } catch (err) {
       console.error(err);
-      setError('حدث خطأ أثناء تسجيل الدخول. حاول مرة أخرى');
+      const code = err instanceof Error ? err.message : 'invalid_credentials';
+      setError(code === 'invalid_credentials'
+        ? tr('اسم المستخدم أو كلمة المرور غير صحيحة.', 'Incorrect username or password.')
+        : code === 'role_mismatch'
+          ? tr('هذا الحساب لا يطابق القسم المحدد أو المطعم الحالي.', 'This account does not belong to the selected role or restaurant.')
+          : code === 'restaurant_required'
+            ? tr('استخدم رابط تسجيل الدخول الخاص بالمطعم للموظفين.', 'Staff must use the restaurant-specific login link.')
+            : tr('حدث خطأ أثناء تسجيل الدخول. حاول مرة أخرى.', 'Sign-in failed. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -227,16 +91,16 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
   const currentRoles = loginRestaurantId && customRestaurant
     ? ([
-        { id: 'restaurant', label: 'المالك / المدير' },
-        { id: 'waiter', label: 'قسم الصالة (ويتر)' },
-        { id: 'kitchen', label: 'قسم المطبخ' }
+        { id: 'restaurant', label: tr('المالك / المدير', 'Owner / Manager') },
+        { id: 'waiter', label: tr('قسم الصالة (ويتر)', 'Waiter') },
+        { id: 'kitchen', label: tr('قسم المطبخ', 'Kitchen') }
       ] as const)
     : ([
-        { id: 'admin', label: 'المسؤول العام' }
+        { id: 'admin', label: tr('المسؤول العام', 'Administrator') }
       ] as const);
 
   return (
-    <div className="min-h-screen bg-bg-paper flex items-center justify-center p-6 relative overflow-hidden font-sans selection:bg-brand-primary/10" dir="rtl">
+    <div className="min-h-screen bg-bg-paper flex items-center justify-center p-6 relative overflow-hidden font-sans selection:bg-brand-primary/10" dir={dir}>
       {/* Background Image with Overlay */}
       <div className="absolute inset-0 z-0">
         <img 
@@ -260,7 +124,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         {fetchingCustomRest ? (
           <div className="flex flex-col items-center justify-center py-20 gap-4">
             <div className="w-12 h-12 border-4 border-brand-primary border-t-transparent rounded-full animate-spin" />
-            <p className="text-sm font-bold text-brand-primary">جاري استدعاء البوابة المخصصة للمطعم...</p>
+            <p className="text-sm font-bold text-brand-primary">{tr('جاري استدعاء البوابة المخصصة للمطعم...', 'Loading restaurant portal...')}</p>
           </div>
         ) : (
           <>
@@ -279,11 +143,11 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                       <Building2 className="w-10 h-10" />
                     </div>
                   )}
-                  <p className="text-brand-gold text-[10px] font-bold uppercase tracking-widest leading-none mb-3">البوابة الأمنية المخصصة</p>
+                  <p className="text-brand-gold text-[10px] font-bold uppercase tracking-widest leading-none mb-3">{tr('البوابة الأمنية المخصصة', 'Secure staff portal')}</p>
                   <h1 className="text-4xl font-display text-brand-primary italic tracking-tight font-bold mb-2">
                     {customRestaurant.restaurantName}
                   </h1>
-                  <p className="text-text-muted text-[10px] uppercase font-sans font-medium tracking-tight">نظام الموظفين والشركاء المعتمد</p>
+                  <p className="text-text-muted text-[10px] uppercase font-sans font-medium tracking-tight">{tr('نظام الموظفين والشركاء المعتمد', 'Authorized staff access')}</p>
                 </>
               ) : (
                 <>
@@ -293,7 +157,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                     <span className="w-12 h-[1px] bg-brand-gold" />
                   </div>
                   <h1 className="text-5xl font-display text-brand-primary italic tracking-tight mb-4">نوفكس AI</h1>
-                  <p className="text-brand-gold text-xs font-bold uppercase tracking-widest text-center">الفن الرفيع في إدارة المطاعم</p>
+                  <p className="text-brand-gold text-xs font-bold uppercase tracking-widest text-center">{tr('الفن الرفيع في إدارة المطاعم', 'Restaurant management, refined')}</p>
                 </>
               )}
             </div>
@@ -319,7 +183,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
             <form onSubmit={handleSubmit} className="space-y-8 relative z-10">
               <div className="space-y-4">
-                <label className="text-xs font-bold text-brand-gold uppercase block pr-2">اسم المستخدم / الهوية</label>
+                <label className="text-xs font-bold text-brand-gold uppercase block">{tr('اسم المستخدم / الهوية', 'Username')}</label>
                 <div className="relative group">
                   <input
                     type="text"
@@ -327,14 +191,14 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                     onChange={(e) => setUsername(e.target.value)}
                     required
                     className="w-full bg-transparent border-b border-border-delicate py-3.5 pl-10 font-display text-xl text-brand-primary placeholder:text-text-muted/20 focus:outline-none focus:border-brand-primary transition-all text-right"
-                    placeholder="أدخل اسم المستخدم"
+                    placeholder={tr('أدخل اسم المستخدم', 'Enter username')}
                   />
                   <User className="absolute left-0 top-1/2 -translate-y-1/2 text-border-delicate group-focus-within:text-brand-primary transition-colors w-5 h-5 opacity-40" />
                 </div>
               </div>
 
               <div className="space-y-4">
-                <label className="text-xs font-bold text-brand-gold uppercase block pr-2">كلمة المرور / الرقم السري</label>
+                <label className="text-xs font-bold text-brand-gold uppercase block">{tr('كلمة المرور / الرقم السري', 'Password')}</label>
                 <div className="relative group">
                   <input
                     type={showPassword ? 'text' : 'password'}
@@ -342,24 +206,24 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                     onChange={(e) => setPassword(e.target.value)}
                     required
                     className="w-full bg-transparent border-b border-border-delicate py-3.5 pl-20 font-display text-xl text-brand-primary placeholder:text-text-muted/20 focus:outline-none focus:border-brand-primary transition-all text-right"
-                    placeholder="أدخل الرقم السري"
+                    placeholder={tr('أدخل الرقم السري', 'Enter password')}
                   />
                   <Lock className="absolute left-0 top-1/2 -translate-y-1/2 text-border-delicate group-focus-within:text-brand-primary transition-colors w-5 h-5 opacity-40" />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
                     className="absolute left-8 top-1/2 -translate-y-1/2 text-text-muted/40 hover:text-brand-primary hover:scale-105 transition-all text-xs cursor-pointer flex items-center gap-1.5 px-2 py-1 bg-bg-paper hover:bg-brand-primary/5 border border-border-delicate/40 select-none"
-                    title={showPassword ? "إخفاء كلمة المرور" : "عرض كلمة المرور"}
+                    title={showPassword ? tr('إخفاء كلمة المرور', 'Hide password') : tr('عرض كلمة المرور', 'Show password')}
                   >
                     {showPassword ? (
                       <>
                         <EyeOff className="w-3.5 h-3.5" />
-                        <span className="text-[10px] font-bold">إخفاء</span>
+                        <span className="text-[10px] font-bold">{tr('إخفاء', 'Hide')}</span>
                       </>
                     ) : (
                       <>
                         <Eye className="w-3.5 h-3.5" />
-                        <span className="text-[10px] font-bold">عرض</span>
+                        <span className="text-[10px] font-bold">{tr('عرض', 'Show')}</span>
                       </>
                     )}
                   </button>
@@ -383,7 +247,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                   disabled={loading}
                   className="w-full bg-brand-primary text-white py-5 rounded-none font-bold shadow-xl hover:bg-brand-secondary transition-all flex items-center justify-center gap-6 group overflow-hidden relative cursor-pointer"
                 >
-                  <span className="relative z-10 tracking-widest font-bold text-xs uppercase">الدخول الآمن للبوابة</span>
+                  <span className="relative z-10 tracking-widest font-bold text-xs uppercase">{tr('الدخول الآمن للبوابة', 'Secure sign in')}</span>
                   <ChevronRight className="relative z-10 w-4 h-4 group-hover:-translate-x-2 transition-transform rotate-180" />
                   {loading && <div className="absolute inset-0 bg-brand-primary flex items-center justify-center z-20"><div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" /></div>}
                 </button>
@@ -394,7 +258,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             {!loginRestaurantId && (
               <div className="mt-8 p-5 border border-dashed border-border-delicate bg-bg-paper text-center">
                 <p className="text-xs text-text-muted leading-relaxed font-sans font-medium">
-                  🔒 <strong>تنبيه الزملاء وطاقم العمل:</strong> يرجى استخدام <strong>رابط تسجيل الدخول الفريد</strong> المرسل لمطعمكم للدخول الآمن إلى الصالة والمطبخ والمدير المالي.
+                  🔒 <strong>{tr('تنبيه الزملاء وطاقم العمل:', 'Staff notice:')}</strong> {tr('يرجى استخدام رابط تسجيل الدخول الفريد المرسل لمطعمكم للدخول الآمن إلى الصالة والمطبخ.', 'Use your restaurant-specific login link to access waiter and kitchen workspaces.')}
                 </p>
               </div>
             )}
@@ -403,7 +267,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
         <div className="mt-16 text-center relative z-10">
           <p className="text-xs text-text-muted uppercase tracking-widest italic font-medium">
-             صـنـع بـأكـمـل <span className="text-brand-gold">أنـاقـة رقـمـيـة</span>
+             {tr('صـنـع بـأكـمـل', 'Crafted with')} <span className="text-brand-gold">{tr('أنـاقـة رقـمـيـة', 'digital elegance')}</span>
           </p>
         </div>
 

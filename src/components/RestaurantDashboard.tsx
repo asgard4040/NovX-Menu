@@ -45,9 +45,8 @@ import {
   onSnapshot,
   orderBy,
   getDoc,
-  runTransaction,
-} from "firebase/firestore";
-import { db } from "../lib/firebase";
+} from "../lib/supabase-db";
+import { db } from "../lib/supabase-db";
 import { handleFirestoreError, OperationType } from "../lib/firestore-utils";
 import { Restaurant, Waiter, MenuItem, Order, OrderStatus, SecurityAlert } from "../types";
 import QRCode from "react-qr-code";
@@ -64,18 +63,30 @@ const safeFormatDate = (dateVal: any, formatStr: string, fallback: string = "---
   }
 };
 import { BanCustomerModal } from "./WaiterDashboard";
+import { MENU_THEMES, contrastRatio, resolveTheme, themeStyle, ThemeColors } from "../lib/themes";
+import { supabase } from "../lib/supabase";
+import { persistRestaurantImage } from "../lib/storage";
+import { localizeCategory, localizeDeviceType, useLanguage } from "../lib/i18n";
+
+const DEFAULT_MENU_CATEGORIES = ["الوجبات الأساسية", "المقبلات", "الحلويات", "المشروبات"];
+
+const resolveMenuCategories = (categories?: string[]) =>
+  categories?.filter((category) => category.trim().length > 0).length
+    ? categories.filter((category) => category.trim().length > 0)
+    : DEFAULT_MENU_CATEGORIES;
 
 interface RestaurantDashboardProps {
   restaurantId: string;
-  activeTab?: "overview" | "waiters" | "orders" | "menu" | "help" | "qr" | "alerts";
+  activeTab?: "overview" | "waiters" | "orders" | "menu" | "theme" | "help" | "qr" | "alerts";
 }
 
 export default function RestaurantDashboard({
   restaurantId,
   activeTab: externalTab,
 }: RestaurantDashboardProps) {
+  const { dir, language, tr } = useLanguage();
   const [internalTab, setInternalTab] = useState<
-    "overview" | "waiters" | "orders" | "archive" | "menu" | "help" | "qr" | "alerts"
+    "overview" | "waiters" | "orders" | "archive" | "menu" | "theme" | "help" | "qr" | "alerts"
   >("overview");
   const activeTab = externalTab || internalTab;
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
@@ -161,39 +172,47 @@ export default function RestaurantDashboard({
 
   const [latInput, setLatInput] = useState<string>("");
   const [lngInput, setLngInput] = useState<string>("");
+  const [radiusInput, setRadiusInput] = useState<string>("150");
   const [savingLocation, setSavingLocation] = useState(false);
   const [fetchingLocationGPS, setFetchingLocationGPS] = useState(false);
 
   useEffect(() => {
     if (restaurant) {
-      if (restaurant.latitude !== undefined && latInput === "") {
+      if (restaurant.latitude != null && latInput === "") {
         setLatInput(restaurant.latitude.toString());
       }
-      if (restaurant.longitude !== undefined && lngInput === "") {
+      if (restaurant.longitude != null && lngInput === "") {
         setLngInput(restaurant.longitude.toString());
       }
+      setRadiusInput(String(restaurant.geofenceRadiusMeters || 150));
     }
   }, [restaurant]);
 
   const handleUpdateLocation = async () => {
     const latNum = parseFloat(latInput);
     const lngNum = parseFloat(lngInput);
-    if (isNaN(latNum) || isNaN(lngNum)) {
-      alert("يرجى إدخال قيم جغرافية (خط العرض وخط الطول) صحيحة.");
+    const radiusNum = parseFloat(radiusInput);
+    if (!Number.isFinite(latNum) || !Number.isFinite(lngNum) || Math.abs(latNum) > 90 || Math.abs(lngNum) > 180) {
+      alert(tr('يرجى إدخال قيم جغرافية (خط العرض وخط الطول) صحيحة.', 'Enter valid latitude and longitude values.'));
+      return;
+    }
+    if (!Number.isFinite(radiusNum) || radiusNum < 25 || radiusNum > 1000) {
+      alert(tr('يجب أن يكون نطاق التحقق بين 25 و1000 متر.', 'The allowed radius must be between 25 and 1000 meters.'));
       return;
     }
     try {
       setSavingLocation(true);
       await updateDoc(doc(db, "restaurants", restaurantId), {
         latitude: latNum,
-        longitude: lngNum
+        longitude: lngNum,
+        geofenceRadiusMeters: radiusNum,
       });
-      alert("تم حفظ موقع المطعم الجغرافي بنجاح! سيتم فحص وجود الزبائن تبعاً لهذا الموقع بدقة.");
+      alert(tr('تم حفظ موقع المطعم الجغرافي بنجاح! سيتم فحص وجود الزبائن تبعاً لهذا الموقع بدقة.', 'Restaurant location saved. Customer distance checks will use these coordinates.'));
       if (restaurant) {
-        setRestaurant({ ...restaurant, latitude: latNum, longitude: lngNum });
+        setRestaurant({ ...restaurant, latitude: latNum, longitude: lngNum, geofenceRadiusMeters: radiusNum });
       }
     } catch (err) {
-      alert("فشل في حفظ إعدادات الموقع الجغرافي.");
+      alert(tr('فشل في حفظ إعدادات الموقع الجغرافي.', 'Could not save location settings.'));
     } finally {
       setSavingLocation(false);
     }
@@ -201,7 +220,7 @@ export default function RestaurantDashboard({
 
   const handleFetchCurrentGPS = () => {
     if (!navigator.geolocation) {
-      alert("متصفحك لا يدعم تتبع وتحديد المواقع الجغرافية GPS.");
+      alert(tr('متصفحك لا يدعم تتبع وتحديد المواقع الجغرافية GPS.', 'Your browser does not support location services.'));
       return;
     }
     setFetchingLocationGPS(true);
@@ -210,11 +229,11 @@ export default function RestaurantDashboard({
         setLatInput(position.coords.latitude.toString());
         setLngInput(position.coords.longitude.toString());
         setFetchingLocationGPS(false);
-        alert("تم التقاط إحداثيات موقعك الحالي بنجاح! انقر على زر 'حفظ موقع المطعم' لتثبيت الإعدادات.");
+        alert(tr("تم التقاط إحداثيات موقعك الحالي بنجاح! انقر على زر 'حفظ موقع المطعم' لتثبيت الإعدادات.", 'Location captured. Select Save restaurant location to apply it.'));
       },
       (error) => {
         setFetchingLocationGPS(false);
-        alert("فشل في التقاط موقعك الجغرافي. يرجى تفعيل إذن الوصول للموقع في متصفحك أو إدخالها يدوياً.");
+        alert(tr('فشل في التقاط موقعك الجغرافي. يرجى تفعيل إذن الوصول للموقع في متصفحك أو إدخالها يدوياً.', 'Could not get your location. Allow location access or enter coordinates manually.'));
       },
       { enableHighAccuracy: true, timeout: 10000 }
     );
@@ -224,9 +243,9 @@ export default function RestaurantDashboard({
     if (!newCategoryName.trim()) return;
     try {
       if (!restaurant) return;
-      const currentCats = restaurant.categories || ["الوجبات الأساسية", "المقبلات", "الحلويات", "المشروبات"];
+      const currentCats = resolveMenuCategories(restaurant.categories);
       if (currentCats.includes(newCategoryName.trim())) {
-        alert("هذا القسم موجود بالفعل في قائمتك.");
+        alert(tr('هذا القسم موجود بالفعل في قائمتك.', 'This category already exists.'));
         return;
       }
       const updated = [...currentCats, newCategoryName.trim()];
@@ -234,22 +253,22 @@ export default function RestaurantDashboard({
       setNewCategoryName("");
       setRestaurant(prev => prev ? { ...prev, categories: updated } : null);
     } catch (err) {
-      alert("فشل في إضافة القسم. يرجى المحاولة مجدداً.");
+      alert(tr('فشل في إضافة القسم. يرجى المحاولة مجدداً.', 'Could not add the category. Please retry.'));
     }
   };
 
   const handleDeleteCategory = async (catToDelete: string) => {
-    if (!confirm(`هل أنت متأكد من حذف قسم "${catToDelete}"؟ الوجبات المصنفة تحت هذا القسم ستبقى ولكن تصنيفها سيصبح غير محدد.`)) {
+    if (!confirm(tr(`هل أنت متأكد من حذف قسم "${catToDelete}"؟ الوجبات المصنفة تحت هذا القسم ستبقى ولكن تصنيفها سيصبح غير محدد.`, `Delete category "${catToDelete}"? Its dishes will remain but become uncategorized.`))) {
       return;
     }
     try {
       if (!restaurant) return;
-      const currentCats = restaurant.categories || ["الوجبات الأساسية", "المقبلات", "الحلويات", "المشروبات"];
+      const currentCats = resolveMenuCategories(restaurant.categories);
       const updated = currentCats.filter(c => c !== catToDelete);
       await updateDoc(doc(db, "restaurants", restaurantId), { categories: updated });
       setRestaurant(prev => prev ? { ...prev, categories: updated } : null);
     } catch (err) {
-      alert("فشل في حذف القسم.");
+      alert(tr('فشل في حذف القسم.', 'Could not delete the category.'));
     }
   };
 
@@ -266,7 +285,7 @@ export default function RestaurantDashboard({
         bannedAt: Date.now(),
         deviceMetadata: order.deviceMetadata
       });
-      alert(`🚫 تم حظر الزبون "${order.customerName}" بنجاح وتجميد بصمة جهازه لمنع إجرائه لأي طلبات مستقبلية.`);
+      alert(tr(`🚫 تم حظر الزبون "${order.customerName}" بنجاح وتجميد بصمة جهازه لمنع إجرائه لأي طلبات مستقبلية.`, `Customer "${order.customerName}" was blocked from placing new orders.`));
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, "banned_devices");
     }
@@ -275,39 +294,13 @@ export default function RestaurantDashboard({
   const executeResetOrderCounter = async () => {
     try {
       setIsResetting(true);
-      const resDocRef = doc(db, "restaurants", restaurantId);
-      
-      // 1. Transactional update to safely set currentOrderNumber back to 0
-      await runTransaction(db, async (transaction) => {
-        const resSnap = await transaction.get(resDocRef);
-        if (resSnap.exists()) {
-          transaction.update(resDocRef, {
-            currentOrderNumber: 0
-          });
-        }
-      });
+      const { data: successCount, error } = await supabase.rpc('reset_restaurant_shift', { p_restaurant_id: restaurantId });
+      if (error) throw error;
 
-      // 2. Hide active orders from staff dashboard (set clearedForStaff to true)
-      const unclearedOrders = orders.filter(o => !o.clearedForStaff);
-      let successCount = 0;
-
-      if (unclearedOrders.length > 0) {
-        await Promise.all(
-          unclearedOrders.map(async (o) => {
-            try {
-              await updateDoc(doc(db, "orders", o.id), { clearedForStaff: true });
-              successCount++;
-            } catch (orderErr) {
-              console.error(`Failed to clear order ${o.id}:`, orderErr);
-            }
-          })
-        );
-      }
-
-      alert(`✅ تم تصفير عداد أرقام الطلبات بنجاح!\n• سيبدأ الطلب القادم من الرقم 1.\n• تم أرشفة وإخفاء ${successCount} من الطلبات القديمة لبدء يوم عمل جديد.`);
+      alert(tr(`✅ تم تصفير عداد أرقام الطلبات بنجاح!\n• سيبدأ الطلب القادم من الرقم 1.\n• تم أرشفة وإخفاء ${successCount} من الطلبات القديمة لبدء يوم عمل جديد.`, `✅ Order counter reset. The next order starts at 1; ${successCount} old orders were archived.`));
     } catch (err: any) {
       console.error("Failed to reset order counter:", err);
-      alert("❌ فشل تصفير عداد الطلبيات. السبب: " + (err?.message || err));
+      alert(tr('❌ فشل تصفير عداد الطلبيات. السبب: ', '❌ Could not reset the order counter: ') + (err?.message || err));
     } finally {
       setIsResetting(false);
     }
@@ -366,7 +359,7 @@ export default function RestaurantDashboard({
         }
         setLoading(false);
       },
-      (err) => handleFirestoreError(err, OperationType.GET, `restaurants/${restaurantId}`)
+      (err) => { console.error("Unable to load restaurant", err); setLoading(false); }
     );
 
     const unsubWaiters = onSnapshot(
@@ -379,7 +372,7 @@ export default function RestaurantDashboard({
           snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Waiter),
         );
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, "waiters"),
+      (err) => console.error("Unable to load waiters", err),
     );
 
     const unsubKitchen = onSnapshot(
@@ -392,7 +385,7 @@ export default function RestaurantDashboard({
           snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Waiter),
         );
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, "kitchen_staff"),
+      (err) => console.error("Unable to load kitchen staff", err),
     );
 
     const unsubMenu = onSnapshot(
@@ -405,7 +398,7 @@ export default function RestaurantDashboard({
           snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as MenuItem),
         );
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, "menuItems"),
+      (err) => console.error("Unable to load menu items", err),
     );
 
     const unsubOrders = onSnapshot(
@@ -419,7 +412,7 @@ export default function RestaurantDashboard({
           .sort((a, b) => b.createdAt - a.createdAt);
         setOrders(sorted);
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, "orders"),
+      (err) => console.error("Unable to load orders", err),
     );
 
     const unsubAlerts = onSnapshot(
@@ -433,7 +426,7 @@ export default function RestaurantDashboard({
           .sort((a, b) => b.timestamp - a.timestamp);
         setAlerts(sorted);
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, "security_alerts"),
+      (err) => console.error("Unable to load security alerts", err),
     );
 
     const unsubBanned = onSnapshot(
@@ -447,7 +440,7 @@ export default function RestaurantDashboard({
           .sort((a, b) => b.bannedAt - a.bannedAt);
         setBannedDevices(sorted);
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, "banned_devices"),
+      (err) => console.error("Unable to load banned devices", err),
     );
 
     const unsubAnnouncements = onSnapshot(
@@ -465,7 +458,7 @@ export default function RestaurantDashboard({
           });
         setAnnouncements(sorted);
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, "announcements"),
+      (err) => console.error("Unable to load announcements", err),
     );
 
     return () => {
@@ -502,18 +495,19 @@ export default function RestaurantDashboard({
     try {
       const updateFields: any = { status: newStatus };
       if (newStatus === "preparing") {
-        updateFields.approvedAt = Date.now();
+        updateFields.approvedAt = new Date().toISOString();
       } else if (newStatus === "ready") {
-        updateFields.readyAt = Date.now();
+        updateFields.readyAt = new Date().toISOString();
       }
       await updateDoc(doc(db, "orders", orderId), updateFields);
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
+      console.error("Unable to update order status", err);
+      alert(tr("تعذر تحديث حالة الطلب. حاول مجدداً.", "Could not update the order status. Please retry."));
     }
   };
 
   const deleteMenuItem = async (itemId: string) => {
-    if (confirm("هل أنت متأكد من حذف هذا المنتج؟")) {
+    if (confirm(tr('هل أنت متأكد من حذف هذا المنتج؟', 'Delete this menu item?'))) {
       try {
         await deleteDoc(doc(db, "menuItems", itemId));
       } catch (err) {
@@ -527,23 +521,29 @@ export default function RestaurantDashboard({
     current: string,
     role: "waiter" | "kitchen",
   ) => {
-    const coll = role === "waiter" ? "waiters" : "kitchen_staff";
     try {
-      await updateDoc(doc(db, coll, id), {
-        status: current === "active" ? "suspended" : "active",
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) throw new Error('authentication_required');
+      const response = await fetch(`/api/staff/${encodeURIComponent(id)}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session.access_token}` },
+        body: JSON.stringify({ restaurantId, status: current === 'active' ? 'suspended' : 'active' }),
       });
+      if (!response.ok) throw new Error((await response.json()).error || 'staff_status_failed');
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `${coll}/${id}`);
+      handleFirestoreError(err, OperationType.UPDATE, `staff/${id}`);
     }
   };
 
   const deleteStaff = async (id: string, role: "waiter" | "kitchen") => {
-    if (confirm("حذف هذا الموظف؟")) {
-      const coll = role === "waiter" ? "waiters" : "kitchen_staff";
+    if (confirm(tr('حذف هذا الموظف؟', 'Delete this staff member?'))) {
       try {
-        await deleteDoc(doc(db, coll, id));
+        const { data } = await supabase.auth.getSession();
+        if (!data.session) throw new Error('authentication_required');
+        const response = await fetch(`/api/staff/${encodeURIComponent(id)}?restaurantId=${encodeURIComponent(restaurantId)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${data.session.access_token}` } });
+        if (!response.ok) throw new Error((await response.json()).error || 'staff_delete_failed');
       } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, `${coll}/${id}`);
+        handleFirestoreError(err, OperationType.DELETE, `staff/${id}`);
       }
     }
   };
@@ -557,7 +557,7 @@ export default function RestaurantDashboard({
   };
 
   const deleteAlert = async (alertId: string) => {
-    if (confirm("هل أنت متأكد من حذف هذا التنبيه نهائياً؟")) {
+    if (confirm(tr('هل أنت متأكد من حذف هذا التنبيه نهائياً؟', 'Permanently delete this alert?'))) {
       try {
         await deleteDoc(doc(db, "security_alerts", alertId));
       } catch (err) {
@@ -567,7 +567,7 @@ export default function RestaurantDashboard({
   };
 
   const cancelAllOrdersByFingerprint = async (fingerprint: string) => {
-    if (confirm("هل أنت متأكد من إلغاء وحظر جميع طلبات هذا العميل (البصمة الرقمية المحفوظة له)؟ سيتم إلغاء جميع الطلبات المعلقة المرتبطة بهذا الجهاز تلقائياً.")) {
+    if (confirm(tr('هل أنت متأكد من إلغاء وحظر جميع طلبات هذا العميل (البصمة الرقمية المحفوظة له)؟ سيتم إلغاء جميع الطلبات المعلقة المرتبطة بهذا الجهاز تلقائياً.', 'Cancel all pending orders associated with this device fingerprint?'))) {
       try {
         const suspiciousOrders = orders.filter(o => o.deviceMetadata?.fingerprint === fingerprint && o.status !== 'cancelled');
         await Promise.all(
@@ -575,9 +575,9 @@ export default function RestaurantDashboard({
             updateDoc(doc(db, "orders", o.id), { status: 'cancelled', notes: (o.notes || "") + " [ملغى تلقائياً بسبب شبهة احتيال بالتنبيهات]" })
           )
         );
-        alert(`تم إلغاء ${suspiciousOrders.length} طلبات معلقة بنجاح!`);
+        alert(tr(`تم إلغاء ${suspiciousOrders.length} طلبات معلقة بنجاح!`, `${suspiciousOrders.length} pending orders were cancelled.`));
       } catch (err) {
-        alert("فشل في إلغاء طلبات البصمة.");
+        alert(tr('فشل في إلغاء طلبات البصمة.', 'Could not cancel the device orders.'));
       }
     }
   };
@@ -605,10 +605,10 @@ export default function RestaurantDashboard({
 
     if (!restaurant) {
     return (
-      <div className="flex flex-col items-center justify-center p-12 min-h-[60vh] text-center space-y-6 bg-white border border-border-delicate" dir="rtl">
+      <div className="flex flex-col items-center justify-center p-12 min-h-[60vh] text-center space-y-6 bg-white border border-border-delicate" dir={dir}>
         <AlertCircle className="w-16 h-16 text-brand-gold" />
-        <h2 className="text-3xl font-display text-brand-primary italic">المطعم غير موجود أو قد يكون تم حذفه</h2>
-        <p className="text-text-muted max-w-md">نظراً لتحديث إعدادات خادم قاعدة بيانات المشروع، قد تكون بيانات تسجيل دخولك تنتمي للنظام السابق. يرجى تسجيل الخروج ثم الدخول كأدمن لتسجيل المطعم مجدداً.</p>
+        <h2 className="text-3xl font-display text-brand-primary italic">{tr('المطعم غير موجود أو قد يكون تم حذفه', 'Restaurant not found')}</h2>
+        <p className="text-text-muted max-w-md">{tr('نظراً لتحديث إعدادات خادم قاعدة بيانات المشروع، قد تكون بيانات تسجيل دخولك تنتمي للنظام السابق. يرجى تسجيل الخروج ثم الدخول كأدمن لتسجيل المطعم مجدداً.', 'Your account may belong to an older database. Sign out and contact an administrator if this restaurant should exist.')}</p>
         <button 
           onClick={() => {
             localStorage.removeItem('novx_session');
@@ -616,7 +616,7 @@ export default function RestaurantDashboard({
           }}
           className="bg-brand-primary text-white px-8 py-4 font-bold text-xs uppercase tracking-widest hover:bg-brand-secondary transition-all"
         >
-          تسجيل الخروج والعودة لصفحة الدخول
+          {tr('تسجيل الخروج والعودة لصفحة الدخول', 'Sign out and return to login')}
         </button>
       </div>
     );
@@ -631,17 +631,17 @@ export default function RestaurantDashboard({
 
   if (isExpiredAndLocked) {
     return (
-      <div className="flex flex-col items-center justify-center p-12 min-h-[60vh] text-center space-y-8 bg-white border border-red-200" dir="rtl">
+      <div className="flex flex-col items-center justify-center p-12 min-h-[60vh] text-center space-y-8 bg-white border border-red-200" dir={dir}>
         <div className="w-20 h-20 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto border border-red-100">
           <ShieldAlert className="w-10 h-10" />
         </div>
         <div className="space-y-4 max-w-lg">
-          <h2 className="text-3xl font-display text-red-700 font-bold">عذراً، انتهى اشتراك النظام!</h2>
+          <h2 className="text-3xl font-display text-red-700 font-bold">{tr('عذراً، انتهى اشتراك النظام!', 'Subscription expired')}</h2>
           <p className="text-text-muted leading-relaxed font-sans">
-            لقد انتهت فترة الاشتراك وفترة السماح الممنوحة لهذا المطعم بالكامل. تم إيقاف تشغيل لوحة التحكم مؤقتاً.
+            {tr('لقد انتهت فترة الاشتراك وفترة السماح الممنوحة لهذا المطعم بالكامل. تم إيقاف تشغيل لوحة التحكم مؤقتاً.', 'The subscription and grace period have ended. This workspace is temporarily unavailable.')}
           </p>
           <div className="bg-red-50 p-6 rounded-xl border border-red-100 text-center font-display space-y-2">
-            <p className="text-xs text-red-800 font-bold">يرجى الاتصال بفريق الدعم الفني فوراً من أجل تجديد الاشتراك وتفعيل النظام:</p>
+            <p className="text-xs text-red-800 font-bold">{tr('يرجى الاتصال بفريق الدعم الفني فوراً من أجل تجديد الاشتراك وتفعيل النظام:', 'Contact support to renew and reactivate the service:')}</p>
             <p className="text-2xl font-bold text-red-900 tracking-wider">{supportPhone}</p>
           </div>
         </div>
@@ -652,19 +652,19 @@ export default function RestaurantDashboard({
           }}
           className="bg-brand-primary text-white px-8 py-4 font-bold text-xs uppercase tracking-widest hover:bg-brand-secondary transition-all"
         >
-          تسجيل الخروج والعودة لصفحة الدخول
+          {tr('تسجيل الخروج والعودة لصفحة الدخول', 'Sign out and return to login')}
         </button>
       </div>
     );
   }
 
   return (
-    <div className="space-y-12" dir="rtl">
+    <div className="space-y-12" dir={dir}>
       {/* Offline Alert Banner */}
       {!isOnline && (
         <div className="p-4 bg-red-600 text-white rounded-none flex items-center justify-center gap-3 text-right font-sans font-bold text-xs" id="admin-offline-banner">
           <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping" />
-          <span>تنبيه الاتصال: إنترنت الإدارة غير مستقر أو منقطع حالياً! لا تقلق، البيانات مخزنة أوفلاين وسيقوم المتصفح بإرسال جميع تحديثات الطلبات فور إعادة الاتصال بالشبكة.</span>
+          <span>{tr('تنبيه الاتصال: إنترنت الإدارة غير مستقر أو منقطع حالياً! لا تقلق، البيانات مخزنة أوفلاين وسيقوم المتصفح بإرسال جميع تحديثات الطلبات فور إعادة الاتصال بالشبكة.', 'Connection warning: Internet access is unstable or offline. Changes will sync when the connection returns.')}</span>
         </div>
       )}
 
@@ -673,7 +673,7 @@ export default function RestaurantDashboard({
         <div className="p-6 bg-amber-50 border border-amber-200 text-amber-900 rounded-none flex items-center gap-4 text-right">
           <Bell className="w-6 h-6 text-amber-600 shrink-0" />
           <p className="text-sm font-bold font-sans">
-            تنبيه هام: اشتراككم قارب على الانتهاء وسوف ينتهي بعد أقل من 3 أيام. يرجى تجديد الاشتراك لضمان استمرار الخدمة دون انقطاع. للاتصال بالدعم الفني: <span className="font-display font-medium text-amber-800">{supportPhone}</span>
+            {tr('تنبيه هام: اشتراككم قارب على الانتهاء وسوف ينتهي بعد أقل من 3 أيام. يرجى تجديد الاشتراك لضمان استمرار الخدمة دون انقطاع. للاتصال بالدعم الفني:', 'Your subscription expires in less than 3 days. Renew to avoid interruption. Support:')} <span className="font-display font-medium text-amber-800">{supportPhone}</span>
           </p>
         </div>
       )}
@@ -682,7 +682,7 @@ export default function RestaurantDashboard({
         <div className="p-6 bg-red-50 border border-red-200 text-red-950 rounded-none flex items-center gap-4 text-right">
           <ShieldAlert className="w-6 h-6 text-red-600 shrink-0 animate-pulse" />
           <p className="text-sm font-bold font-sans">
-            تنبيه حرج جداً: لقد انتهى اشتراك نظامكم رسميًا! النظام قيد فترة التجريب والمهلة الإضافية وستتوقف الخدمة تماماً بعد 3 أيام من تاريخ الانتهاء. اتصلوا بالدعم للتجديد الفوري: <span className="font-display font-bold text-red-800">{supportPhone}</span>
+            {tr('تنبيه حرج جداً: لقد انتهى اشتراك نظامكم رسميًا! النظام قيد فترة التجريب والمهلة الإضافية وستتوقف الخدمة تماماً بعد 3 أيام من تاريخ الانتهاء. اتصلوا بالدعم للتجديد الفوري:', 'Your subscription has expired. Service will stop after the grace period. Contact support to renew:')} <span className="font-display font-bold text-red-800">{supportPhone}</span>
           </p>
         </div>
       )}
@@ -714,7 +714,7 @@ export default function RestaurantDashboard({
             <div className="space-y-2 text-right">
               <div className="flex items-center gap-3">
                 <span className="text-[10px] font-bold text-brand-gold uppercase tracking-widest">
-                  لوحة التحكم للمدير المالك
+                  {tr('لوحة التحكم للمدير المالك', 'Owner dashboard')}
                 </span>
                 {systemLogo && restaurant.logoUrl && (
                   <div className="h-3 w-px bg-border-delicate" />
@@ -724,13 +724,13 @@ export default function RestaurantDashboard({
                 )}
               </div>
               <h1 className="text-2xl sm:text-3xl font-display text-brand-primary tracking-tight">
-                أهلاً بك،{" "}
+                {tr('أهلاً بك،', 'Welcome,')}{" "}
                 <span className="text-brand-gold">
                   {restaurant.restaurantName}
                 </span>
               </h1>
               <p className="text-xs font-bold text-text-muted/60 tracking-wider">
-                المدير المسؤول: {restaurant.managerName}
+                {tr('المدير المسؤول:', 'Manager:')} {restaurant.managerName}
               </p>
             </div>
           </div>
@@ -738,19 +738,19 @@ export default function RestaurantDashboard({
           <div className="grid grid-cols-2 gap-6 sm:gap-8 text-center sm:text-right min-w-[240px] border-t border-border-delicate lg:border-t-0 pt-6 lg:pt-0 w-full lg:w-auto">
             <div className="space-y-1">
               <p className="text-[9px] font-fold text-brand-gold font-bold tracking-widest opacity-60">
-                حالة الاشتراك
+                {tr('حالة الاشتراك', 'Subscription')}
               </p>
               <span
                 className={`text-xs font-bold tracking-widest ${restaurant.status === "active" ? "text-emerald-600" : "text-red-600"}`}
               >
                 {restaurant.status === "active"
-                  ? "باقة بريميوم نشطة"
-                  : "منتهي الاشتراك"}
+                  ? tr('باقة بريميوم نشطة', 'Active plan')
+                  : tr('منتهي الاشتراك', 'Expired')}
               </span>
             </div>
             <div className="space-y-1">
               <p className="text-[9px] font-bold text-brand-gold tracking-widest opacity-60">
-                تاريخ التجديد
+                {tr('تاريخ التجديد', 'Renewal date')}
               </p>
               <p className="text-sm font-bold text-brand-primary">
                 {safeFormatDate(restaurant.endDate, "yyyy/MM/dd")}
@@ -771,39 +771,39 @@ export default function RestaurantDashboard({
           >
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
               <StatCard
-                title="المبيعات اليومية"
-                value={`${dailyEarnings.toLocaleString()} د.ع`}
-                label={`بواقع ${dailyOrdersCount} طلباً اليوم`}
+                title={tr('المبيعات اليومية', 'Daily sales')}
+                value={`${dailyEarnings.toLocaleString()} ${tr('د.ع', 'IQD')}`}
+                label={tr(`بواقع ${dailyOrdersCount} طلباً اليوم`, `${dailyOrdersCount} orders today`)}
                 icon={<ClipboardList className="w-5 h-5" />}
               />
               <StatCard
-                title="أرباح هذا الشهر"
-                value={`${monthlyEarnings.toLocaleString()} د.ع`}
-                label={`بواقع ${monthlyOrdersCount} طلباً هذا الشهر`}
+                title={tr('أرباح هذا الشهر', 'Monthly revenue')}
+                value={`${monthlyEarnings.toLocaleString()} ${tr('د.ع', 'IQD')}`}
+                label={tr(`بواقع ${monthlyOrdersCount} طلباً هذا الشهر`, `${monthlyOrdersCount} orders this month`)}
                 icon={<BarChart3 className="w-5 h-5" />}
               />
               <StatCard
-                title="خدمة الصالة والموظفين"
+                title={tr('خدمة الصالة والموظفين', 'Service staff')}
                 value={waiters.length}
-                label="الموظفين المسجلين"
+                label={tr('الموظفين المسجلين', 'Registered staff')}
                 icon={<Users className="w-5 h-5" />}
               />
               <StatCard
-                title="فريق الطهي"
+                title={tr('فريق الطهي', 'Kitchen team')}
                 value={kitchenStaff.length}
-                label="طاقم المطبخ المعتمد"
+                label={tr('طاقم المطبخ المعتمد', 'Kitchen staff')}
                 icon={<ChefHat className="w-5 h-5" />}
               />
             </div>
 
             {/* Specific Day Profit Analyzer */}
-            <div className="bg-white border border-border-delicate p-6 sm:p-10 space-y-6 relative overflow-hidden text-right" dir="rtl">
+            <div className="bg-white border border-border-delicate p-6 sm:p-10 space-y-6 relative overflow-hidden text-right" dir={dir}>
               <div className="absolute top-0 right-0 w-1.5 h-full bg-brand-gold" />
               <div className="space-y-4">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                   <div className="space-y-1">
-                    <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest">أرباح أي يوم تريده</p>
-                    <h3 className="text-xl font-display text-brand-primary italic font-bold">مستكشف مبيعات الأيام السابقة</h3>
+                    <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest">{tr('أرباح أي يوم تريده', 'Sales by date')}</p>
+                    <h3 className="text-xl font-display text-brand-primary italic font-bold">{tr('مستكشف مبيعات الأيام السابقة', 'Daily sales explorer')}</h3>
                   </div>
                   {/* Date input styled nicely */}
                   <input
@@ -817,19 +817,19 @@ export default function RestaurantDashboard({
                 {/* Stats for the chosen day */}
                 <div className="grid grid-cols-3 gap-4 pt-2">
                   <div className="p-4 bg-bg-paper border border-border-delicate text-right">
-                    <p className="text-[9px] font-bold text-text-muted uppercase tracking-widest">مبيعات هذا اليوم</p>
+                    <p className="text-[9px] font-bold text-text-muted uppercase tracking-widest">{tr('مبيعات هذا اليوم', 'Sales')}</p>
                     <p className="text-md sm:text-lg font-display text-brand-primary not-italic font-bold truncate mt-1">
-                      <span className="font-sans">{selectedDateEarnings.toLocaleString()}</span> <span className="text-[10px]">د.ع</span>
+                      <span className="font-sans">{selectedDateEarnings.toLocaleString()}</span> <span className="text-[10px]">{tr('د.ع', 'IQD')}</span>
                     </p>
                   </div>
                   <div className="p-4 bg-bg-paper border border-border-delicate text-right">
-                    <p className="text-[9px] font-bold text-text-muted uppercase tracking-widest font-sans">طلبات مكتملة</p>
+                    <p className="text-[9px] font-bold text-text-muted uppercase tracking-widest font-sans">{tr('طلبات مكتملة', 'Completed')}</p>
                     <p className="text-md sm:text-lg font-display text-brand-primary not-italic font-bold mt-1">
                       <span className="font-sans">{selectedDateOrders.filter(o => o.status !== 'cancelled').length}</span>
                     </p>
                   </div>
                   <div className="p-4 bg-bg-paper border border-border-delicate text-right">
-                    <p className="text-[9px] font-bold text-text-muted uppercase tracking-widest font-sans">طلبات ملغاة</p>
+                    <p className="text-[9px] font-bold text-text-muted uppercase tracking-widest font-sans">{tr('طلبات ملغاة', 'Cancelled')}</p>
                     <p className="text-md sm:text-lg font-display text-red-800 not-italic font-bold mt-1">
                       <span className="font-sans">{selectedDateCancelled}</span>
                     </p>
@@ -839,17 +839,17 @@ export default function RestaurantDashboard({
             </div>
 
             {/* Geofence & Location Control Center */}
-            <div className="bg-white border border-border-delicate p-6 sm:p-10 space-y-6 relative overflow-hidden text-right" dir="rtl">
+            <div className="bg-white border border-border-delicate p-6 sm:p-10 space-y-6 relative overflow-hidden text-right" dir={dir}>
               <div className="absolute top-0 right-0 w-1.5 h-full bg-emerald-600" />
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
                 <div className="space-y-1">
                   <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
-                    التحقق الجغرافي والوقاية من الطلبات والتصفح المزيف (GPS Anti-Spam)
+                    {tr('التحقق الجغرافي والوقاية من الطلبات والتصفح المزيف (GPS Anti-Spam)', 'Location verification and order protection')}
                   </p>
-                  <h3 className="text-xl font-display text-brand-primary italic font-bold">تحديد موقع المطعم الجغرافي</h3>
+                  <h3 className="text-xl font-display text-brand-primary italic font-bold">{tr('تحديد موقع المطعم الجغرافي', 'Restaurant location')}</h3>
                   <p className="text-xs text-text-muted max-w-3xl leading-relaxed">
-                    من خلال تحديد إحداثيات خطوط الطول والعرض لموقع مطعمك، حتى يظهر لك موقع الزبون بالنسبة لموقع مطعمك لكشف الطلبات الوهمية.
+                    {tr('من خلال تحديد إحداثيات خطوط الطول والعرض لموقع مطعمك، حتى يظهر لك موقع الزبون بالنسبة لموقع مطعمك لكشف الطلبات الوهمية.', 'Set your restaurant coordinates so customer distance can be checked when placing orders.')}
                   </p>
                 </div>
                 <button
@@ -858,28 +858,32 @@ export default function RestaurantDashboard({
                   disabled={fetchingLocationGPS}
                   className="px-5 py-3 bg-white border border-brand-primary text-brand-primary text-[10px] font-bold uppercase tracking-wider hover:bg-brand-primary hover:text-white transition-all duration-300 disabled:opacity-40 rounded-none shrink-0 font-sans"
                 >
-                  {fetchingLocationGPS ? "جاري جلب موقعك..." : "تحديد موقعي الحالي بالـ GPS 📍"}
+                  {fetchingLocationGPS ? tr('جاري جلب موقعك...', 'Getting location...') : tr('تحديد موقعي الحالي بالـ GPS 📍', 'Use current GPS 📍')}
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-2 font-sans">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-2 font-sans">
                 <div className="space-y-1.5 text-right">
-                  <label className="text-[10px] font-bold text-brand-primary uppercase tracking-widest">خط العرض (Latitude)</label>
+                  <label className="text-[10px] font-bold text-brand-primary uppercase tracking-widest">{tr('خط العرض (Latitude)', 'Latitude')}</label>
                   <input
                     type="text"
                     value={latInput}
                     onChange={(e) => setLatInput(e.target.value)}
-                    placeholder="مثال: 33.3250"
+                    placeholder={tr('مثال: 33.3250', 'Example: 33.3250')}
                     className="w-full bg-bg-paper border border-border-delicate px-4 py-3.5 text-sm font-semibold text-brand-primary focus:outline-none"
                   />
                 </div>
                 <div className="space-y-1.5 text-right">
-                  <label className="text-[10px] font-bold text-brand-primary uppercase tracking-widest">خط الطول (Longitude)</label>
+                  <label className="text-[10px] font-bold text-brand-primary uppercase tracking-widest">{tr('نطاق التحقق بالمتر', 'Allowed radius (meters)')}</label>
+                  <input type="number" min="25" max="1000" value={radiusInput} onChange={(e) => setRadiusInput(e.target.value)} className="w-full bg-bg-paper border border-border-delicate px-4 py-3.5 text-sm font-semibold text-brand-primary focus:outline-none" />
+                </div>
+                <div className="space-y-1.5 text-right">
+                  <label className="text-[10px] font-bold text-brand-primary uppercase tracking-widest">{tr('خط الطول (Longitude)', 'Longitude')}</label>
                   <input
                     type="text"
                     value={lngInput}
                     onChange={(e) => setLngInput(e.target.value)}
-                    placeholder="مثال: 44.3400"
+                    placeholder={tr('مثال: 44.3400', 'Example: 44.3400')}
                     className="w-full bg-bg-paper border border-border-delicate px-4 py-3.5 text-sm font-semibold text-brand-primary focus:outline-none"
                   />
                 </div>
@@ -890,12 +894,12 @@ export default function RestaurantDashboard({
                   {restaurant?.latitude && restaurant?.longitude ? (
                     <span className="text-emerald-700 font-semibold flex items-center gap-1">
                       <span className="w-2 h-2 bg-emerald-600 rounded-full" />
-                      الموقع الحالي مثبت: ({restaurant.latitude.toFixed(5)}, {restaurant.longitude.toFixed(5)})
+                      {tr('الموقع الحالي مثبت:', 'Current location:')} ({restaurant.latitude.toFixed(5)}, {restaurant.longitude.toFixed(5)})
                     </span>
                   ) : (
                     <span className="text-amber-700 font-semibold flex items-center gap-1 animate-pulse">
                       <span className="w-2 h-2 bg-amber-500 rounded-full" />
-                      يرجى تعيين موقعك لتفعيل الوقاية الجغرافية (المنصور، بغداد افتراضياً)
+                      {tr('يرجى تعيين موقعك لتفعيل الوقاية الجغرافية (المنصور، بغداد افتراضياً)', 'Set your location to enable location verification.')}
                     </span>
                   )}
                 </div>
@@ -905,7 +909,7 @@ export default function RestaurantDashboard({
                   disabled={savingLocation}
                   className="w-full sm:w-auto px-10 py-4 bg-brand-primary text-white text-[10px] font-bold uppercase tracking-widest hover:bg-brand-secondary transition-all duration-300 disabled:opacity-40 rounded-none text-center font-sans"
                 >
-                  {savingLocation ? "جاري الحفظ والترميز الجغرافي..." : "حفظ وتثبيت موقع المطعم 💾"}
+                  {savingLocation ? tr('جاري الحفظ والترميز الجغرافي...', 'Saving location...') : tr('حفظ وتثبيت موقع المطعم 💾', 'Save restaurant location 💾')}
                 </button>
               </div>
             </div>
@@ -915,7 +919,7 @@ export default function RestaurantDashboard({
                 <div className="flex items-center gap-4">
                   <div className="w-1.5 h-6 bg-brand-gold" />
                   <h3 className="text-xl font-display text-brand-primary italic tracking-tight">
-                    الفعاليات والطلبات الأخيرة
+                    {tr('الفعاليات والطلبات الأخيرة', 'Recent orders')}
                   </h3>
                 </div>
                 <div className="space-y-4">
@@ -928,7 +932,7 @@ export default function RestaurantDashboard({
                         <p className="text-sm font-bold text-brand-primary">
                           {order.customerName}{" "}
                           <span className="text-text-muted opacity-40">
-                            / طاولة {order.tableNumber}
+                            / {tr('طاولة', 'Table')} {order.tableNumber}
                           </span>
                         </p>
                         <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest">
@@ -937,7 +941,7 @@ export default function RestaurantDashboard({
                       </div>
                       <div className="flex items-center justify-between sm:justify-end gap-4 w-full sm:w-auto border-t border-border-delicate/40 sm:border-t-0 pt-4 sm:pt-0">
                         <span className="text-sm font-display italic text-brand-primary font-bold">
-                          {order.totalAmount.toLocaleString()} د.ع
+                          {order.totalAmount.toLocaleString()} {tr('د.ع', 'IQD')}
                         </span>
                         <span className="text-[9px] font-bold uppercase tracking-widest p-2 bg-white border border-border-delicate min-w-[80px] text-center">
                           {order.status}
@@ -947,13 +951,17 @@ export default function RestaurantDashboard({
                   ))}
                   {orders.length === 0 && (
                     <div className="text-center py-20 text-text-muted italic opacity-40">
-                      لا توجد طلبات واردة حالياً.
+                      {tr('لا توجد طلبات واردة حالياً.', 'No recent orders.')}
                     </div>
                   )}
                 </div>
               </div>
             </div>
           </motion.div>
+        )}
+
+        {activeTab === "theme" && restaurant && (
+          <ThemeSettings restaurant={restaurant} onSaved={(next) => setRestaurant(next)} />
         )}
 
         {activeTab === "waiters" && (
@@ -968,7 +976,7 @@ export default function RestaurantDashboard({
               <div className="flex flex-col md:flex-row justify-between items-stretch md:items-end gap-6">
                 <div className="space-y-2 text-right">
                   <h2 className="text-2xl sm:text-3xl font-display text-brand-primary tracking-tight">
-                    موظفين الصالة
+                    {tr('موظفين الصالة', 'Waiter staff')}
                   </h2>
                 </div>
                 <button
@@ -977,7 +985,7 @@ export default function RestaurantDashboard({
                   }
                   className="px-10 py-5 bg-brand-primary text-white text-[11px] font-bold uppercase tracking-widest hover:bg-brand-secondary transition-all shadow-xl text-center"
                 >
-                  إضافة كابتن / ويتر جديد
+                  {tr('إضافة كابتن / ويتر جديد', 'Add waiter')}
                 </button>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
@@ -1004,7 +1012,7 @@ export default function RestaurantDashboard({
               <div className="flex flex-col md:flex-row justify-between items-stretch md:items-end gap-6">
                 <div className="space-y-2 text-right">
                   <h2 className="text-2xl sm:text-3xl font-display text-brand-primary tracking-tight">
-                    قسم المطبخ
+                    {tr('قسم المطبخ', 'Kitchen staff')}
                   </h2>
                 </div>
                 <button
@@ -1013,7 +1021,7 @@ export default function RestaurantDashboard({
                   }
                   className="px-10 py-5 border border-brand-gold text-brand-gold text-[11px] font-bold uppercase tracking-widest hover:bg-brand-gold hover:text-white transition-all text-center"
                 >
-                  اضافة موظف جديد
+                  {tr('اضافة موظف جديد', 'Add kitchen staff')}
                 </button>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
@@ -1051,16 +1059,16 @@ export default function RestaurantDashboard({
               <div className="absolute top-0 right-0 w-1.5 h-full bg-brand-gold" />
               <div className="space-y-1.5 text-right flex-1">
                 <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest">
-                  إدارة وتنظيم طلبات الزبائن (المقود الذكي)
+                  {tr('إدارة وتنظيم طلبات الزبائن (المقود الذكي)', 'Manage customer orders')}
                 </p>
                 <div className="flex items-center gap-3">
-                  <h3 className="text-xl font-display text-brand-primary font-bold italic">لوحة إدارة الطلبيات المباشرة</h3>
+                  <h3 className="text-xl font-display text-brand-primary font-bold italic">{tr('لوحة إدارة الطلبيات المباشرة', 'Live orders')}</h3>
                   <span className="text-xs bg-bg-paper text-brand-primary py-1 px-2 border border-border-delicate font-mono font-bold">
-                    العدد الحالي: {restaurant?.currentOrderNumber || 0}
+                    {tr('العدد الحالي:', 'Current number:')} {restaurant?.currentOrderNumber || 0}
                   </span>
                 </div>
                 <p className="text-xs text-text-muted leading-relaxed">
-                  هنا تعرض جميع الطلبات الجارية مقسمة حسب الحالة. يمكنك تصفير عداد ترتيب الطلبات والبدء بيوم عمل جديد من خلال الزر الجانبي.
+                  {tr('هنا تعرض جميع الطلبات الجارية مقسمة حسب الحالة. يمكنك تصفير عداد ترتيب الطلبات والبدء بيوم عمل جديد من خلال الزر الجانبي.', 'Orders are grouped by status. You can reset the daily order counter to start a new workday.')}
                 </p>
               </div>
               <button
@@ -1069,12 +1077,12 @@ export default function RestaurantDashboard({
                 disabled={isResetting}
                 className="w-full md:w-auto px-6 py-4 bg-brand-primary text-white text-[11px] font-bold uppercase tracking-widest hover:bg-brand-secondary transition-all shrink-0 flex items-center justify-center gap-2 rounded-none"
               >
-                {isResetting ? "جاري تصفير العداد..." : "🧹 تصفير العداد والبدء بيوم عمل جديد"}
+                {isResetting ? tr('جاري تصفير العداد...', 'Resetting counter...') : tr('🧹 تصفير العداد والبدء بيوم عمل جديد', '🧹 Start a new workday')}
               </button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-8">
               <OrderColumn
-                title="طلبات جديدة واردة"
+                title={tr('طلبات جديدة واردة', 'New orders')}
                 orders={orders.filter((o) => o.status === "pending" && !o.clearedForStaff)}
                 type="pending"
                 onUpdate={updateOrderStatus}
@@ -1082,7 +1090,7 @@ export default function RestaurantDashboard({
                 onShowTimeline={(order) => setSelectedOrderForTimeline(order)}
               />
               <OrderColumn
-                title="قيد التحضير بالمطبخ"
+                title={tr('قيد التحضير بالمطبخ', 'Preparing')}
                 orders={orders.filter((o) => o.status === "preparing" && !o.clearedForStaff)}
                 type="preparing"
                 onUpdate={updateOrderStatus}
@@ -1090,7 +1098,7 @@ export default function RestaurantDashboard({
                 onShowTimeline={(order) => setSelectedOrderForTimeline(order)}
               />
               <OrderColumn
-                title="جاهزة للتسليم"
+                title={tr('جاهزة للتسليم', 'Ready to serve')}
                 orders={orders.filter((o) => o.status === "ready" && !o.clearedForStaff)}
                 type="ready"
                 onUpdate={updateOrderStatus}
@@ -1098,7 +1106,7 @@ export default function RestaurantDashboard({
                 onShowTimeline={(order) => setSelectedOrderForTimeline(order)}
               />
               <OrderColumn
-                title="طلبات منتهية وتاريخية"
+                title={tr('طلبات منتهية وتاريخية', 'Completed orders')}
                 orders={orders.filter((o) => o.status === "served" && !o.clearedForStaff)}
                 type="served"
                 onUpdate={updateOrderStatus}
@@ -1107,7 +1115,7 @@ export default function RestaurantDashboard({
                 isHistory
               />
               <OrderColumn
-                title="طلبات مرفوضة ومسترجعة"
+                title={tr('طلبات مرفوضة ومسترجعة', 'Rejected orders')}
                 orders={orders.filter((o) => o.status === "rejected" && !o.clearedForStaff)}
                 type="rejected"
                 onUpdate={updateOrderStatus}
@@ -1169,17 +1177,17 @@ export default function RestaurantDashboard({
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                   <div className="space-y-2">
                     <h3 className="text-2xl sm:text-3xl font-display text-brand-primary font-bold italic">
-                      الأرشيف التاريخي العام للطلب
+                      {tr('الأرشيف التاريخي العام للطلب', 'Order history')}
                     </h3>
                     <p className="text-xs text-text-muted">
-                      مراجعة وتتبع شامل لجميع الطلبيات السابقة ببياناتها ومبيعاتها اليومية لأي يوم تختاره من التقويم.
+                      {tr('مراجعة وتتبع شامل لجميع الطلبيات السابقة ببياناتها ومبيعاتها اليومية لأي يوم تختاره من التقويم.', 'Review past orders and sales for any selected date.')}
                     </p>
                   </div>
                   
                   {/* Date & Search Filters */}
                   <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center">
                     <div className="space-y-1.5">
-                      <label className="block text-[10px] font-bold text-brand-primary uppercase tracking-wider">اختر اليوم المطلوب</label>
+                      <label className="block text-[10px] font-bold text-brand-primary uppercase tracking-wider">{tr('اختر اليوم المطلوب', 'Select date')}</label>
                       <input
                         type="date"
                         value={archiveDate}
@@ -1188,10 +1196,10 @@ export default function RestaurantDashboard({
                       />
                     </div>
                     <div className="space-y-1.5 flex-1 sm:w-64">
-                      <label className="block text-[10px] font-bold text-brand-primary uppercase tracking-wider">بحث مخصص في الطلبات</label>
+                      <label className="block text-[10px] font-bold text-brand-primary uppercase tracking-wider">{tr('بحث مخصص في الطلبات', 'Search orders')}</label>
                       <input
                         type="text"
-                        placeholder="رقم طاولة، اسم زبون، رقم الطلب..."
+                        placeholder={tr('رقم طاولة، اسم زبون، رقم الطلب...', 'Table, customer, or order number...')}
                         value={archiveSearch}
                         onChange={(e) => setArchiveSearch(e.target.value)}
                         className="w-full bg-slate-50 border border-border-delicate px-4 py-3 text-sm font-medium focus:outline-none focus:border-brand-primary focus:bg-white text-right font-sans h-[48px]"
@@ -1204,39 +1212,39 @@ export default function RestaurantDashboard({
               {/* Day Stats Cards */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                 <div className="bg-white border border-border-delicate p-6 space-y-2 text-right">
-                  <span className="text-[9px] font-bold text-text-muted uppercase tracking-widest block">إجمالي إيرادات اليوم المقبولة</span>
+                  <span className="text-[9px] font-bold text-text-muted uppercase tracking-widest block">{tr('إجمالي إيرادات اليوم المقبولة', 'Completed revenue')}</span>
                   <p className="text-2xl sm:text-3xl font-display text-emerald-600 font-bold">
                     {totalRevenue.toLocaleString()}{" "}
-                    <span className="text-xs opacity-50 font-sans font-normal">د.ع</span>
+                    <span className="text-xs opacity-50 font-sans font-normal">{tr('د.ع', 'IQD')}</span>
                   </p>
-                  <span className="text-[10px] text-text-muted/60 block">من {completedOrders.length} طلب مستلم بنجاح</span>
+                  <span className="text-[10px] text-text-muted/60 block">{tr(`من ${completedOrders.length} طلب مستلم بنجاح`, `From ${completedOrders.length} completed orders`)}</span>
                 </div>
 
                 <div className="bg-white border border-border-delicate p-6 space-y-2 text-right">
-                  <span className="text-[9px] font-bold text-text-muted uppercase tracking-widest block">الطلبات النشطة / قيد المعالجة</span>
+                  <span className="text-[9px] font-bold text-text-muted uppercase tracking-widest block">{tr('الطلبات النشطة / قيد المعالجة', 'Active orders')}</span>
                   <p className="text-2xl sm:text-3xl font-display text-brand-gold font-bold">
                     {activeOrders.length}{" "}
-                    <span className="text-xs opacity-50 font-sans font-normal">طلبيات</span>
+                    <span className="text-xs opacity-50 font-sans font-normal">{tr('طلبيات', 'orders')}</span>
                   </p>
-                  <span className="text-[10px] text-text-muted/60 block">خلال الوردية الجارية حالياً</span>
+                  <span className="text-[10px] text-text-muted/60 block">{tr('خلال الوردية الجارية حالياً', 'During the current shift')}</span>
                 </div>
 
                 <div className="bg-white border border-border-delicate p-6 space-y-2 text-right">
-                  <span className="text-[9px] font-bold text-text-muted uppercase tracking-widest block">طلبات مرفوضة ومسترجعة</span>
+                  <span className="text-[9px] font-bold text-text-muted uppercase tracking-widest block">{tr('طلبات مرفوضة ومسترجعة', 'Rejected orders')}</span>
                   <p className="text-2xl sm:text-3xl font-display text-red-600 font-bold">
                     {rejectedOrders.length}{" "}
-                    <span className="text-xs opacity-50 font-sans font-normal">طلبيات</span>
+                    <span className="text-xs opacity-50 font-sans font-normal">{tr('طلبيات', 'orders')}</span>
                   </p>
-                  <span className="text-[10px] text-text-muted/60 block">مرفوضة من الويترز أو المطبخ</span>
+                  <span className="text-[10px] text-text-muted/60 block">{tr('مرفوضة من الويترز أو المطبخ', 'Rejected by waiter or kitchen')}</span>
                 </div>
 
                 <div className="bg-white border border-border-delicate p-6 space-y-2 text-right">
-                  <span className="text-[9px] font-bold text-text-muted uppercase tracking-widest block">مجموع العمليات المالية المقدرة</span>
+                  <span className="text-[9px] font-bold text-text-muted uppercase tracking-widest block">{tr('مجموع العمليات المالية المقدرة', 'Estimated revenue')}</span>
                   <p className="text-2xl sm:text-3xl font-display text-brand-primary font-bold">
                     {totalEstimatedRevenue.toLocaleString()}{" "}
-                    <span className="text-xs opacity-50 font-sans font-normal">د.ع</span>
+                    <span className="text-xs opacity-50 font-sans font-normal">{tr('د.ع', 'IQD')}</span>
                   </p>
-                  <span className="text-[10px] text-text-muted/60 block">مجموع الطلبات لليوم {archiveOrders.length}</span>
+                  <span className="text-[10px] text-text-muted/60 block">{tr(`مجموع الطلبات لليوم ${archiveOrders.length}`, `${archiveOrders.length} orders for this date`)}</span>
                 </div>
               </div>
 
@@ -1245,14 +1253,14 @@ export default function RestaurantDashboard({
                 <div className="flex items-center gap-4 justify-start">
                   <div className="h-0.5 w-12 bg-brand-primary opacity-30" />
                   <p className="text-sm font-bold text-brand-primary uppercase tracking-widest">
-                    سجل الطلبيات لليوم المحدد ({archiveOrders.length})
+                    {tr('سجل الطلبيات لليوم المحدد', 'Orders for selected date')} ({archiveOrders.length})
                   </p>
                 </div>
 
                 {archiveOrders.length === 0 ? (
                   <div className="bg-white border border-border-delicate p-12 py-24 text-center space-y-4">
-                    <p className="font-display italic text-xl text-brand-gold opacity-30">لا توجد أي بيانات مسجلة لهذا التاريخ.</p>
-                    <p className="text-xs text-text-muted max-w-sm mx-auto">تأكد من اختيار يوم المبيعات المناسب أو مراجعة فلاتر البحث أعلاه.</p>
+                    <p className="font-display italic text-xl text-brand-gold opacity-30">{tr('لا توجد أي بيانات مسجلة لهذا التاريخ.', 'No orders found for this date.')}</p>
+                    <p className="text-xs text-text-muted max-w-sm mx-auto">{tr('تأكد من اختيار يوم المبيعات المناسب أو مراجعة فلاتر البحث أعلاه.', 'Choose another date or review your search filters.')}</p>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
@@ -1269,9 +1277,9 @@ export default function RestaurantDashboard({
                         <div className="flex justify-between items-start gap-4 border-b border-border-delicate/40 pb-3">
                           <div className="space-y-1">
                             <h4 className="font-display text-lg font-bold text-brand-primary">
-                              طاولة {o.tableNumber} <span className="text-xs text-text-muted font-normal">/ {o.customerName}</span>
+                              {tr('طاولة', 'Table')} {o.tableNumber} <span className="text-xs text-text-muted font-normal">/ {o.customerName}</span>
                             </h4>
-                            <span className="text-[10px] font-mono text-text-muted/50 block">المعرف: #{o.id.slice(-6).toUpperCase()}</span>
+                            <span className="text-[10px] font-mono text-text-muted/50 block">{tr('المعرف:', 'ID:')} #{o.id.slice(-6).toUpperCase()}</span>
                           </div>
 
                           <div className="text-left font-mono">
@@ -1279,11 +1287,11 @@ export default function RestaurantDashboard({
                               o.status === "served" ? "bg-emerald-50 text-emerald-800" :
                               o.status === "rejected" ? "bg-red-50 text-red-800" : "bg-brand-gold/15 text-brand-gold"
                             }`}>
-                              {o.status === "served" ? "✔ مكتمل وموصل" :
-                               o.status === "rejected" ? "✘ مرفوض" : "⚡ نشط/قيد المعالجة"}
+                              {o.status === "served" ? tr('✔ مكتمل وموصل', '✔ Served') :
+                               o.status === "rejected" ? tr('✘ مرفوض', '✘ Rejected') : tr('⚡ نشط/قيد المعالجة', '⚡ Active')}
                             </span>
                             <span className="text-[10px] font-medium text-text-muted block mt-2">
-                              {o.orderNumber ? `رقم الطلب: ${o.orderNumber}` : "رقم الطلب: غير محدد"}
+                              {o.orderNumber ? tr(`رقم الطلب: ${o.orderNumber}`, `Order: ${o.orderNumber}`) : tr('رقم الطلب: غير محدد', 'Order number unavailable')}
                             </span>
                           </div>
                         </div>
@@ -1294,11 +1302,11 @@ export default function RestaurantDashboard({
                             <div key={idx} className="space-y-0.5 border-b border-border-delicate/20 pb-1 last:border-0 text-right">
                               <div className="flex justify-between text-xs text-text-main">
                                 <span>{item.name} <strong className="text-brand-gold">x{item.quantity}</strong></span>
-                                <span className="font-mono opacity-80">{(item.price * item.quantity).toLocaleString()} د.ع</span>
+                                <span className="font-mono opacity-80">{(item.price * item.quantity).toLocaleString()} {tr('د.ع', 'IQD')}</span>
                               </div>
                               {item.customizationText && (
                                 <p className="text-[10px] text-brand-gold font-bold">
-                                  ✨ الخيارات: {item.customizationText}
+                                  ✨ {tr('الخيارات:', 'Options:')} {item.customizationText}
                                 </p>
                               )}
                             </div>
@@ -1307,10 +1315,10 @@ export default function RestaurantDashboard({
 
                         <div className="border-t border-border-delicate/40 pt-4 flex justify-between items-center bg-slate-50/50 -mx-6 sm:-mx-8 px-6 sm:px-8 -mb-6 sm:-mb-8 py-4">
                           <span className="text-[10px] font-mono text-text-muted">
-                            {new Date(o.createdAt).toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" })}
+                            {new Date(o.createdAt).toLocaleTimeString(language === 'en' ? 'en-IQ' : 'ar-IQ', { hour: "2-digit", minute: "2-digit" })}
                           </span>
                           <p className="text-base font-bold text-brand-primary font-mono">
-                            {o.totalAmount.toLocaleString()} <span className="text-[9px]">د.ع</span>
+                            {o.totalAmount.toLocaleString()} <span className="text-[9px]">{tr('د.ع', 'IQD')}</span>
                           </p>
                         </div>
                       </div>
@@ -1332,30 +1340,30 @@ export default function RestaurantDashboard({
             <div className="flex flex-col md:flex-row justify-between items-stretch md:items-end gap-6 bg-bg-paper p-6 sm:p-12 border border-border-delicate border-r-4 border-r-brand-gold">
               <div className="space-y-2 text-right">
                 <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest">
-                  تنظيم قائمة الطعام والمنيو المباشر
+                  {tr('تنظيم قائمة الطعام والمنيو المباشر', 'Manage your live menu')}
                 </p>
                 <h2 className="text-2xl sm:text-3xl font-display text-brand-primary tracking-tight">
-                  قائمة الأطباق والمشروبات
+                  {tr('قائمة الأطباق والمشروبات', 'Food and drinks')}
                 </h2>
                 <p className="text-xs font-bold text-text-muted/60 tracking-wider max-w-md">
-                  حدث وعدل قائمة طعامك بكل تفاصيل الأسعار والصور ونسب النكهات.
+                  {tr('حدث وعدل قائمة طعامك بكل تفاصيل الأسعار والصور ونسب النكهات.', 'Add and update dishes, prices, photos, and options.')}
                 </p>
               </div>
               <button
                 onClick={() => setShowProductModal({ open: true })}
                 className="px-10 py-5 bg-brand-primary text-white text-[11px] font-bold uppercase tracking-widest hover:bg-brand-secondary transition-all shadow-2xl text-center w-full md:w-auto"
               >
-                إضافة طبق طعام جديد
+                {tr('إضافة طبق طعام جديد', 'Add a new dish')}
               </button>
             </div>
 
             {/* Category Management Panel */}
-            <div className="bg-white border border-border-delicate p-6 sm:p-10 space-y-6 text-right" dir="rtl">
+            <div className="bg-white border border-border-delicate p-6 sm:p-10 space-y-6 text-right" dir={dir}>
               <div className="space-y-1">
-                <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest">أقسام المنيو واللوائح المخصصة</p>
-                <h3 className="text-xl font-display text-brand-primary italic font-bold">إدارة تصنيفات وقوائم الطعام</h3>
+                <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest">{tr('أقسام المنيو واللوائح المخصصة', 'Menu categories')}</p>
+                <h3 className="text-xl font-display text-brand-primary italic font-bold">{tr('إدارة تصنيفات وقوائم الطعام', 'Manage categories')}</h3>
                 <p className="text-xs text-text-muted leading-relaxed">
-                  يمكنك إضافة أو حذف أقسام (مثل: وجبات رئيسية، شاورما، حلويات، عصائر). عند حذف أي قسم ستبقى الوجبات التابعة له كما هي دون حذف، ويمكنك تصنيفها لأي قسم جديد.
+                  {tr('يمكنك إضافة أو حذف أقسام (مثل: وجبات رئيسية، شاورما، حلويات، عصائر). عند حذف أي قسم ستبقى الوجبات التابعة له كما هي دون حذف، ويمكنك تصنيفها لأي قسم جديد.', 'Add or remove categories. Removing a category does not delete its dishes; you can assign them to another category.')}
                 </p>
               </div>
 
@@ -1364,7 +1372,7 @@ export default function RestaurantDashboard({
                   type="text"
                   value={newCategoryName}
                   onChange={(e) => setNewCategoryName(e.target.value)}
-                  placeholder="أدخل اسم القسم الجديد (مثلاً: مشاوي، عصائر طبيعية، مقبلات...)"
+                  placeholder={tr('أدخل اسم القسم الجديد (مثلاً: مشاوي، عصائر طبيعية، مقبلات...)', 'New category name (for example: Grills, Juices...)')}
                   className="bg-bg-paper border border-border-delicate px-4 py-3 text-sm text-brand-primary focus:outline-none flex-1 text-right font-bold"
                 />
                 <button
@@ -1372,7 +1380,7 @@ export default function RestaurantDashboard({
                   onClick={handleAddCategory}
                   className="px-8 py-3 bg-brand-primary text-white text-xs font-bold hover:bg-brand-secondary transition-all whitespace-nowrap"
                 >
-                  إضافة قسم جديد +
+                  {tr('إضافة قسم جديد', 'Add category')} +
                 </button>
               </div>
 
@@ -1382,12 +1390,12 @@ export default function RestaurantDashboard({
                     key={cat}
                     className="inline-flex items-center gap-2 bg-bg-paper border border-border-delicate px-4 py-2 text-xs font-bold text-brand-primary"
                   >
-                    <span>{cat}</span>
+                    <span>{localizeCategory(cat, language)}</span>
                     <button
                       type="button"
                       onClick={() => handleDeleteCategory(cat)}
                       className="text-red-500 hover:text-red-700 font-bold text-base w-5 h-5 flex items-center justify-center rounded-full hover:bg-red-50"
-                      title="حذف هذا القسم"
+                      title={tr('حذف هذا القسم', 'Delete this category')}
                     >
                       ×
                     </button>
@@ -1432,7 +1440,7 @@ export default function RestaurantDashboard({
                     <div className="p-4 sm:p-5 space-y-2 text-right">
                       {item.category && (
                         <p className="text-[8px] font-bold text-brand-gold uppercase tracking-widest">
-                          {item.category}
+                          {localizeCategory(item.category, language)}
                         </p>
                       )}
                       <div className="flex flex-col sm:flex-row justify-between items-start gap-1">
@@ -1441,7 +1449,7 @@ export default function RestaurantDashboard({
                         </h3>
                         <p className="text-sm sm:text-base font-display text-brand-gold font-bold">
                           <span className="font-sans">{item.price.toLocaleString()}</span>{" "}
-                          <span className="text-[9px] opacity-65">د.ع</span>
+                          <span className="text-[9px] opacity-65">{tr('د.ع', 'IQD')}</span>
                         </p>
                       </div>
                       {item.ingredients && (
@@ -1455,12 +1463,12 @@ export default function RestaurantDashboard({
                         <div className="flex flex-wrap gap-2 pt-1">
                           {item.hasCheese && item.cheesePrice !== undefined && (
                             <span className="text-[8px] font-bold text-brand-gold bg-brand-gold/5 px-2 py-0.5 border border-brand-gold/10">
-                              🧀 إضافة جبن: +{(item.cheesePrice || 0).toLocaleString()} د.ع
+                              🧀 {tr('إضافة جبن:', 'Extra cheese:')} +{(item.cheesePrice || 0).toLocaleString()} {tr('د.ع', 'IQD')}
                             </span>
                           )}
                           {item.isSpicy && item.spicyPrice !== undefined && (
                             <span className="text-[8px] font-bold text-brand-primary bg-brand-primary/5 px-2 py-0.5 border border-brand-primary/10">
-                              🔥 خيار سبايسي: +{(item.spicyPrice || 0).toLocaleString()} د.ع
+                              🔥 {tr('خيار سبايسي:', 'Spicy option:')} +{(item.spicyPrice || 0).toLocaleString()} {tr('د.ع', 'IQD')}
                             </span>
                           )}
                         </div>
@@ -1473,7 +1481,7 @@ export default function RestaurantDashboard({
                         onClick={() => deleteMenuItem(item.id)}
                         className="flex-1 py-2 sm:py-2.5 bg-red-50 text-red-700 text-[8px] font-bold uppercase tracking-wider hover:bg-red-100 transition-colors"
                       >
-                        حذف
+                        {tr('حذف', 'Delete')}
                       </button>
                       <button
                         onClick={() =>
@@ -1481,7 +1489,7 @@ export default function RestaurantDashboard({
                         }
                         className="flex-1 py-2 sm:py-2.5 border border-border-delicate text-[8px] font-bold uppercase tracking-wider text-brand-primary hover:bg-bg-paper transition-colors"
                       >
-                        تعديل
+                        {tr('تعديل', 'Edit')}
                       </button>
                     </div>
                   </div>
@@ -1491,7 +1499,7 @@ export default function RestaurantDashboard({
             {menuItems.length === 0 && (
               <div className="text-center py-40 border border-dashed border-border-delicate bg-bg-paper">
                 <p className="font-display italic text-3xl text-brand-gold opacity-30">
-                  The archive is currently empty.
+                  {tr('لا توجد أطباق في القائمة حالياً.', 'No dishes in the menu yet.')}
                 </p>
               </div>
             )}
@@ -1507,10 +1515,10 @@ export default function RestaurantDashboard({
           >
             <div className="space-y-4 text-center mb-12">
               <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest">
-                البوابة الرقمية للمطعم
+                {tr('البوابة الرقمية للمطعم', 'Restaurant digital portal')}
               </p>
               <h3 className="text-3xl sm:text-4xl font-display text-brand-primary tracking-tight">
-                كود الطاولة والمنيو التعريفي (QR)
+                {tr('كود الطاولة والمنيو التعريفي (QR)', 'Menu QR code')}
               </h3>
             </div>
 
@@ -1534,7 +1542,7 @@ export default function RestaurantDashboard({
                 onClick={downloadQR}
                 className="px-10 py-5 bg-brand-primary text-white text-[11px] font-bold uppercase tracking-widest hover:bg-brand-secondary transition-all flex items-center justify-center gap-4 w-full sm:w-auto text-center cursor-pointer"
               >
-                <Download className="w-5 h-5 shrink-0" /> تحميل كود الـ QR المخصص
+                <Download className="w-5 h-5 shrink-0" /> {tr('تحميل كود الـ QR المخصص', 'Download QR code')}
               </button>
               <button
                 onClick={() =>
@@ -1545,7 +1553,7 @@ export default function RestaurantDashboard({
                 }
                 className="px-10 py-5 border border-border-delicate text-[11px] font-bold uppercase tracking-widest text-brand-primary hover:bg-bg-paper transition-all flex items-center justify-center gap-4 w-full sm:w-auto text-center cursor-pointer"
               >
-                <ExternalLink className="w-5 h-5 shrink-0" /> استعراض صفحة زبائنك
+                <ExternalLink className="w-5 h-5 shrink-0" /> {tr('استعراض صفحة زبائنك', 'View customer menu')}
               </button>
             </div>
 
@@ -1553,12 +1561,12 @@ export default function RestaurantDashboard({
             <div className="mt-16 p-8 border border-border-delicate bg-bg-paper w-full max-w-2xl text-center space-y-4">
               <div className="flex items-center justify-center gap-2 text-brand-gold">
                 <span className="w-8 h-[1px] bg-brand-gold opacity-30" />
-                <p className="text-[10px] font-bold uppercase tracking-widest leading-none">تأمين البوابات وأنظمة الطاقم</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest leading-none">{tr('تأمين البوابات وأنظمة الطاقم', 'Secure staff access')}</p>
                 <span className="w-8 h-[1px] bg-brand-gold opacity-30" />
               </div>
-              <h4 className="text-xl font-display text-brand-primary font-bold">بوابة تسجيل دخول الموظفين والمالك الخاصة بك</h4>
+              <h4 className="text-xl font-display text-brand-primary font-bold">{tr('بوابة تسجيل دخول الموظفين والمالك الخاصة بك', 'Owner and staff login portal')}</h4>
               <p className="text-xs text-text-muted/80 max-w-md mx-auto leading-relaxed">
-                لحماية خصوصية مطعمتكم، تم تخصيص بوابة مشتغلي الطاقم والمالك. يرجى تسجيل الدخول حصرياً عبر الرابط الأمني الفريد أدناه:
+                {tr('لحماية خصوصية مطعمتكم، تم تخصيص بوابة مشتغلي الطاقم والمالك. يرجى تسجيل الدخول حصرياً عبر الرابط الأمني الفريد أدناه:', 'Use this restaurant-specific link to sign in securely as an owner or staff member:')}
               </p>
               <div className="flex flex-col sm:flex-row items-stretch gap-4 justify-center pt-2">
                 <input 
@@ -1576,7 +1584,7 @@ export default function RestaurantDashboard({
                   }}
                   className="px-6 py-2.5 bg-brand-primary text-white text-[10px] font-bold uppercase tracking-widest hover:bg-brand-secondary transition-all w-full sm:w-auto cursor-pointer flex items-center justify-center gap-2"
                 >
-                  {staffLinkCopied ? "✓ تم نسخ الرابط الأمني" : "📋 نسخ الرابط الأمني"}
+                  {staffLinkCopied ? tr('✓ تم نسخ الرابط الأمني', '✓ Link copied') : tr('📋 نسخ الرابط الأمني', '📋 Copy login link')}
                 </button>
               </div>
             </div>
@@ -1597,23 +1605,23 @@ export default function RestaurantDashboard({
                 <div className="space-y-2">
                   <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest flex items-center gap-2">
                     <ShieldAlert className="w-4 h-4 text-brand-gold shrink-0" />
-                    جدار الحماية والأمن ومكافحة السبام البشري
+                    {tr('جدار الحماية والأمن ومكافحة السبام البشري', 'Customer protection')}
                   </p>
                   <h3 className="text-2xl sm:text-3xl font-display text-brand-primary tracking-tight">
-                    إدارة التنبيهات والطلبات الوهمية
+                    {tr('إدارة التنبيهات والطلبات الوهمية', 'Alerts and suspicious orders')}
                   </h3>
                   <p className="text-xs text-text-muted max-w-2xl leading-relaxed">
-                    هذا النظام يقوم بمطابقة إشارات تحديد المواقع لكل زبائنك لضمان وجودهم داخل الصالة، إلى جانب رصد وتخزين بصمات الكوكيز ونوع النظام لإفشال الطلبات المزعجة من خارج المطعم أو تغيير معلومات الطاولات بشكل متكرر.
+                    {tr('هذا النظام يقوم بمطابقة إشارات تحديد المواقع لكل زبائنك لضمان وجودهم داخل الصالة، إلى جانب رصد وتخزين بصمات الكوكيز ونوع النظام لإفشال الطلبات المزعجة من خارج المطعم أو تغيير معلومات الطاولات بشكل متكرر.', 'Location and device checks help flag suspicious orders and repeated abuse.')}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-3">
                   <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-full text-[10px] font-bold">
                     <span className="w-1.5 h-1.5 bg-emerald-600 rounded-full animate-pulse" />
-                    الحماية الجغرافية نشطة
+                    {tr('الحماية الجغرافية نشطة', 'Location protection active')}
                   </div>
                   <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-full text-[10px] font-bold">
                     <span className="w-1.5 h-1.5 bg-emerald-600 rounded-full animate-pulse" />
-                    مراقبة الأجهزة نشطة
+                    {tr('مراقبة الأجهزة نشطة', 'Device monitoring active')}
                   </div>
                 </div>
               </div>
@@ -1622,17 +1630,17 @@ export default function RestaurantDashboard({
             {/* Stats Summary Panel */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
               <div className="bg-white border border-border-delicate p-6 text-right shadow-sm space-y-1">
-                <p className="text-xs text-text-muted font-bold">إجمالي التنبيهات المرصودة</p>
+                <p className="text-xs text-text-muted font-bold">{tr('إجمالي التنبيهات المرصودة', 'Total alerts')}</p>
                 <p className="text-4xl font-display italic text-brand-primary font-bold">{alerts.length}</p>
               </div>
               <div className="bg-white border border-border-delicate p-6 text-right shadow-sm space-y-1 border-r-4 border-r-amber-500">
-                <p className="text-xs text-text-muted font-bold">تنبيهات معلقة وتحتاج مراجعة</p>
+                <p className="text-xs text-text-muted font-bold">{tr('تنبيهات معلقة وتحتاج مراجعة', 'Needs review')}</p>
                 <p className="text-4xl font-display italic text-amber-600 font-bold">
                   {alerts.filter(a => a.status === 'unread').length}
                 </p>
               </div>
               <div className="bg-white border border-border-delicate p-6 text-right shadow-sm space-y-1 border-r-4 border-r-red-600">
-                <p className="text-xs text-text-muted font-bold">حالات شديدة الخطورة ومثيرة للشبهة</p>
+                <p className="text-xs text-text-muted font-bold">{tr('حالات شديدة الخطورة ومثيرة للشبهة', 'High-risk cases')}</p>
                 <p className="text-4xl font-display italic text-red-600 font-bold">
                   {alerts.filter(a => a.severity === 'critical' && a.status === 'unread').length}
                 </p>
@@ -1649,7 +1657,7 @@ export default function RestaurantDashboard({
                     : "border-transparent text-text-muted hover:text-brand-primary"
                 }`}
               >
-                📢 تبليغات وتوجيهات الإدارة ({announcements.length})
+                📢 {tr('تبليغات وتوجيهات الإدارة', 'Admin announcements')} ({announcements.length})
               </button>
               <button
                 onClick={() => setAlertsSubTab("order_devices")}
@@ -1659,7 +1667,7 @@ export default function RestaurantDashboard({
                     : "border-transparent text-text-muted hover:text-brand-primary"
                 }`}
               >
-                📱 معلومات وبصمات طالبي الطعام ({orders.filter(o => o.deviceMetadata).length})
+                📱 {tr('معلومات وبصمات طالبي الطعام', 'Customer devices')} ({orders.filter(o => o.deviceMetadata).length})
               </button>
               <button
                 onClick={() => setAlertsSubTab("security_alerts")}
@@ -1669,7 +1677,7 @@ export default function RestaurantDashboard({
                     : "border-transparent text-text-muted hover:text-brand-primary"
                 }`}
               >
-                🚨 محاولات الاختراق والطلبات الوهمية ({alerts.length})
+                🚨 {tr('محاولات الاختراق والطلبات الوهمية', 'Suspicious activity')} ({alerts.length})
               </button>
               <button
                 onClick={() => setAlertsSubTab("banned_customers")}
@@ -1679,7 +1687,7 @@ export default function RestaurantDashboard({
                     : "border-transparent text-text-muted hover:text-brand-primary"
                 }`}
               >
-                🚫 الزبائن المحظورين ({bannedDevices.length})
+                🚫 {tr('الزبائن المحظورين', 'Blocked customers')} ({bannedDevices.length})
               </button>
             </div>
 
@@ -1687,7 +1695,7 @@ export default function RestaurantDashboard({
               <div className="space-y-6">
                 <h4 className="text-lg font-display text-brand-primary font-bold border-b border-border-delicate pb-3 flex items-center gap-3">
                   <Bell className="w-5 h-5 text-brand-gold shrink-0" />
-                  إعلانات وتوجيهات الإدارة العامة للنظام
+                  {tr('إعلانات وتوجيهات الإدارة العامة للنظام', 'System announcements')}
                 </h4>
 
                 {announcements.length === 0 ? (
@@ -1695,9 +1703,9 @@ export default function RestaurantDashboard({
                     <div className="w-16 h-16 rounded-full bg-slate-50 text-slate-400 flex items-center justify-center mx-auto">
                       <Bell className="w-8 h-8" />
                     </div>
-                    <h4 className="text-base font-display text-text-muted font-bold">لا توجد أي تبليغات أو توجيهات من الإدارة حالياً</h4>
+                    <h4 className="text-base font-display text-text-muted font-bold">{tr('لا توجد أي تبليغات أو توجيهات من الإدارة حالياً', 'No announcements yet')}</h4>
                     <p className="text-text-muted/60 max-w-sm mx-auto text-xs leading-relaxed">
-                      أي إعلان أو تنبيه فني أو إداري يتم نشره من قبل أصحاب النظام سيظهر لك هنا حياً ومباشرة لتكون على اطلاع دائم.
+                      {tr('أي إعلان أو تنبيه فني أو إداري يتم نشره من قبل أصحاب النظام سيظهر لك هنا حياً ومباشرة لتكون على اطلاع دائم.', 'New system notices will appear here when published.')}
                     </p>
                   </div>
                 ) : (
@@ -1731,7 +1739,7 @@ export default function RestaurantDashboard({
                                     ? "bg-amber-100 text-amber-800"
                                     : "bg-blue-50 text-blue-800"
                                 }`}>
-                                  {isCritical ? "طارئ" : isWarning ? "تحذير" : "إرشاد"}
+                                  {isCritical ? tr('طارئ', 'Critical') : isWarning ? tr('تحذير', 'Warning') : tr('إرشاد', 'Info')}
                                 </span>
                                 <span className="text-[10px] text-text-muted font-sans mr-auto" dir="ltr">
                                   {safeFormatDate(ann.createdAt?.toDate ? ann.createdAt.toDate() : ann.createdAt, "yyyy/MM/dd | hh:mm a")}
@@ -1741,9 +1749,9 @@ export default function RestaurantDashboard({
                                 {ann.message}
                               </p>
                               <div className="flex items-center gap-2 pt-2 text-[10px] text-text-muted font-bold font-sans">
-                                <span>موجه إلى:</span>
+                                <span>{tr('موجه إلى:', 'Audience:')}</span>
                                 <span className="text-brand-gold">
-                                  {(ann.target === "all" || ann.targetRestaurantId === "all") ? "جميع المطاعم المشتركة" : "مطعمكم بشكل خاص"}
+                                  {(ann.target === "all" || ann.targetRestaurantId === "all") ? tr('جميع المطاعم المشتركة', 'All restaurants') : tr('مطعمكم بشكل خاص', 'Your restaurant')}
                                 </span>
                               </div>
                             </div>
@@ -1760,7 +1768,7 @@ export default function RestaurantDashboard({
               <div className="space-y-6">
                 <h4 className="text-lg font-display text-brand-primary font-bold border-b border-border-delicate pb-3 flex items-center gap-3">
                   <Bell className="w-5 h-5 text-brand-gold shrink-0" />
-                  سجل تتبع الهجمات والمحاولات المشبوهة
+                  {tr('سجل تتبع الهجمات والمحاولات المشبوهة', 'Suspicious activity log')}
                 </h4>
 
               {alerts.length === 0 ? (
@@ -1768,9 +1776,9 @@ export default function RestaurantDashboard({
                   <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
                     <CheckCircle2 className="w-8 h-8" />
                   </div>
-                  <h4 className="text-xl font-display text-emerald-700 font-bold">لا توجد أي تنبيهات حالياً</h4>
+                  <h4 className="text-xl font-display text-emerald-700 font-bold">{tr('لا توجد أي تنبيهات حالياً', 'No alerts right now')}</h4>
                   <p className="text-text-muted max-w-sm mx-auto text-xs leading-relaxed">
-                    درع الحماية نشط ويقوم بفحص كل عملية تصفح أو طلب قائمة طعام بشكل مستمر. صالة مطعمك آمنة ومحمية بالكامل!
+                    {tr('درع الحماية نشط ويقوم بفحص كل عملية تصفح أو طلب قائمة طعام بشكل مستمر. صالة مطعمك آمنة ومحمية بالكامل!', 'Protection is active and customer requests are being monitored.')}
                   </p>
                 </div>
               ) : (
@@ -1807,14 +1815,14 @@ export default function RestaurantDashboard({
                                   ? 'bg-amber-100 text-amber-800' 
                                   : 'bg-blue-100 text-blue-800'
                             }`}>
-                              {alert.severity === 'critical' ? 'حرج للغاية (خطر عالي)' : 'شبهة احتيال مكررة'}
+                              {alert.severity === 'critical' ? tr('حرج للغاية (خطر عالي)', 'Critical risk') : tr('شبهة احتيال مكررة', 'Suspicious activity')}
                             </span>
                             <span className="text-[9.5px] font-bold text-text-muted opacity-80 bg-bg-paper border border-border-delicate px-2.5 py-1 rounded-full">
-                              نوع الاختراق: {
-                                alert.type === 'outside_range' ? 'طلب من خارج صالة المطعم (GPS)' :
-                                alert.type === 'desktop_device' ? 'مسح باركود من نظام كمبيوتر / حاسوب مشبوه' :
-                                alert.type === 'multi_name_spam' ? 'محاولة تغيير الاسم أو الطاولة (تكرار عشوائي)' :
-                                alert.type === 'failed_location' ? 'تم حجب مشاركة الموقع الجغرافي' : 'نشاط عشوائي مشبوه بالقرب من المطعم'
+                              {tr('نوع الاختراق:', 'Alert type:')} {
+                                alert.type === 'outside_range' ? tr('طلب من خارج صالة المطعم (GPS)', 'Request outside restaurant (GPS)') :
+                                alert.type === 'desktop_device' ? tr('مسح باركود من نظام كمبيوتر / حاسوب مشبوه', 'QR scanned from a desktop device') :
+                                alert.type === 'multi_name_spam' ? tr('محاولة تغيير الاسم أو الطاولة (تكرار عشوائي)', 'Repeated name or table changes') :
+                                alert.type === 'failed_location' ? tr('تم حجب مشاركة الموقع الجغرافي', 'Location sharing unavailable') : tr('نشاط عشوائي مشبوه بالقرب من المطعم', 'Suspicious activity near the restaurant')
                               }
                             </span>
                             <span className="text-[9px] font-mono text-text-muted mr-auto">
@@ -1828,44 +1836,44 @@ export default function RestaurantDashboard({
                               {alert.title}
                             </h4>
                             <p className="text-xs text-text-muted leading-relaxed">
-                              العميل المشتبه به: <strong className="text-brand-primary">{alert.customerName || 'غير محدد بعد'}</strong> 
-                              {alert.tableNumber && <> — طلس/جلس على طاولة كود: <strong className="text-brand-secondary">طاولة {alert.tableNumber}</strong></>}
+                              {tr('العميل المشتبه به:', 'Customer:')} <strong className="text-brand-primary">{alert.customerName || tr('غير محدد بعد', 'Unknown')}</strong>
+                              {alert.tableNumber && <> — {tr('طاولة', 'Table')}: <strong className="text-brand-secondary">{alert.tableNumber}</strong></>}
                             </p>
                           </div>
 
                           {/* Device footprint details (True Identification Parameters) */}
                           <div className="bg-bg-paper border border-border-delicate p-4 rounded-xl space-y-3.5 text-xs text-right">
                             <p className="text-[10px] uppercase font-bold text-brand-gold tracking-widest border-b border-border-delicate pb-1.5 mb-2">
-                              أدلة الهوية الرقمية الحقيقية (Device DNA Signature)
+                              {tr('أدلة الهوية الرقمية الحقيقية (Device DNA Signature)', 'Device details')}
                             </p>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-y-2 gap-x-6">
                               <div>
-                                <span className="text-text-muted font-medium">نوع وماركة النظام: </span>
-                                <strong className="text-brand-primary font-bold">{alert.deviceMetadata.deviceType}</strong>
+                                <span className="text-text-muted font-medium">{tr('نوع وماركة النظام:', 'Device type:')} </span>
+                                <strong className="text-brand-primary font-bold">{localizeDeviceType(alert.deviceMetadata.deviceType, language)}</strong>
                               </div>
                               <div>
-                                <span className="text-text-muted font-medium">البصمة الرقمية للعميل (Fingerprint ID): </span>
+                                <span className="text-text-muted font-medium">{tr('البصمة الرقمية للعميل (Fingerprint ID):', 'Fingerprint:')} </span>
                                 <code className="bg-white border border-border-delicate px-1.5 py-0.5 rounded font-mono text-[9px] font-bold text-red-700">{alert.deviceMetadata.fingerprint}</code>
                               </div>
                               <div>
-                                <span className="text-text-muted font-medium">أبعاد ودقة جهاز الزائر: </span>
+                                <span className="text-text-muted font-medium">{tr('أبعاد ودقة جهاز الزائر:', 'Screen size:')} </span>
                                 <span className="text-brand-primary font-medium">{alert.deviceMetadata.screenSize}</span>
                               </div>
                               <div>
-                                <span className="text-text-muted font-medium">لغة المتصفح المعتمدة: </span>
+                                <span className="text-text-muted font-medium">{tr('لغة المتصفح المعتمدة:', 'Browser language:')} </span>
                                 <span className="text-brand-primary font-medium">{alert.deviceMetadata.language}</span>
                               </div>
                               <div className="md:col-span-2">
-                                <span className="text-text-muted font-medium">الحالة الجغرافية وموقع الزبون: </span>
+                                <span className="text-text-muted font-medium">{tr('الحالة الجغرافية وموقع الزبون:', 'Location:')} </span>
                                 <span className={`font-bold ${alert.deviceMetadata.coordinates ? 'text-rose-700' : 'text-amber-800'}`}>
                                   {alert.deviceMetadata.coordinates 
-                                    ? `📍 إحداثيات المشتبه به [${alert.deviceMetadata.coordinates.lat.toFixed(5)}, ${alert.deviceMetadata.coordinates.lng.toFixed(5)}] على بعد ${alert.deviceMetadata.distanceMeters ? Math.round(alert.deviceMetadata.distanceMeters) : 0} متر من مطعمك!`
-                                    : '📍 الزبون حجب وحظر مشاركة الموقع الجغرافي الخاص بجهازه (قد يكون خارج المطعم)'}
+                                    ? tr(`📍 إحداثيات المشتبه به [${alert.deviceMetadata.coordinates.lat.toFixed(5)}, ${alert.deviceMetadata.coordinates.lng.toFixed(5)}] على بعد ${alert.deviceMetadata.distanceMeters ? Math.round(alert.deviceMetadata.distanceMeters) : 0} متر من مطعمك!`, `📍 Coordinates [${alert.deviceMetadata.coordinates.lat.toFixed(5)}, ${alert.deviceMetadata.coordinates.lng.toFixed(5)}], ${alert.deviceMetadata.distanceMeters ? Math.round(alert.deviceMetadata.distanceMeters) : 0} m from the restaurant.`)
+                                    : tr('📍 الزبون حجب وحظر مشاركة الموقع الجغرافي الخاص بجهازه (قد يكون خارج المطعم)', '📍 Customer location was unavailable.')}
                                 </span>
                               </div>
                             </div>
                             <details className="mt-2 text-[10px] cursor-pointer text-text-muted">
-                              <summary className="font-semibold hover:text-brand-primary transition-colors">عرض كود الـ User-Agent الكامل الخاص بجهاز ومذياع الطلب</summary>
+                              <summary className="font-semibold hover:text-brand-primary transition-colors">{tr('عرض كود الـ User-Agent الكامل الخاص بجهاز ومذياع الطلب', 'Show full browser user agent')}</summary>
                               <div className="bg-white border border-border-delicate p-2.5 mt-2 rounded font-mono break-all text-left" dir="ltr">
                                 {alert.deviceMetadata.userAgent}
                               </div>
@@ -1880,20 +1888,20 @@ export default function RestaurantDashboard({
                               onClick={() => resolveAlert(alert.id)}
                               className="px-4 py-2 bg-brand-primary hover:bg-brand-secondary text-white text-[10px] font-bold uppercase tracking-wider rounded transition-all text-center"
                             >
-                              تعليم كـ "مقروء ومحقق فيه"
+                              {tr('تعليم كـ "مقروء ومحقق فيه"', 'Mark reviewed')}
                             </button>
                           )}
                           <button
                             onClick={() => cancelAllOrdersByFingerprint(alert.deviceMetadata.fingerprint)}
                             className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold uppercase tracking-wider rounded transition-all text-center flex items-center justify-center gap-1.5"
                           >
-                            إلغاء جميع طلبات هذه البصمة 🚫
+                            {tr('إلغاء جميع طلبات هذه البصمة', 'Cancel orders from this device')} 🚫
                           </button>
                           <button
                             onClick={() => deleteAlert(alert.id)}
                             className="px-4 py-2 border border-border-delicate text-text-muted hover:text-red-700 hover:bg-bg-paper text-[10px] font-bold uppercase tracking-wider rounded transition-all text-center"
                           >
-                            حذف السجل نهائياً
+                            {tr('حذف السجل نهائياً', 'Delete log')}
                           </button>
                         </div>
                       </motion.div>
@@ -1908,7 +1916,7 @@ export default function RestaurantDashboard({
               <div className="space-y-6">
                 <h4 className="text-lg font-display text-brand-primary font-bold border-b border-border-delicate pb-3 flex items-center gap-3 font-sans">
                   <span className="w-2.5 h-2.5 bg-brand-gold rounded-full animate-pulse" />
-                  أدلة وهويات طالبي الطعام بالصالة (بصمات الأجهزة النشطة للطلبات الحية)
+                  {tr('أدلة وهويات طالبي الطعام بالصالة (بصمات الأجهزة النشطة للطلبات الحية)', 'Customer device details for live orders')}
                 </h4>
 
                 {orders.length === 0 ? (
@@ -1916,9 +1924,9 @@ export default function RestaurantDashboard({
                     <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
                       <CheckCircle2 className="w-8 h-8" />
                     </div>
-                    <h4 className="text-xl font-display text-emerald-700 font-bold">لا توجد طلبات مسجلة حالياً</h4>
+                    <h4 className="text-xl font-display text-emerald-700 font-bold">{tr('لا توجد طلبات مسجلة حالياً', 'No orders yet')}</h4>
                     <p className="text-text-muted max-w-sm mx-auto text-xs leading-relaxed">
-                      بمجرد أن يبدأ زبائن الصالة في إرسال طلبات طعامهم، ستظهر الهويات الحية لأجهزتهم ومسافاتهم الجغرافية وبصماتهم الرقمية هنا فوراً!
+                      {tr('بمجرد أن يبدأ زبائن الصالة في إرسال طلبات طعامهم، ستظهر الهويات الحية لأجهزتهم ومسافاتهم الجغرافية وبصماتهم الرقمية هنا فوراً!', 'Customer device details and estimated distances will appear when orders arrive.')}
                     </p>
                   </div>
                 ) : (
@@ -1942,23 +1950,23 @@ export default function RestaurantDashboard({
                           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-border-delicate/40 pb-4 mb-4">
                             <div className="space-y-1">
                               <span className="text-[10px] font-bold text-brand-gold uppercase tracking-widest block font-sans">
-                                كود مرجعي: <span className="font-mono text-[9px]">{order.id.substring(0, 8)}...</span>
+                                {tr('كود مرجعي:', 'Reference:')} <span className="font-mono text-[9px]">{order.id.substring(0, 8)}...</span>
                               </span>
                               <h4 className="text-base sm:text-lg font-bold text-brand-primary flex flex-wrap items-center gap-2">
                                 {order.customerName}
                                 <span className="text-[10px] bg-brand-primary/5 text-brand-gold px-2.5 py-0.5 rounded-full border border-border-delicate/40 font-semibold font-sans">
-                                  طاولة {order.tableNumber}
+                                  {tr('طاولة', 'Table')} {order.tableNumber}
                                 </span>
-                                {order.status === 'pending' && <span className="text-[9px] bg-amber-50 text-amber-800 border border-amber-205 px-2 py-0.5 rounded">معلق</span>}
-                                {order.status === 'preparing' && <span className="text-[9px] bg-blue-50 text-blue-800 border border-blue-200 px-2 py-0.5 rounded animate-pulse">جاري التحضير</span>}
-                                {order.status === 'ready' && <span className="text-[9px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded">جاهز</span>}
-                                {order.status === 'served' && <span className="text-[9px] bg-gray-100 text-gray-700 border border-gray-300 px-2 py-0.5 rounded">تم التقديم</span>}
-                                {order.status === 'cancelled' && <span className="text-[9px] bg-red-50 text-red-800 border border-red-200 px-2 py-0.5 rounded">ملغي</span>}
+                                {order.status === 'pending' && <span className="text-[9px] bg-amber-50 text-amber-800 border border-amber-205 px-2 py-0.5 rounded">{tr('معلق', 'Pending')}</span>}
+                                {order.status === 'preparing' && <span className="text-[9px] bg-blue-50 text-blue-800 border border-blue-200 px-2 py-0.5 rounded animate-pulse">{tr('جاري التحضير', 'Preparing')}</span>}
+                                {order.status === 'ready' && <span className="text-[9px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded">{tr('جاهز', 'Ready')}</span>}
+                                {order.status === 'served' && <span className="text-[9px] bg-gray-100 text-gray-700 border border-gray-300 px-2 py-0.5 rounded">{tr('تم التقديم', 'Served')}</span>}
+                                {order.status === 'cancelled' && <span className="text-[9px] bg-red-50 text-red-800 border border-red-200 px-2 py-0.5 rounded">{tr('ملغي', 'Cancelled')}</span>}
                               </h4>
                             </div>
                             <div className="flex flex-col sm:items-end gap-1 font-sans">
                               <span className="text-xs font-bold text-brand-primary">
-                                {order.totalAmount.toLocaleString()} د.ع
+                                {order.totalAmount.toLocaleString()} {tr('د.ع', 'IQD')}
                               </span>
                               <span className="text-[9.5px] text-text-muted">
                                 {safeFormatDate(order.createdAt, "yyyy/MM/dd | hh:mm a")}
@@ -1970,36 +1978,36 @@ export default function RestaurantDashboard({
                             <div className="space-y-4">
                               <div className="bg-bg-paper border border-border-delicate p-4 rounded-xl space-y-3.5 text-xs">
                                 <p className="text-[10px] uppercase font-bold text-brand-gold tracking-widest border-b border-border-delicate pb-1.5 mb-2 font-sans">
-                                  أدلة الهوية الرقمية للزبون (Customer DeviceDNA Signature)
+                                  {tr('أدلة الهوية الرقمية للزبون (Customer DeviceDNA Signature)', 'Customer device details')}
                                 </p>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-y-2 gap-x-6 font-sans">
                                   <div>
-                                    <span className="text-text-muted font-medium">نوع وماركة النظام: </span>
-                                    <strong className="text-brand-primary font-bold">{deviceMeta.deviceType}</strong>
+                                    <span className="text-text-muted font-medium">{tr('نوع وماركة النظام:', 'Device type:')} </span>
+                                    <strong className="text-brand-primary font-bold">{localizeDeviceType(deviceMeta.deviceType, language)}</strong>
                                   </div>
                                   <div>
-                                    <span className="text-text-muted font-medium">البصمة الرقمية للزبون (Fingerprint): </span>
+                                    <span className="text-text-muted font-medium">{tr('البصمة الرقمية للزبون (Fingerprint):', 'Fingerprint:')} </span>
                                     <code className="bg-white border border-border-delicate px-1.5 py-0.5 rounded font-mono text-[9px] font-bold text-brand-gold">{deviceMeta.fingerprint}</code>
                                   </div>
                                   <div>
-                                    <span className="text-text-muted font-medium">دقة الشاشة وأبعادها: </span>
+                                    <span className="text-text-muted font-medium">{tr('دقة الشاشة وأبعادها:', 'Screen size:')} </span>
                                     <span className="text-brand-primary font-medium">{deviceMeta.screenSize}</span>
                                   </div>
                                   <div>
-                                    <span className="text-text-muted font-medium">لغة العميل المفضلة: </span>
+                                    <span className="text-text-muted font-medium">{tr('لغة العميل المفضلة:', 'Browser language:')} </span>
                                     <span className="text-brand-primary font-medium">{deviceMeta.language}</span>
                                   </div>
                                   <div className="md:col-span-2">
-                                    <span className="text-text-muted font-medium">الحالة الجغرافية ومطابقة النطاق: </span>
+                                    <span className="text-text-muted font-medium">{tr('الحالة الجغرافية ومطابقة النطاق:', 'Location:')} </span>
                                     <span className={`font-bold ${deviceMeta.coordinates ? (distance !== undefined && distance <= 150 ? 'text-emerald-700' : 'text-rose-700') : 'text-amber-800'}`}>
                                       {deviceMeta.coordinates
-                                        ? `📍 إحداثيات العميل [${deviceMeta.coordinates.lat.toFixed(5)}, ${deviceMeta.coordinates.lng.toFixed(5)}] على بعد ${distance ? Math.round(distance) : 0} متر من إحداثيات صالتك المعينة!`
-                                        : '📍 الزبون حجب وحظر مشاركة الموقع الجغرافي الخاص بجهازه (قد يكون خارج المطعم، أو طلب بواسطة الويتر)'}
+                                        ? tr(`📍 إحداثيات العميل [${deviceMeta.coordinates.lat.toFixed(5)}, ${deviceMeta.coordinates.lng.toFixed(5)}] على بعد ${distance ? Math.round(distance) : 0} متر من إحداثيات صالتك المعينة!`, `📍 Coordinates [${deviceMeta.coordinates.lat.toFixed(5)}, ${deviceMeta.coordinates.lng.toFixed(5)}], ${distance ? Math.round(distance) : 0} m from the restaurant.`)
+                                        : tr('📍 الزبون حجب وحظر مشاركة الموقع الجغرافي الخاص بجهازه (قد يكون خارج المطعم، أو طلب بواسطة الويتر)', '📍 Customer location is unavailable or this was a staff order.')}
                                     </span>
                                   </div>
                                 </div>
                                 <details className="mt-2 text-[10px] cursor-pointer text-text-muted font-sans font-sans">
-                                  <summary className="font-semibold hover:text-brand-primary transition-colors">عرض كود الـ User-Agent الكامل الخاص بجهاز ومذياع الطلب</summary>
+                                  <summary className="font-semibold hover:text-brand-primary transition-colors">{tr('عرض كود الـ User-Agent الكامل الخاص بجهاز ومذياع الطلب', 'Show full browser user agent')}</summary>
                                   <div className="bg-white border border-border-delicate p-2.5 mt-2 rounded font-mono break-all text-left" dir="ltr">
                                     {deviceMeta.userAgent}
                                   </div>
@@ -2009,7 +2017,7 @@ export default function RestaurantDashboard({
                           ) : (
                             <div className="bg-bg-paper p-4 text-xs text-text-muted border border-border-delicate/40 rounded flex items-center gap-2 font-sans font-sans">
                               <Info className="w-5 h-5 text-brand-gold shrink-0" />
-                              طلب مدخل يدوياً بواسطة كابتن الصالة (الويتر) أو تم طلبه مسبقاً قبل تفعيل جدار الوقاية.
+                              {tr('طلب مدخل يدوياً بواسطة كابتن الصالة (الويتر) أو تم طلبه مسبقاً قبل تفعيل جدار الوقاية.', 'Staff-created order, or placed before location protection was enabled.')}
                             </div>
                           )}
                         </div>
@@ -2024,7 +2032,7 @@ export default function RestaurantDashboard({
               <div className="space-y-6 text-right">
                 <h4 className="text-lg font-display text-brand-primary font-bold border-b border-border-delicate pb-3 flex items-center gap-3">
                   <ShieldAlert className="w-5 h-5 text-red-600 shrink-0" />
-                  قائمة الأجهزة والزبائن المحظورين من الدخول للمنيو
+                  {tr('قائمة الأجهزة والزبائن المحظورين من الدخول للمنيو', 'Blocked devices and customers')}
                 </h4>
 
                 {bannedDevices.length === 0 ? (
@@ -2032,9 +2040,9 @@ export default function RestaurantDashboard({
                     <div className="w-16 h-16 rounded-full bg-slate-50 text-slate-400 flex items-center justify-center mx-auto">
                       <Users className="w-8 h-8" />
                     </div>
-                    <h4 className="text-xl font-display text-brand-primary font-bold">لا يوجد أي زبائن محظورين</h4>
+                    <h4 className="text-xl font-display text-brand-primary font-bold">{tr('لا يوجد أي زبائن محظورين', 'No blocked customers')}</h4>
                     <p className="text-text-muted max-w-sm mx-auto text-xs leading-relaxed">
-                      لا يوجد أي زبائن في قائمة الحظر حالياً. صالة مطعمك مفتوحة لجميع الهواتف!
+                      {tr('لا يوجد أي زبائن في قائمة الحظر حالياً. صالة مطعمك مفتوحة لجميع الهواتف!', 'No customers or devices are currently blocked.')}
                     </p>
                   </div>
                 ) : (
@@ -2047,50 +2055,50 @@ export default function RestaurantDashboard({
                         <div className="space-y-4 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="bg-red-50 text-red-800 border border-red-200 text-[10px] font-bold px-2.5 py-1 rounded-full">
-                              محظور من الطلب 🚫
+                              {tr('محظور من الطلب', 'Blocked from ordering')} 🚫
                             </span>
                             <span className="text-[10px] font-mono text-text-muted">
-                              تاريخ الحظر: {banned.bannedAt ? safeFormatDate(banned.bannedAt, "yyyy/MM/dd | hh:mm a") : "غير محدد"}
+                              {tr('تاريخ الحظر:', 'Blocked:')} {banned.bannedAt ? safeFormatDate(banned.bannedAt, "yyyy/MM/dd | hh:mm a") : tr('غير محدد', 'Unknown')}
                             </span>
                           </div>
 
                           <div className="space-y-2">
                             <h5 className="text-base sm:text-lg font-bold text-brand-primary">
-                              الزبون: <span className="text-red-700">{banned.customerName}</span> (طاولة {banned.tableNumber || "غير محددة"})
+                              {tr('الزبون:', 'Customer:')} <span className="text-red-700">{banned.customerName}</span> ({tr('طاولة', 'Table')} {banned.tableNumber || tr('غير محددة', 'Unknown')})
                             </h5>
                             <p className="text-xs text-text-main leading-relaxed">
-                              السبب المسجل للحظر: <strong className="text-red-900 bg-red-50 px-2.5 py-1.5 rounded font-bold">{banned.reason}</strong>
+                              {tr('السبب المسجل للحظر:', 'Reason:')} <strong className="text-red-900 bg-red-50 px-2.5 py-1.5 rounded font-bold">{banned.reason}</strong>
                             </p>
                             <p className="text-[11px] text-text-muted">
-                              الموظف الذي قام بالحظر: <span className="text-brand-primary font-bold bg-slate-100 px-2 py-0.5 rounded">{banned.bannedBy || "مدير النظام (أنت)"}</span>
+                              {tr('الموظف الذي قام بالحظر:', 'Blocked by:')} <span className="text-brand-primary font-bold bg-slate-100 px-2 py-0.5 rounded">{banned.bannedBy || tr('مدير النظام (أنت)', 'You')}</span>
                             </p>
                           </div>
 
                           <div className="bg-bg-paper border border-border-delicate p-4 rounded-xl space-y-2 text-xs font-mono">
                             <p className="text-[10px] font-bold text-brand-gold tracking-widest uppercase border-b border-border-delicate pb-1.5 mb-1.5 font-sans">
-                              مواصفات جهاز الزبون المحظور:
+                              {tr('مواصفات جهاز الزبون المحظور:', 'Blocked device details:')}
                             </p>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-text-muted">
-                              <div>نوع الجهاز: <span className="font-sans font-bold text-brand-primary">{banned.deviceMetadata?.deviceType || "غير متوفر"}</span></div>
-                              <div>البصمة الرقمية: <span className="text-red-600 font-bold font-mono">{banned.fingerprint}</span></div>
+                              <div>{tr('نوع الجهاز:', 'Device type:')} <span className="font-sans font-bold text-brand-primary">{banned.deviceMetadata?.deviceType ? localizeDeviceType(banned.deviceMetadata.deviceType, language) : tr('غير متوفر', 'Unavailable')}</span></div>
+                              <div>{tr('البصمة الرقمية:', 'Fingerprint:')} <span className="text-red-600 font-bold font-mono">{banned.fingerprint}</span></div>
                             </div>
                           </div>
                         </div>
 
                         <button
                           onClick={async () => {
-                            if (confirm(`هل أنت متأكد من إلغاء حظر الزبون "${banned.customerName}" وتمكينه من الطلب مجدداً؟`)) {
+                            if (confirm(tr(`هل أنت متأكد من إلغاء حظر الزبون "${banned.customerName}" وتمكينه من الطلب مجدداً؟`, `Unblock "${banned.customerName}" and allow ordering again?`))) {
                               try {
                                 await deleteDoc(doc(db, "banned_devices", banned.id));
-                                alert(`تم فك الحظر عن "${banned.customerName}" بنجاح!`);
+                                alert(tr(`تم فك الحظر عن "${banned.customerName}" بنجاح!`, `"${banned.customerName}" was unblocked.`));
                               } catch (err) {
-                                alert("فشل إلغاء الحظر. حاول مجدداً");
+                                alert(tr('فشل إلغاء الحظر. حاول مجدداً', 'Could not unblock this customer. Please retry.'));
                               }
                             }
                           }}
                           className="px-5 py-3 border border-border-delicate hover:border-emerald-600 text-text-muted hover:text-emerald-700 hover:bg-emerald-50 text-[11px] font-bold uppercase tracking-wider rounded transition-all shrink-0 w-full md:w-auto text-center font-sans"
                         >
-                          فك الحظر والترخيص بالطلب 🔓
+                          {tr('فك الحظر والترخيص بالطلب', 'Unblock customer')} 🔓
                         </button>
                       </div>
                     ))}
@@ -2111,14 +2119,14 @@ export default function RestaurantDashboard({
             <div className="p-6 sm:p-12 md:p-20 space-y-8 sm:space-y-12 bg-bg-paper border-r border-border-delicate text-right">
               <div className="space-y-4">
                 <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest">
-                  الدعم الفني والخدمات الفنية
+                  {tr('الدعم الفني والخدمات الفنية', 'Technical support')}
                 </p>
                 <h3 className="text-3xl sm:text-4xl font-display text-brand-primary tracking-tight">
-                  كيف يمكننا خدمتك ومساعدتك؟
+                  {tr('كيف يمكننا خدمتك ومساعدتك؟', 'How can we help?')}
                 </h3>
               </div>
               <p className="text-base sm:text-lg text-text-muted leading-relaxed">
-                فريق الدعم الفني متواجد لمساعدتك لضمان تشغيل خدمتك الرقمية باستمرار وبدون أي انقطاع.
+                {tr('فريق الدعم الفني متواجد لمساعدتك لضمان تشغيل خدمتك الرقمية باستمرار وبدون أي انقطاع.', 'Contact support to keep your digital service running smoothly.')}
               </p>
               <div className="flex flex-col sm:flex-row items-center sm:items-center gap-6 sm:gap-10 pt-6 sm:pt-8 justify-start">
                 <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full border border-brand-gold flex items-center justify-center text-brand-gold shrink-0">
@@ -2126,7 +2134,7 @@ export default function RestaurantDashboard({
                 </div>
                 <div className="space-y-1 text-right">
                   <p className="text-[10px] font-bold uppercase tracking-widest text-brand-gold opacity-60">
-                    رقم خط الطوارئ المباشر
+                    {tr('رقم خط الطوارئ المباشر', 'Direct support line')}
                   </p>
                   <p className="text-2xl sm:text-3xl font-display tracking-tight text-brand-primary">
                     {supportPhone}
@@ -2160,14 +2168,14 @@ export default function RestaurantDashboard({
             onClose={() => setShowProductModal(null)}
             restaurantId={restaurantId}
             existingItem={showProductModal.item}
-            categories={restaurant?.categories || ["الوجبات الأساسية", "المقبلات", "الحلويات", "المشروبات"]}
+            categories={resolveMenuCategories(restaurant?.categories)}
           />
         )}
         {banningOrder && (
           <BanCustomerModal
             order={banningOrder}
             onClose={() => setBanningOrder(null)}
-            defaultStaffName="المدير / صاحب المطعم"
+            defaultStaffName={tr('المدير / صاحب المطعم', 'Restaurant owner')}
             onConfirm={async (reason, staffName) => {
               await handleBanCustomer(banningOrder, reason, staffName);
               setBanningOrder(null);
@@ -2181,7 +2189,7 @@ export default function RestaurantDashboard({
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
               className="bg-white max-w-lg w-full p-6 sm:p-10 border border-border-delicate relative my-8 text-right font-sans rounded-none"
-              dir="rtl"
+              dir={dir}
             >
               <button
                 onClick={() => setSelectedOrderForTimeline(null)}
@@ -2194,15 +2202,15 @@ export default function RestaurantDashboard({
               <div className="absolute top-0 right-0 w-full h-1 bg-brand-gold" />
               
               <div className="space-y-6 text-right">
-                <p className="text-[10px] sm:text-xs font-bold text-brand-gold uppercase tracking-widest">تتبع الكفاءة والزمن (Timeline)</p>
+                <p className="text-[10px] sm:text-xs font-bold text-brand-gold uppercase tracking-widest">{tr('تتبع الكفاءة والزمن (Timeline)', 'Order timeline')}</p>
                 <h3 className="text-xl font-display text-brand-primary font-bold italic">
-                  التسلسل الزمني للطلب: {selectedOrderForTimeline.orderNumber ? `رقم ${selectedOrderForTimeline.orderNumber}` : `#${selectedOrderForTimeline.id.slice(-6).toUpperCase()}`}
+                  {tr('التسلسل الزمني للطلب:', 'Order timeline:')} {selectedOrderForTimeline.orderNumber ? tr(`رقم ${selectedOrderForTimeline.orderNumber}`, `No. ${selectedOrderForTimeline.orderNumber}`) : `#${selectedOrderForTimeline.id.slice(-6).toUpperCase()}`}
                 </h3>
                 <div className="bg-bg-paper p-4 border border-border-delicate text-xs text-text-muted leading-relaxed space-y-1">
-                  <p>الزبون: <strong className="text-brand-primary">{selectedOrderForTimeline.customerName}</strong></p>
-                  <p>الطاولة: <strong className="text-brand-primary">{selectedOrderForTimeline.tableNumber}</strong></p>
+                  <p>{tr('الزبون:', 'Customer:')} <strong className="text-brand-primary">{selectedOrderForTimeline.customerName}</strong></p>
+                  <p>{tr('الطاولة:', 'Table:')} <strong className="text-brand-primary">{selectedOrderForTimeline.tableNumber}</strong></p>
                   {selectedOrderForTimeline.notes && (
-                    <p>ملاحظات الزبون: <span className="italic">"{selectedOrderForTimeline.notes}"</span></p>
+                    <p>{tr('ملاحظات الزبون:', 'Customer notes:')} <span className="italic">"{selectedOrderForTimeline.notes}"</span></p>
                   )}
                 </div>
 
@@ -2213,11 +2221,11 @@ export default function RestaurantDashboard({
                       <CheckCircle2 className="w-3.5 h-3.5" />
                     </span>
                     <div>
-                      <h4 className="text-xs font-bold text-brand-primary uppercase">1. وقت إرسال الطلب من الزبون</h4>
+                      <h4 className="text-xs font-bold text-brand-primary uppercase">1. {tr('وقت إرسال الطلب من الزبون', 'Order placed')}</h4>
                       <p className="text-xs font-mono text-brand-gold mt-1" dir="ltr">
-                        {selectedOrderForTimeline.createdAt ? new Date(selectedOrderForTimeline.createdAt).toLocaleString("ar-IQ", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true, day: "numeric", month: "numeric" }) : "—"}
+                        {selectedOrderForTimeline.createdAt ? new Date(selectedOrderForTimeline.createdAt).toLocaleString(language === 'en' ? 'en-IQ' : 'ar-IQ', { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true, day: "numeric", month: "numeric" }) : "—"}
                       </p>
-                      <p className="text-[10px] text-text-muted mt-0.5">تم استلام الطلب وبانتظار الموافقة.</p>
+                      <p className="text-[10px] text-text-muted mt-0.5">{tr('تم استلام الطلب وبانتظار الموافقة.', 'Order received and waiting for confirmation.')}</p>
                     </div>
                   </div>
 
@@ -2227,25 +2235,25 @@ export default function RestaurantDashboard({
                       <CheckCircle2 className="w-3.5 h-3.5" />
                     </span>
                     <div>
-                      <h4 className="text-xs font-bold text-brand-primary uppercase">2. وقت موافقة الكابتن على طلب الزبون</h4>
+                      <h4 className="text-xs font-bold text-brand-primary uppercase">2. {tr('وقت موافقة الكابتن على طلب الزبون', 'Waiter confirmation')}</h4>
                       {selectedOrderForTimeline.approvedAt ? (
                         <>
                           <p className="text-xs font-mono text-brand-gold mt-1" dir="ltr">
-                            {new Date(selectedOrderForTimeline.approvedAt).toLocaleString("ar-IQ", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true, day: "numeric", month: "numeric" })}
+                            {new Date(selectedOrderForTimeline.approvedAt).toLocaleString(language === 'en' ? 'en-IQ' : 'ar-IQ', { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true, day: "numeric", month: "numeric" })}
                           </p>
                           {selectedOrderForTimeline.approvedAt > selectedOrderForTimeline.createdAt && (
                             <p className="text-[10px] text-emerald-600 mt-1 font-bold">
-                              ⏱️ وقت الاستجابة للموافقة: {(() => {
+                              ⏱️ {tr('وقت الاستجابة للموافقة:', 'Confirmation time:')} {(() => {
                                 const diff = selectedOrderForTimeline.approvedAt - selectedOrderForTimeline.createdAt;
                                 const sec = Math.floor(diff / 1000) % 60;
                                 const min = Math.floor(diff / 60000);
-                                return min > 0 ? `${min} دقيقة و ${sec} ثانية` : `${sec} ثانية`;
+                                return min > 0 ? tr(`${min} دقيقة و ${sec} ثانية`, `${min} min ${sec} sec`) : tr(`${sec} ثانية`, `${sec} sec`);
                               })()}
                             </p>
                           )}
                         </>
                       ) : (
-                        <p className="text-xs italic text-amber-600 mt-1">بانتظار موافقة كابتن الصالة والبدء بالتحضير الفعلي...</p>
+                        <p className="text-xs italic text-amber-600 mt-1">{tr('بانتظار موافقة كابتن الصالة والبدء بالتحضير الفعلي...', 'Waiting for the waiter to confirm the order...')}</p>
                       )}
                     </div>
                   </div>
@@ -2256,35 +2264,35 @@ export default function RestaurantDashboard({
                       <CheckCircle2 className="w-3.5 h-3.5" />
                     </span>
                     <div>
-                      <h4 className="text-xs font-bold text-brand-primary uppercase">3. وقت جهوزية الطلب للتسليم</h4>
+                      <h4 className="text-xs font-bold text-brand-primary uppercase">3. {tr('وقت جهوزية الطلب للتسليم', 'Order ready')}</h4>
                       {selectedOrderForTimeline.readyAt ? (
                         <>
                           <p className="text-xs font-mono text-brand-gold mt-1" dir="ltr">
-                            {new Date(selectedOrderForTimeline.readyAt).toLocaleString("ar-IQ", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true, day: "numeric", month: "numeric" })}
+                            {new Date(selectedOrderForTimeline.readyAt).toLocaleString(language === 'en' ? 'en-IQ' : 'ar-IQ', { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true, day: "numeric", month: "numeric" })}
                           </p>
                           {selectedOrderForTimeline.approvedAt && selectedOrderForTimeline.readyAt > selectedOrderForTimeline.approvedAt && (
                             <p className="text-[10px] text-emerald-600 mt-1 font-bold">
-                              🍳 مدة التحضير الفعلي بالمطبخ: {(() => {
+                              🍳 {tr('مدة التحضير الفعلي بالمطبخ:', 'Kitchen preparation:')} {(() => {
                                 const diff = selectedOrderForTimeline.readyAt! - selectedOrderForTimeline.approvedAt!;
                                 const sec = Math.floor(diff / 1000) % 60;
                                 const min = Math.floor(diff / 60000);
-                                return min > 0 ? `${min} دقيقة و ${sec} ثانية` : `${sec} ثانية`;
+                                return min > 0 ? tr(`${min} دقيقة و ${sec} ثانية`, `${min} min ${sec} sec`) : tr(`${sec} ثانية`, `${sec} sec`);
                               })()}
                             </p>
                           )}
                           {selectedOrderForTimeline.readyAt > selectedOrderForTimeline.createdAt && (
                             <p className="text-[10px] text-brand-primary mt-2 font-extrabold border-t border-border-delicate pt-2">
-                              🕒 إجمالي كفاءة الخدمة (الطلب حتى الجاهزية): {(() => {
+                              🕒 {tr('إجمالي كفاءة الخدمة (الطلب حتى الجاهزية):', 'Order-to-ready time:')} {(() => {
                                 const diff = selectedOrderForTimeline.readyAt! - selectedOrderForTimeline.createdAt;
                                 const sec = Math.floor(diff / 1000) % 60;
                                 const min = Math.floor(diff / 60000);
-                                return min > 0 ? `${min} دقيقة و ${sec} ثانية` : `${sec} ثانية`;
+                                return min > 0 ? tr(`${min} دقيقة و ${sec} ثانية`, `${min} min ${sec} sec`) : tr(`${sec} ثانية`, `${sec} sec`);
                               })()}
                             </p>
                           )}
                         </>
                       ) : (
-                        <p className="text-xs italic text-text-muted mt-1">جاري العمل على الوجبات في القسم المختص...</p>
+                        <p className="text-xs italic text-text-muted mt-1">{tr('جاري العمل على الوجبات في القسم المختص...', 'The kitchen is preparing the dishes...')}</p>
                       )}
                     </div>
                   </div>
@@ -2295,7 +2303,7 @@ export default function RestaurantDashboard({
                     onClick={() => setSelectedOrderForTimeline(null)}
                     className="px-6 py-2.5 bg-brand-primary text-white text-xs font-bold uppercase tracking-widest hover:bg-brand-secondary transition-all"
                   >
-                    إغلاق التفاصيل
+                    {tr('إغلاق التفاصيل', 'Close details')}
                   </button>
                 </div>
               </div>
@@ -2309,18 +2317,18 @@ export default function RestaurantDashboard({
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
               className="bg-white max-w-md w-full p-6 sm:p-10 border border-border-delicate relative my-8 text-right"
-              dir="rtl"
+              dir={dir}
             >
               <div className="absolute top-0 right-0 w-full h-1 bg-brand-gold" />
               <div className="space-y-4 text-right">
-                <p className="text-[10px] sm:text-xs font-bold text-brand-gold uppercase tracking-widest">تأكيد تصفير النظام</p>
-                <h3 className="text-xl font-display text-brand-primary font-bold italic">هل تود تصفير عداد المبيعات وبدء يوم جديد؟</h3>
+                <p className="text-[10px] sm:text-xs font-bold text-brand-gold uppercase tracking-widest">{tr('تأكيد تصفير النظام', 'Confirm reset')}</p>
+                <h3 className="text-xl font-display text-brand-primary font-bold italic">{tr('هل تود تصفير عداد المبيعات وبدء يوم جديد؟', 'Start a new workday?')}</h3>
                 <p className="text-xs text-text-muted leading-relaxed">
-                  أنت على وشك تصفير عداد أرقام الطلبات للبدء بيوم عمل جديد مفرغ تماماً.
+                  {tr('أنت على وشك تصفير عداد أرقام الطلبات للبدء بيوم عمل جديد مفرغ تماماً.', 'This resets the order counter for a new workday.')}
                   <br className="mb-2" />
-                  • سيبدأ ترتيب أرقام الطلبيات القادمة للزبائن من الرقم 1.
+                  • {tr('سيبدأ ترتيب أرقام الطلبيات القادمة للزبائن من الرقم 1.', 'New order numbers will start at 1.')}
                   <br />
-                  • سيتم أرشفة وإخفاء جميع الطلبيات النشطة حالياً من شاشات الموظفين واللوحة لتبدأ صفحة جديدة نظيفة.
+                  • {tr('سيتم أرشفة وإخفاء جميع الطلبيات النشطة حالياً من شاشات الموظفين واللوحة لتبدأ صفحة جديدة نظيفة.', 'Current active orders will be archived and hidden from staff screens.')}
                 </p>
               </div>
 
@@ -2333,14 +2341,14 @@ export default function RestaurantDashboard({
                   }}
                   className="flex-1 px-4 py-3 bg-[#c2410c] text-white text-[11px] font-bold uppercase tracking-widest hover:bg-brand-primary transition-all text-center"
                 >
-                  نعم، تصفير والبدء من جديد
+                  {tr('نعم، تصفير والبدء من جديد', 'Yes, start new day')}
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowResetConfirmModal(false)}
                   className="flex-1 px-4 py-3 border border-border-delicate text-brand-primary text-[11px] font-bold uppercase tracking-widest hover:bg-bg-paper transition-all text-center"
                 >
-                  إلغاء التراجع
+                  {tr('إلغاء التراجع', 'Cancel')}
                 </button>
               </div>
             </motion.div>
@@ -2348,6 +2356,89 @@ export default function RestaurantDashboard({
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+function ThemeSettings({ restaurant, onSaved }: { restaurant: Restaurant; onSaved: (restaurant: Restaurant) => void }) {
+  const { isEnglish, tr } = useLanguage();
+  const initial = resolveTheme(restaurant.themeId, restaurant.themeColors);
+  const [themeId, setThemeId] = useState(initial.id);
+  const [colors, setColors] = useState<ThemeColors>(initial.colors);
+  const [saving, setSaving] = useState(false);
+  const activeTheme = resolveTheme(themeId, colors);
+  const contrastOk = contrastRatio(colors.text, colors.background) >= 4.5;
+  const colorFields: { key: keyof ThemeColors; label: string }[] = [
+    { key: "primary", label: tr('الأساسي', 'Primary') }, { key: "secondary", label: tr('الثانوي', 'Secondary') },
+    { key: "accent", label: tr('البارز', 'Accent') }, { key: "background", label: tr('الخلفية', 'Background') },
+    { key: "text", label: tr('النص', 'Text') },
+  ];
+
+  const chooseTheme = (id: typeof themeId) => {
+    const selected = resolveTheme(id);
+    setThemeId(selected.id);
+    setColors(selected.colors);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await updateDoc(doc(db, "restaurants", restaurant.id), { themeId, themeColors: colors });
+      onSaved({ ...restaurant, themeId, themeColors: colors });
+      alert(tr('تم حفظ الهوية وتطبيقها على المنيو ولوحات المالك والويتر والمطبخ.', 'Branding saved and applied to the menu, owner, waiter, and kitchen workspaces.'));
+    } catch {
+      alert(tr('تعذر حفظ التصميم. حاول مرة أخرى.', 'Could not save the theme. Please try again.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <motion.section initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
+      <div>
+        <h2 className="section-title">{tr('هوية المطعم', 'Restaurant branding')}</h2>
+        <p className="text-sm text-text-muted mt-2">{tr('اختر قالباً ثم خصّص ألوانه. تُطبّق الهوية على المنيو ولوحات المالك والويتر والمطبخ، ويبقى القالب الإيطالي الفاخر هو الافتراضي.', 'Choose a theme and customize its colors. It applies to the menu and all restaurant workspaces.')}</p>
+      </div>
+      <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">
+        {MENU_THEMES.map((theme) => (
+          <button key={theme.id} onClick={() => chooseTheme(theme.id)} className={`p-5 text-right border transition-all ${themeId === theme.id ? "border-brand-gold shadow-lg" : "border-border-delicate hover:border-brand-gold/50"}`}>
+            <div className="flex gap-1 mb-4">{Object.values(theme.colors).slice(0, 4).map((color) => <span key={color} className="w-7 h-7 rounded-full border border-black/10" style={{ background: color }} />)}</div>
+            <h3 className="font-display text-xl text-brand-primary">{isEnglish ? theme.nameEn : theme.name}</h3>
+            <p className="text-xs text-text-muted mt-1">{isEnglish ? theme.descriptionEn : theme.description}</p>
+          </button>
+        ))}
+      </div>
+      <div className="grid lg:grid-cols-[320px_1fr] gap-6">
+        <div className="bg-white border border-border-delicate p-6 space-y-4">
+          <h3 className="font-bold text-brand-primary">{tr('ألوان مخصصة', 'Custom colors')}</h3>
+          {colorFields.map(({ key, label }) => (
+            <label key={key} className="flex items-center justify-between gap-4 text-sm">
+              <span>{label}</span>
+              <span className="flex items-center gap-2" dir="ltr">
+                <input type="color" value={colors[key]} onChange={(event) => setColors({ ...colors, [key]: event.target.value })} className="w-10 h-10" />
+                <input value={colors[key]} onChange={(event) => setColors({ ...colors, [key]: event.target.value })} className="w-24 border p-2 text-xs" />
+              </span>
+            </label>
+          ))}
+          {!contrastOk && <p className="text-xs text-red-700 bg-red-50 p-3">{tr('تباين النص والخلفية أقل من معيار WCAG AA (4.5:1). عدّل الألوان قبل الحفظ.', 'Text and background contrast is below WCAG AA (4.5:1). Adjust colors before saving.')}</p>}
+          <button onClick={save} disabled={saving || !contrastOk} className="w-full bg-brand-primary text-white py-3 font-bold disabled:opacity-50">{saving ? tr('جاري الحفظ...', 'Saving...') : tr('حفظ التصميم', 'Save branding')}</button>
+        </div>
+        <div className="menu-theme min-h-[430px] border border-border-delicate overflow-hidden bg-bg-paper text-text-main" data-menu-theme={themeId} style={themeStyle(activeTheme)}>
+          <div className="menu-preview-header p-8 bg-brand-primary text-white">
+            <p className="text-xs text-brand-gold font-bold tracking-widest">{tr('معاينة مباشرة', 'Live preview')}</p>
+            <h3 className="font-display text-4xl mt-3">{restaurant.restaurantName}</h3>
+          </div>
+          <div className="menu-preview-grid grid sm:grid-cols-2 gap-4 p-6">
+            {[tr('طبق المطعم المميز', 'Signature dish'), tr('قهوة اليوم', 'Coffee of the day'), tr('حلوى الشيف', 'Chef dessert'), tr('مشروب موسمي', 'Seasonal drink')].map((name, index) => (
+              <article key={name} className="menu-preview-card bg-white border border-border-delicate p-5">
+                <span className="text-[10px] text-brand-gold font-bold">{tr('اختيار الشيف', 'Chef pick')} {index + 1}</span>
+                <h4 className="font-display text-xl text-brand-primary mt-2">{name}</h4>
+                <p className="text-xs text-text-muted mt-2">{tr('مكونات طازجة محضرة بعناية يومياً.', 'Fresh ingredients prepared daily.')}</p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </div>
+    </motion.section>
   );
 }
 
@@ -2397,6 +2488,7 @@ function StaffCard({
   accent?: "primary" | "gold";
   key?: any;
 }) {
+  const { tr } = useLanguage();
   return (
     <div className="bg-white border border-border-delicate p-6 sm:p-10 space-y-8 group transition-all duration-500 hover:shadow-2xl">
       <div className="flex justify-between items-start">
@@ -2445,17 +2537,12 @@ function StaffCard({
       </div>
       <div className="bg-bg-paper p-6 sm:p-8 border border-border-delicate space-y-3">
         <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest text-text-muted gap-2">
-          <span>اسم مستخدم الدخول</span>
+          <span>{tr('اسم مستخدم الدخول', 'Username')}</span>
           <span className="text-brand-primary truncate max-w-[120px]">
             {staff.username}
           </span>
         </div>
-        <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest text-text-muted gap-2">
-          <span>رمز المرور الخاص</span>
-          <span className="text-brand-primary truncate max-w-[120px]">
-            {staff.password}
-          </span>
-        </div>
+        <p className="text-[10px] text-text-muted">{tr('لا تُعرض كلمات المرور بعد إنشاء الحساب. يمكن تعيين كلمة جديدة من شاشة التعديل.', 'Passwords are not displayed after account creation. Set a new password from Edit.')}</p>
       </div>
     </div>
   );
@@ -2478,6 +2565,7 @@ function OrderColumn({
   isHistory?: boolean;
   onShowTimeline?: (order: Order) => void;
 }) {
+  const { tr } = useLanguage();
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between border-b border-border-delicate pb-4">
@@ -2505,11 +2593,11 @@ function OrderColumn({
                     {order.customerName}
                   </h4>
                   <p className="text-[9px] font-bold text-brand-gold uppercase tracking-widest">
-                    طاولة رقم: {order.tableNumber}
+                    {tr('طاولة رقم:', 'Table:')} {order.tableNumber}
                   </p>
                 </div>
                 <span className="text-[10px] font-sans font-bold text-brand-gold bg-brand-gold/10 px-2 py-0.5 rounded">
-                  {order.orderNumber ? `رقم الطلب ${order.orderNumber}` : `#${order.id.slice(-6).toUpperCase()}`}
+                  {order.orderNumber ? tr(`رقم الطلب ${order.orderNumber}`, `Order ${order.orderNumber}`) : `#${order.id.slice(-6).toUpperCase()}`}
                 </span>
               </div>
 
@@ -2526,11 +2614,11 @@ function OrderColumn({
                         </span>
                         <span className="text-brand-primary">{item.name}</span>
                       </div>
-                      <span className="font-sans text-brand-gold opacity-8 tracking-normal">{(item.price * item.quantity).toLocaleString()} د.ع</span>
+                      <span className="font-sans text-brand-gold opacity-8 tracking-normal">{(item.price * item.quantity).toLocaleString()} {tr('د.ع', 'IQD')}</span>
                     </div>
                     {item.customizationText && (
                       <div className="text-[9px] text-brand-gold font-bold tracking-normal mt-1 block">
-                        ✨ الخيارات: {item.customizationText}
+                        ✨ {tr('الخيارات:', 'Options:')} {item.customizationText}
                       </div>
                     )}
                   </div>
@@ -2539,14 +2627,14 @@ function OrderColumn({
 
               {order.status === "rejected" && (
                 <div className="p-3 bg-red-50 border border-red-100 space-y-2 text-right">
-                  <p className="text-[9px] font-bold text-red-600 uppercase tracking-widest leading-none">⚠️ تفاصيل الرفض والطلب تراجعاً</p>
+                  <p className="text-[9px] font-bold text-red-600 uppercase tracking-widest leading-none">⚠️ {tr('تفاصيل الرفض والطلب تراجعاً', 'Rejection details')}</p>
                   <p className="text-xs text-red-900 font-bold leading-relaxed">
-                    <span className="text-[10px] text-red-600 font-normal">السبب: </span>{order.rejectionReason}
+                    <span className="text-[10px] text-red-600 font-normal">{tr('السبب:', 'Reason:')} </span>{order.rejectionReason}
                   </p>
                   <div className="pt-2 border-t border-red-100 flex items-center justify-between text-[8px] font-bold text-red-800">
-                    <span>بواسطة الموظف: <span className="underline">{order.rejectedBy || "غير معروف"}</span></span>
+                    <span>{tr('بواسطة الموظف:', 'By staff:')} <span className="underline">{order.rejectedBy || tr('غير معروف', 'Unknown')}</span></span>
                     <span className="bg-red-100 px-1.5 py-0.5 rounded text-[8px]">
-                      {order.rejectedRole === "waiter" ? "طاقم الخدمة والويترز" : "لوحة المطبخ"}
+                      {order.rejectedRole === "waiter" ? tr('طاقم الخدمة والويترز', 'Waiter team') : tr('لوحة المطبخ', 'Kitchen')}
                     </span>
                   </div>
                 </div>
@@ -2555,17 +2643,17 @@ function OrderColumn({
               <div className="flex flex-col gap-3 pt-3 border-t border-border-delicate">
                 <div className="flex justify-between items-center">
                   <p className="text-base font-display not-italic text-brand-primary">
-                    <span className="font-sans font-bold">{order.totalAmount.toLocaleString()}</span> د.ع
+                    <span className="font-sans font-bold">{order.totalAmount.toLocaleString()}</span> {tr('د.ع', 'IQD')}
                   </p>
                   {onShowTimeline && (
                     <button
                       onClick={() => onShowTimeline(order)}
                       type="button"
                       className="text-[10px] font-bold text-brand-gold hover:text-brand-primary border border-brand-gold/25 hover:border-brand-primary/20 px-3 py-1.5 rounded transition-all flex items-center gap-1 h-[36px]"
-                      title="عرض المخطط الزمني وتتبع الكفاءة"
+                      title={tr('عرض المخطط الزمني وتتبع الكفاءة', 'View order timeline')}
                     >
                       <Clock className="w-3.5 h-3.5" />
-                      <span>⏱️ تفاصيل الأوقات</span>
+                      <span>⏱️ {tr('تفاصيل الأوقات', 'Timeline')}</span>
                     </button>
                   )}
                 </div>
@@ -2576,9 +2664,9 @@ function OrderColumn({
                       <button
                         onClick={() => onBan(order)}
                         className="text-[10px] font-bold text-red-600 hover:text-red-700 hover:bg-red-50 px-2.5 py-1.5 border border-red-100 rounded transition-all duration-300 flex items-center gap-1 shrink-0 h-[36px]"
-                        title="حظر هذا العميل من المنيو الرقمي نهائياً"
+                        title={tr('حظر هذا العميل من المنيو الرقمي نهائياً', 'Block this customer from the digital menu')}
                       >
-                        🚫 حظر
+                        🚫 {tr('حظر', 'Block')}
                       </button>
                     )}
                     <button
@@ -2593,10 +2681,10 @@ function OrderColumn({
                       className="flex items-center gap-2 text-[9px] font-bold text-brand-gold uppercase tracking-widest group/btn border border-border-delicate hover:border-brand-primary/20 px-4 py-1.5 rounded transition-all h-[36px] flex-1 justify-center"
                     >
                       {order.status === "pending"
-                        ? "إرسال للمطبخ"
+                        ? tr('إرسال للمطبخ', 'Send to kitchen')
                         : order.status === "preparing"
-                          ? "تأكيد جاهزية الطبق"
-                          : "تأكيد تقديم الطلب"}
+                          ? tr('تأكيد جاهزية الطبق', 'Mark ready')
+                          : tr('تأكيد تقديم الطلب', 'Mark served')}
                       <ChevronRight className="w-4 h-4 group-hover:-translate-x-1 transition-transform rotate-180" />
                     </button>
                   </div>
@@ -2607,7 +2695,7 @@ function OrderColumn({
         </AnimatePresence>
         {orders.length === 0 && (
           <div className="py-20 text-center text-text-muted/20 text-xs font-bold uppercase tracking-widest">
-            القائمة فارغة حالياً
+            {tr('القائمة فارغة حالياً', 'No orders here yet')}
           </div>
         )}
       </div>
@@ -2626,12 +2714,16 @@ function StaffModal({
   role: "waiter" | "kitchen";
   existingStaff?: Waiter;
 }) {
+  const { dir, tr } = useLanguage();
   const [formData, setFormData] = useState({
     name: existingStaff?.name || "",
     phone: existingStaff?.phone || "",
     username: existingStaff?.username || "",
     password: existingStaff?.password || "",
   });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [createdCredentials, setCreatedCredentials] = useState<{ username: string; password: string } | null>(null);
 
   useEffect(() => {
     if (!existingStaff) {
@@ -2644,50 +2736,72 @@ function StaffModal({
       if (!formData.password)
         setFormData((p) => ({
           ...p,
-          password: Math.random().toString(36).substring(2, 8).toUpperCase(),
+          password: `Nx${Math.random().toString(36).slice(2, 8)}${Math.floor(10 + Math.random() * 90)}`,
         }));
     }
   }, [role, existingStaff]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const coll = role === "waiter" ? "waiters" : "kitchen_staff";
+    setSaving(true);
+    setSaveError(null);
     try {
-      if (existingStaff) {
-        await updateDoc(doc(db, coll, existingStaff.id), formData);
-      } else {
-        await addDoc(collection(db, coll), {
-          ...formData,
-          restaurantId,
-          status: "active",
-        });
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) throw new Error("authentication_required");
+      const response = await fetch('/api/staff', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session.access_token}` }, body: JSON.stringify({ ...formData, id: existingStaff?.id, restaurantId, role }) });
+      if (!response.ok) {
+        const result = await response.json();
+        throw new Error(result.error || 'staff_save_failed');
       }
-      onClose();
+      if (existingStaff) {
+        alert(tr('تم تحديث بيانات الدخول بنجاح.', 'Login details updated successfully.'));
+        onClose();
+      } else {
+        setCreatedCredentials({ username: formData.username, password: formData.password });
+      }
     } catch (err) {
-      handleFirestoreError(
-        err,
-        existingStaff ? OperationType.UPDATE : OperationType.CREATE,
-        coll,
-      );
+      const code = err instanceof Error ? err.message : 'staff_save_failed';
+      setSaveError(code === 'password_too_weak'
+        ? tr('كلمة المرور يجب أن تكون 8 أحرف على الأقل وتحتوي حرفاً ورقماً.', 'Password must be at least 8 characters and include a letter and number.')
+        : code === 'staff_auth_update_failed'
+          ? tr('رفض نظام الدخول تحديث البيانات. قد يكون اسم المستخدم مستخدماً بالفعل.', 'Authentication could not update this account. The username may already be in use.')
+          : tr('تعذر حفظ حساب الموظف. تحقق من اسم المستخدم وكلمة المرور.', 'Could not save the staff account. Check the username and password.'));
+    } finally {
+      setSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[70] flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[70] flex items-center justify-center p-4 sm:p-6 overflow-y-auto" dir={dir}>
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="bg-white max-w-md w-full p-6 sm:p-12 border border-border-delicate relative my-8"
       >
         <div className="absolute top-0 right-0 w-full h-1 bg-brand-gold" />
-        <div className="space-y-2 mb-8 text-right">
+        {createdCredentials ? (
+          <div className="space-y-6 text-center">
+            <CheckCircle2 className="w-14 h-14 text-emerald-600 mx-auto" />
+            <div>
+              <h2 className="text-2xl font-display text-brand-primary">{tr('تم إنشاء حساب الموظف', 'Staff account created')}</h2>
+              <p className="text-xs text-text-muted mt-2">{tr('احفظ بيانات الدخول الآن؛ كلمة المرور لا تُخزن كنص داخل قاعدة البيانات.', 'Save these credentials now. The password is not stored as plain text.')}</p>
+            </div>
+            <div className="bg-bg-paper border border-border-delicate p-5 space-y-3 font-mono text-start" dir="ltr">
+              <p><strong>Username:</strong> {createdCredentials.username}</p>
+              <p><strong>Password:</strong> {createdCredentials.password}</p>
+            </div>
+            <button type="button" onClick={() => navigator.clipboard.writeText(`Username: ${createdCredentials.username}\nPassword: ${createdCredentials.password}`)} className="w-full py-3 border border-brand-primary text-brand-primary font-bold">{tr('نسخ بيانات الدخول', 'Copy credentials')}</button>
+            <button type="button" onClick={onClose} className="w-full py-4 bg-brand-primary text-white font-bold">{tr('تم، إغلاق', 'Done')}</button>
+          </div>
+        ) : <>
+        <div className="space-y-2 mb-8">
           <p className="text-[9px] font-bold text-brand-gold uppercase tracking-widest">
-            تسجيل وتعديل بيانات الموظف
+            {tr('تسجيل وتعديل بيانات الموظف', 'Staff access details')}
           </p>
           <h2 className="text-2xl sm:text-3xl font-display text-brand-primary tracking-tight">
-            {existingStaff ? "تعديل بيانات" : "تسجيل وتعيين"}{" "}
+            {existingStaff ? tr('تعديل بيانات', 'Edit') : tr('تسجيل وتعيين', 'Create')}{" "}
             <span className="text-brand-gold">
-              {role === "waiter" ? "موظف صالة (ويتر)" : "شيف المطبخ"}
+              {role === "waiter" ? tr('موظف صالة (ويتر)', 'waiter account') : tr('شيف المطبخ', 'kitchen account')}
             </span>
           </h2>
         </div>
@@ -2696,11 +2810,11 @@ function StaffModal({
           <div className="space-y-4">
             <div className="space-y-1 text-right">
               <label className="text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
-                الاسم الكامل للموظف
+                {tr('الاسم الكامل للموظف', 'Full name')}
               </label>
               <input
                 required
-                placeholder="الاسم الكامل"
+                placeholder={tr('الاسم الكامل', 'Full name')}
                 className="w-full bg-transparent border-b border-border-delicate py-2 sm:py-3 font-display text-base text-brand-primary focus:outline-none focus:border-brand-primary transition-all text-right"
                 value={formData.name}
                 onChange={(e) =>
@@ -2710,11 +2824,11 @@ function StaffModal({
             </div>
             <div className="space-y-1 text-right">
               <label className="text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
-                رقم الهاتف المباشر
+                {tr('رقم الهاتف المباشر', 'Phone number')}
               </label>
               <input
                 required
-                placeholder="مثال: 0780000000"
+                placeholder={tr('مثال: 0780000000', 'Example: 0780000000')}
                 className="w-full bg-transparent border-b border-border-delicate py-2 sm:py-3 font-display text-base text-brand-primary focus:outline-none focus:border-brand-primary transition-all text-right"
                 value={formData.phone}
                 onChange={(e) =>
@@ -2725,7 +2839,7 @@ function StaffModal({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
               <div className="space-y-1 text-right">
                 <label className="text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
-                  اسم كود التعريف (ID)
+                  {tr('اسم كود التعريف (ID)', 'Username')}
                 </label>
                 <input
                   className="w-full bg-bg-paper border border-border-delicate p-3 text-xs font-bold tracking-widest text-brand-primary focus:outline-none focus:border-brand-primary text-right"
@@ -2737,10 +2851,14 @@ function StaffModal({
               </div>
               <div className="space-y-1 text-right">
                 <label className="text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
-                  رمز المرور السري
+                  {existingStaff ? tr('كلمة مرور جديدة (اتركها فارغة للإبقاء على الحالية)', 'New password (leave blank to keep current)') : tr('رمز المرور السري', 'Password')}
                 </label>
                 <input
-                  className="w-full bg-bg-paper border border-border-delicate p-3 text-xs font-bold tracking-widest text-brand-primary focus:outline-none focus:border-brand-primary text-right"
+                  type="password"
+                  required={!existingStaff}
+                  minLength={existingStaff && !formData.password ? undefined : 8}
+                  autoComplete="new-password"
+                  className="w-full bg-bg-paper border border-border-delicate p-3 text-xs font-bold tracking-widest text-brand-primary focus:outline-none focus:border-brand-primary"
                   value={formData.password}
                   onChange={(e) =>
                     setFormData({ ...formData, password: e.target.value })
@@ -2750,22 +2868,26 @@ function StaffModal({
             </div>
           </div>
 
+          {saveError && <p className="text-xs font-bold text-red-800 bg-red-50 border border-red-200 p-3">{saveError}</p>}
+
           <div className="flex flex-col sm:flex-row gap-4 pt-4">
             <button
               type="submit"
-              className="flex-1 py-4 bg-brand-primary text-white text-[11px] font-bold uppercase tracking-widest shadow-xl hover:bg-brand-secondary text-center"
+              disabled={saving}
+              className="flex-1 py-4 bg-brand-primary text-white text-[11px] font-bold uppercase tracking-widest shadow-xl hover:bg-brand-secondary text-center disabled:opacity-60"
             >
-              تأكيد وتسجيل الموظف
+              {saving ? tr('جاري الحفظ...', 'Saving...') : tr('تأكيد وتسجيل الموظف', 'Save staff account')}
             </button>
             <button
               type="button"
               onClick={onClose}
               className="py-4 px-6 border border-border-delicate text-[11px] font-bold uppercase tracking-widest text-text-muted text-center"
             >
-              إلغاء والعودة
+              {tr('إلغاء والعودة', 'Cancel')}
             </button>
           </div>
         </form>
+        </>}
       </motion.div>
     </div>
   );
@@ -2822,6 +2944,8 @@ function AddProductModal({
   existingItem?: MenuItem;
   categories: string[];
 }) {
+  const { dir, language, tr } = useLanguage();
+  const availableCategories = resolveMenuCategories(categories);
   const [formData, setFormData] = useState({
     name: existingItem?.name || "",
     price: existingItem?.price || 0,
@@ -2831,19 +2955,21 @@ function AddProductModal({
     cheesePrice: existingItem?.cheesePrice || 0,
     spicyPrice: existingItem?.spicyPrice || 0,
     imageUrl: existingItem?.imageUrl || "",
-    category: existingItem?.category || (categories && categories.length > 0 ? categories[0] : "الوجبات الأساسية"),
+    category: existingItem?.category || availableCategories[0],
     isAvailable: existingItem?.isAvailable !== false,
   });
 
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     if (file.size > 12 * 1024 * 1024) {
-      setUploadError("حجم الصورة كبير جداً. يرجى اختيار صورة أصغر من 12 ميغابايت.");
+      setUploadError(tr('حجم الصورة كبير جداً. يرجى اختيار صورة أصغر من 12 ميغابايت.', 'Image is too large. Choose one smaller than 12 MB.'));
       return;
     }
 
@@ -2853,7 +2979,7 @@ function AddProductModal({
       const compressedRes = await compressAndResizeImage(file);
       setFormData(prev => ({ ...prev, imageUrl: compressedRes }));
     } catch {
-      setUploadError("عذراً، فشل تحميل ومعالجة الصورة. يرجى تجربة صورة أخرى.");
+      setUploadError(tr('عذراً، فشل تحميل ومعالجة الصورة. يرجى تجربة صورة أخرى.', 'Could not process this image. Try another image.'));
     } finally {
       setIsUploading(false);
     }
@@ -2866,27 +2992,34 @@ function AddProductModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSaving) return;
+    setSaveError("");
+    setIsSaving(true);
     try {
+      const imageUrl = await persistRestaurantImage(restaurantId, formData.imageUrl, "menu-item");
       if (existingItem) {
-        await updateDoc(doc(db, "menuItems", existingItem.id), formData);
+        await updateDoc(doc(db, "menuItems", existingItem.id), { ...formData, imageUrl });
       } else {
         await addDoc(collection(db, "menuItems"), {
           ...formData,
+          imageUrl,
           restaurantId,
         });
       }
       onClose();
     } catch (err) {
-      handleFirestoreError(
-        err,
-        existingItem ? OperationType.UPDATE : OperationType.CREATE,
-        "menuItems",
-      );
+      console.error("Failed to save menu item", err);
+      setSaveError(tr(
+        "تعذر حفظ الطبق. تحقق من اتصال الإنترنت والصورة المختارة ثم حاول مرة أخرى.",
+        "The menu item could not be saved. Check your connection and selected image, then try again.",
+      ));
+    } finally {
+      setIsSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[70] flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
+    <div dir={dir} className="fixed inset-0 bg-black/60 backdrop-blur-md z-[70] flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -2895,11 +3028,11 @@ function AddProductModal({
         <div className="absolute top-0 right-0 w-full h-1 bg-brand-gold" />
         <div className="space-y-2 mb-8 sm:mb-12 text-right">
           <p className="text-[9px] font-bold text-brand-gold uppercase tracking-widest">
-            إدارة وتحرير أطباق المنيو
+            {tr('إدارة وتحرير أطباق المنيو', 'Manage menu items')}
           </p>
           <h2 className="text-2xl sm:text-3xl font-display text-brand-primary tracking-tight">
-            {existingItem ? "تعديل وبيانات" : "إضافة وتعيين"}{" "}
-            <span className="text-brand-gold">طبق جديد</span>
+            {existingItem ? tr('تعديل وبيانات', 'Edit') : tr('إضافة وتعيين', 'Add')}{" "}
+            <span className="text-brand-gold">{tr('طبق جديد', 'menu item')}</span>
           </h2>
         </div>
 
@@ -2907,12 +3040,12 @@ function AddProductModal({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-10">
             <div className="space-y-2 text-right">
               <label className="text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
-                اسم وجبة الطعام أو المشروب
+                {tr('اسم وجبة الطعام أو المشروب', 'Item name')}
               </label>
               <input
                 required
                 className="w-full bg-transparent border-b border-border-delicate py-2 sm:py-3 font-display text-lg text-brand-primary focus:outline-none focus:border-brand-primary text-right"
-                placeholder="مثال: كباب بغدادي، كولا..."
+                placeholder={tr('مثال: كباب بغدادي، كولا...', 'Example: kebab, cola...')}
                 value={formData.name}
                 onChange={(e) =>
                   setFormData({ ...formData, name: e.target.value })
@@ -2921,13 +3054,13 @@ function AddProductModal({
             </div>
             <div className="space-y-2 text-right">
               <label className="text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
-                سعر الوجبة بالدينار العراقي (د.ع)
+                {tr('سعر الوجبة بالدينار العراقي (د.ع)', 'Price (IQD)')}
               </label>
               <input
                 required
                 type="number"
                 className="w-full bg-transparent border-b border-border-delicate py-2 sm:py-3 font-display text-lg text-brand-primary focus:outline-none focus:border-brand-primary text-right"
-                placeholder="سعر الطبق د.ع"
+                placeholder={tr('سعر الطبق د.ع', 'Item price in IQD')}
                 value={formData.price}
                 onChange={(e) =>
                   setFormData({ ...formData, price: Number(e.target.value) })
@@ -2938,7 +3071,7 @@ function AddProductModal({
 
           <div className="space-y-2 text-right">
             <label className="text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
-              تصنيف وجبة الطعام (القائمة التابع لها)
+              {tr('تصنيف وجبة الطعام (القائمة التابع لها)', 'Category')}
             </label>
             <select
               required
@@ -2948,9 +3081,9 @@ function AddProductModal({
                 setFormData({ ...formData, category: e.target.value })
               }
             >
-              {categories.map((cat) => (
+              {availableCategories.map((cat) => (
                 <option key={cat} value={cat} className="text-brand-primary bg-white text-right">
-                  {cat}
+                  {localizeCategory(cat, language)}
                 </option>
               ))}
             </select>
@@ -2958,7 +3091,7 @@ function AddProductModal({
 
           <div className="space-y-4 text-right">
             <label className="text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
-              صورة وجبة الطعام (من الاستوديو أو المعرض)
+              {tr('صورة وجبة الطعام (من الاستوديو أو المعرض)', 'Item photo')}
             </label>
             
             {formData.imageUrl ? (
@@ -2966,20 +3099,20 @@ function AddProductModal({
                 <div className="w-24 h-24 sm:w-32 sm:h-32 border border-border-delicate overflow-hidden bg-white shadow-inner flex items-center justify-center">
                   <img 
                     src={formData.imageUrl} 
-                    alt="معاينة وجبة الطعام" 
+                    alt={tr('معاينة وجبة الطعام', 'Item preview')}
                     className="w-full h-full object-cover"
                     referrerPolicy="no-referrer"
                   />
                 </div>
                 <div className="flex-1 text-center sm:text-right space-y-2">
-                  <p className="text-xs text-brand-primary font-bold">تم اختيار الصورة بنجاح</p>
-                  <p className="text-[10px] text-text-muted">تم ضغط الصورة تلقائياً لتسريع تحميل المنيو للزبائن</p>
+                  <p className="text-xs text-brand-primary font-bold">{tr('تم اختيار الصورة بنجاح', 'Image selected')}</p>
+                  <p className="text-[10px] text-text-muted">{tr('تم ضغط الصورة تلقائياً لتسريع تحميل المنيو للزبائن', 'The image was optimized for faster menu loading.')}</p>
                   <button
                     type="button"
                     onClick={handleRemoveImage}
                     className="px-4 py-2 border border-red-200 text-red-800 text-[10px] uppercase font-bold tracking-wider hover:bg-red-50 transition-colors"
                   >
-                    حذف صورة الوجبة وإضافة غيرها
+                    {tr('حذف صورة الوجبة وإضافة غيرها', 'Replace photo')}
                   </button>
                 </div>
               </div>
@@ -3001,9 +3134,9 @@ function AddProductModal({
                 </div>
                 <div className="text-center space-y-1">
                   <p className="text-xs sm:text-sm font-bold text-brand-primary">
-                    {isUploading ? "جاري ضغط ومعالجة الصورة..." : "اضغط هنا لاختيار صورة من الاستوديو"}
+                    {isUploading ? tr('جاري ضغط ومعالجة الصورة...', 'Processing image...') : tr('اضغط هنا لاختيار صورة من الاستوديو', 'Choose an image')}
                   </p>
-                  <p className="text-[10px] text-text-muted">تدعم الصور من كافة الصيغ (PNG, JPG, HEIC)</p>
+                  <p className="text-[10px] text-text-muted">{tr('تدعم الصور من كافة الصيغ (PNG, JPG, HEIC)', 'Supported formats: PNG, JPG, HEIC')}</p>
                 </div>
               </label>
             )}
@@ -3017,11 +3150,11 @@ function AddProductModal({
 
           <div className="space-y-2 text-right">
             <label className="text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
-              مكونات وتفاصيل وجبة الطعام
+              {tr('مكونات وتفاصيل وجبة الطعام', 'Ingredients and description')}
             </label>
             <textarea
               className="w-full bg-bg-paper border border-border-delicate p-4 sm:p-6 font-display text-brand-primary focus:border-brand-primary outline-none h-28 sm:h-32 resize-none text-right"
-              placeholder="مثال: لحم عراقي طازج، متبل بالبهارات الخاصة، يقدم مع الخبز الحار والسلطات..."
+              placeholder={tr('مثال: لحم عراقي طازج، متبل بالبهارات الخاصة، يقدم مع الخبز الحار والسلطات...', 'Example: fresh meat, seasoned and served with bread and salad...')}
               value={formData.ingredients}
               onChange={(e) =>
                 setFormData({ ...formData, ingredients: e.target.value })
@@ -3032,7 +3165,7 @@ function AddProductModal({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 p-6 sm:p-10 bg-bg-paper border border-border-delicate">
             <label className="flex items-center gap-4 cursor-pointer group justify-end w-full">
               <span className="text-[11px] font-bold uppercase tracking-widest text-brand-primary text-right">
-                الوجبة متوفرة للطلب؟
+                {tr('الوجبة متوفرة للطلب؟', 'Available to order?')}
               </span>
               <input
                 type="checkbox"
@@ -3052,7 +3185,7 @@ function AddProductModal({
             </label>
             <label className="flex items-center gap-4 cursor-pointer group justify-end w-full">
               <span className="text-[11px] font-bold uppercase tracking-widest text-brand-primary text-right">
-                الوجبة حارة؟ (سبايسي)
+                {tr('الوجبة حارة؟ (سبايسي)', 'Spicy?')}
               </span>
               <input
                 type="checkbox"
@@ -3072,7 +3205,7 @@ function AddProductModal({
             </label>
             <label className="flex items-center gap-4 cursor-pointer group justify-end w-full">
               <span className="text-[11px] font-bold uppercase tracking-widest text-brand-primary text-right">
-                تحتوي على الجبن؟
+                {tr('تحتوي على الجبن؟', 'Contains cheese?')}
               </span>
               <input
                 type="checkbox"
@@ -3098,53 +3231,59 @@ function AddProductModal({
               {formData.hasCheese && (
                 <div className="space-y-2">
                   <label className="text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
-                    سعر إضافة الجبن الإضافي (د.ع)
+                    {tr('سعر إضافة الجبن الإضافي (د.ع)', 'Extra cheese price (IQD)')}
                   </label>
                   <input
                     type="number"
                     className="w-full bg-transparent border-b border-border-delicate py-2 sm:py-3 font-display text-base text-brand-primary focus:outline-none focus:border-brand-primary text-right"
-                    placeholder="مثال: 1000"
+                    placeholder={tr('مثال: 1000', 'Example: 1000')}
                     value={formData.cheesePrice}
                     onChange={(e) =>
                       setFormData({ ...formData, cheesePrice: Number(e.target.value) })
                     }
                   />
-                  <p className="text-[9px] text-text-muted">السعر الإضافي الذي سيزاد على سعر الوجبة الأساسي عند طلب الجبن.</p>
+                  <p className="text-[9px] text-text-muted">{tr('السعر الإضافي الذي سيزاد على سعر الوجبة الأساسي عند طلب الجبن.', 'Added to the base price when cheese is selected.')}</p>
                 </div>
               )}
               {formData.isSpicy && (
                 <div className="space-y-2">
                   <label className="text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
-                    سعر خيار سبايسي الإضافي (د.ع)
+                    {tr('سعر خيار سبايسي الإضافي (د.ع)', 'Spicy option price (IQD)')}
                   </label>
                   <input
                     type="number"
                     className="w-full bg-transparent border-b border-border-delicate py-2 sm:py-3 font-display text-base text-brand-primary focus:outline-none focus:border-brand-primary text-right"
-                    placeholder="مثال: 500"
+                    placeholder={tr('مثال: 500', 'Example: 500')}
                     value={formData.spicyPrice}
                     onChange={(e) =>
                       setFormData({ ...formData, spicyPrice: Number(e.target.value) })
                     }
                   />
-                  <p className="text-[9px] text-text-muted">السعر الإضافي عند طلب الخيار الحار (يمكن تركه 0 إذا كان مجاناً).</p>
+                  <p className="text-[9px] text-text-muted">{tr('السعر الإضافي عند طلب الخيار الحار (يمكن تركه 0 إذا كان مجاناً).', 'Added when spicy is selected; use 0 if free.')}</p>
                 </div>
               )}
             </div>
           )}
 
+          {saveError && (
+            <p role="alert" className="w-full text-sm text-red-800 bg-red-50 border border-red-200 p-3 text-center">
+              {saveError}
+            </p>
+          )}
           <div className="flex flex-col sm:flex-row gap-4 pt-4">
             <button
               type="submit"
-              className="flex-1 py-4 sm:py-5 bg-brand-primary text-white text-[11px] font-bold uppercase tracking-widest shadow-2xl hover:bg-brand-secondary text-center"
+              disabled={isSaving || isUploading}
+              className="flex-1 py-4 sm:py-5 bg-brand-primary text-white text-[11px] font-bold uppercase tracking-widest shadow-2xl hover:bg-brand-secondary text-center disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              حفظ وتثبيت الطبق بالمنيو
+              {isSaving ? tr("جاري حفظ الطبق...", "Saving item...") : tr("حفظ وتثبيت الطبق بالمنيو", "Save menu item")}
             </button>
             <button
               type="button"
               onClick={onClose}
               className="py-4 px-8 border border-border-delicate text-[11px] font-bold uppercase tracking-widest text-text-muted text-center"
             >
-              رجوع للخلف
+              {tr('رجوع للخلف', 'Back')}
             </button>
           </div>
         </form>

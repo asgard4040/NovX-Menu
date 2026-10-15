@@ -1,0 +1,46 @@
+import { createClient } from "npm:@supabase/supabase-js@2";
+import webpush from "npm:web-push@3.6.7";
+
+Deno.serve(async (request) => {
+  const expected = Deno.env.get("CRON_SECRET");
+  if (!expected || request.headers.get("x-cron-secret") !== expected) return new Response("Unauthorized", { status: 401 });
+  const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  webpush.setVapidDetails(Deno.env.get("VAPID_SUBJECT") || "mailto:admin@example.com", Deno.env.get("WEB_PUSH_PUBLIC_KEY")!, Deno.env.get("WEB_PUSH_PRIVATE_KEY")!);
+  const { data: events, error } = await supabase.from("notification_outbox").select("*").is("processed_at", null).lt("attempts", 5).order("created_at").limit(100);
+  if (error) return Response.json({ error: error.message }, { status: 500 });
+  let sent = 0;
+  for (const event of events || []) {
+    if (event.event_type !== "waiter_request") continue;
+    const { data: members, error: membersError } = await supabase.from("restaurant_members")
+      .select("user_id").eq("restaurant_id", event.restaurant_id).eq("active", true)
+      .in("role", ["owner", "manager", "waiter"]);
+    if (membersError) return Response.json({ error: membersError.message }, { status: 500 });
+    const staffIds = (members || []).map((member) => member.user_id);
+    const { data: subscriptions, error: subscriptionsError } = staffIds.length
+      ? await supabase.from("push_subscriptions").select("id,subscription")
+        .eq("restaurant_id", event.restaurant_id).in("user_id", staffIds)
+      : { data: [], error: null };
+    if (subscriptionsError) return Response.json({ error: subscriptionsError.message }, { status: 500 });
+    const payload = JSON.stringify({ title: `طلب ويتر - طاولة ${event.payload.table_number || ""}`, body: event.payload.reason || "يوجد طلب خدمة جديد", requestId: event.payload.request_id, url: `/?loginRestaurantId=${event.restaurant_id}&requestId=${event.payload.request_id}` });
+    if (!subscriptions?.length) {
+      await supabase.from("notification_outbox").update({ processed_at: new Date().toISOString(), attempts: event.attempts + 1 }).eq("id", event.id);
+      continue;
+    }
+    for (const item of subscriptions || []) {
+      await supabase.from("notification_deliveries").upsert({ outbox_id: event.id, subscription_id: item.id }, { onConflict: "outbox_id,subscription_id", ignoreDuplicates: true });
+      const { data: delivery } = await supabase.from("notification_deliveries").select("id,status,attempts").eq("outbox_id", event.id).eq("subscription_id", item.id).maybeSingle();
+      if (!delivery || ["sent", "expired", "failed"].includes(delivery.status)) continue;
+      try {
+        await webpush.sendNotification(item.subscription, payload); sent++;
+        await supabase.from("notification_deliveries").update({ status: "sent", attempts: delivery.attempts + 1, updated_at: new Date().toISOString(), last_error: null }).eq("id", delivery.id);
+      } catch (reason: any) {
+        const expired = [404, 410].includes(reason?.statusCode); const attempts = delivery.attempts + 1;
+        await supabase.from("notification_deliveries").update({ status: expired ? "expired" : attempts >= 5 ? "failed" : "pending", attempts, last_error: String(reason?.message || reason).slice(0, 500), updated_at: new Date().toISOString() }).eq("id", delivery.id);
+        if (expired) await supabase.from("push_subscriptions").delete().eq("id", item.id);
+      }
+    }
+    const { count: pending } = await supabase.from("notification_deliveries").select("id", { count: "exact", head: true }).eq("outbox_id", event.id).eq("status", "pending");
+    await supabase.from("notification_outbox").update({ attempts: event.attempts + 1, ...(pending === 0 ? { processed_at: new Date().toISOString() } : {}) }).eq("id", event.id);
+  }
+  return Response.json({ processed: events?.length || 0, sent });
+});

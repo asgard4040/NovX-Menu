@@ -25,6 +25,9 @@ export interface Restaurant {
   longitude?: number;
   lastShiftResetTime?: number;
   currentOrderNumber?: number;
+  geofenceRadiusMeters?: number;
+  themeId?: string;
+  themeColors?: { primary?: string; secondary?: string; accent?: string; background?: string; text?: string };
 }
 
 export interface Waiter {

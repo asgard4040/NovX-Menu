@@ -1,5 +1,3 @@
-import { auth } from './firebase';
-
 export enum OperationType {
   CREATE = 'create',
   UPDATE = 'update',
@@ -9,7 +7,7 @@ export enum OperationType {
   WRITE = 'write',
 }
 
-export interface FirestoreErrorInfo {
+export interface DatabaseErrorInfo {
   error: string;
   operationType: OperationType;
   path: string | null;
@@ -31,23 +29,15 @@ export interface FirestoreErrorInfo {
  * Throws a JSON string with detailed error and auth context.
  */
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
+  const errInfo: DatabaseErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData?.map(provider => ({
-        providerId: provider.providerId,
-        email: provider.email,
-      })) || []
+      providerInfo: []
     },
     operationType,
     path
   }
   const errorJson = JSON.stringify(errInfo);
-  console.error('Firestore Error Details:', errorJson);
+  console.error('Supabase Error Details:', errorJson);
   throw new Error(errorJson);
 }

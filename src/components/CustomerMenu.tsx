@@ -22,6 +22,7 @@ import {
   MapPin,
   AlertTriangle,
   Bell,
+  Languages,
 } from "lucide-react";
 import {
   collection,
@@ -32,20 +33,23 @@ import {
   doc,
   getDoc,
   updateDoc,
-  runTransaction,
   Timestamp,
   onSnapshot,
-} from "firebase/firestore";
-import { db } from "../lib/firebase";
+} from "../lib/supabase-db";
+import { db } from "../lib/supabase-db";
 import { handleFirestoreError, OperationType } from "../lib/firestore-utils";
 import { Restaurant, MenuItem, Order, OrderItem } from "../types";
 import { chatWithAI } from "../lib/gemini";
+import { acceptableGpsAccuracyMeters, verifyGeofence } from "../lib/geofence";
+import { resolveTheme, themeStyle } from "../lib/themes";
+import { localizeCategory, useLanguage } from "../lib/i18n";
 
 interface CustomerMenuProps {
   restaurantId: string;
 }
 
 export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
+  const { dir, language, isEnglish, toggleLanguage, tr } = useLanguage();
   const [restaurant, setRestaurant] = useState<Restaurant | null>(() => {
     try {
       const cached = localStorage.getItem(`novix_customer_restaurant_${restaurantId}`);
@@ -66,6 +70,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
   const [isExpired, setIsExpired] = useState(false);
   const [cart, setCart] = useState<{ [id: string]: number }>({});
   const [showCart, setShowCart] = useState(false);
+  const [submittingOrder, setSubmittingOrder] = useState(false);
   const [showAIChat, setShowAIChat] = useState(false);
   const [aiSettings, setAiSettings] = useState<any>(null);
 
@@ -147,33 +152,20 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
 
   useEffect(() => {
     if (!orderComplete?.id) return;
-    const unsub = onSnapshot(
-      doc(db, "orders", orderComplete.id),
-      (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          if (data && data.status === "served") {
-            try {
-              localStorage.removeItem("novix_active_order_id");
-            } catch (e) {
-              console.error(e);
-            }
-          }
-          setOrderComplete({ id: snap.id, ...data } as Order);
-        } else {
-          try {
-            localStorage.removeItem("novix_active_order_id");
-          } catch (e) {
-            console.error(e);
-          }
-          setOrderComplete(null);
-        }
-      },
-      (err) => {
-        handleFirestoreError(err, OperationType.GET, `orders/${orderComplete.id}`);
+    const refresh = async () => {
+      const token = localStorage.getItem("novix_active_order_token") || "";
+      const response = await fetch(`/api/orders/${encodeURIComponent(orderComplete.id)}/status?token=${encodeURIComponent(token)}`);
+      if (!response.ok) return;
+      const data = await response.json();
+      if (data.status === "served") {
+        localStorage.removeItem("novix_active_order_id");
+        localStorage.removeItem("novix_active_order_token");
       }
-    );
-    return () => unsub();
+      setOrderComplete(data as Order);
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 10_000);
+    return () => window.clearInterval(timer);
   }, [orderComplete?.id]);
 
   // Waiter Call States
@@ -181,6 +173,9 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
   const [waiterCallReason, setWaiterCallReason] = useState("");
   const [submittingWaiterCall, setSubmittingWaiterCall] = useState(false);
   const [waiterCallSuccess, setWaiterCallSuccess] = useState(false);
+  const waiterIdempotencyKeyRef = useRef<string | null>(null);
+  const orderIdempotencyKeyRef = useRef<string | null>(null);
+  const orderTrackingTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
     localStorage.setItem("customer_name", customerName);
@@ -194,30 +189,17 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
   const [isLocationVerified, setIsLocationVerified] = useState<boolean | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [customerCoords, setCustomerCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [locationAccuracy, setLocationAccuracy] = useState<number | null>(null);
   const [computedDistance, setComputedDistance] = useState<number | null>(null);
   const [verifyingLocation, setVerifyingLocation] = useState(false);
-  const [bypassGeofence, setBypassGeofence] = useState(false);
+
+  // A location failure is phrased in the language selected when it occurred.
+  // Clear it on language changes so a retry shows the newly selected language.
+  useEffect(() => setLocationError(null), [language]);
+  const locationWatchRef = useRef<number | null>(null);
+  const locationTimeoutRef = useRef<number | null>(null);
   const [isBanned, setIsBanned] = useState(false);
   const [banReason, setBanReason] = useState("");
-
-  // Distance calculator helper (Haversine Formula)
-  const getDistanceInMeters = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-    const R = 6371000; // in meters
-    const phi1 = (lat1 * Math.PI) / 180;
-    const phi2 = (lat2 * Math.PI) / 180;
-    const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
-    const deltaLambda = ((lon2 - lon1) * Math.PI) / 180;
-
-    const a =
-      Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
-      Math.cos(phi1) *
-        Math.cos(phi2) *
-        Math.sin(deltaLambda / 2) *
-        Math.sin(deltaLambda / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-    return R * c;
-  };
 
   const getDeviceFingerprint = (): string => {
     let fp = localStorage.getItem("device_fingerprint");
@@ -269,35 +251,69 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
         },
       };
 
-      await addDoc(collection(db, "security_alerts"), alertData);
+      await fetch('/api/security-alerts', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          restaurantId, type, title, severity,
+          customerName: alertData.customerName, tableNumber: alertData.tableNumber,
+          fingerprint, distanceMeters: distance,
+        }),
+      });
     } catch (e) {
       console.error("Failed to log security alert:", e);
     }
   };
 
-  const checkCustomerLocation = (latitude: number, longitude: number, restLat: number, restLng: number) => {
-    const distance = getDistanceInMeters(latitude, longitude, restLat, restLng);
-    setComputedDistance(distance);
+  const stopLocationWatch = () => {
+    if (locationWatchRef.current !== null) {
+      navigator.geolocation.clearWatch(locationWatchRef.current);
+      locationWatchRef.current = null;
+    }
+    if (locationTimeoutRef.current !== null) {
+      window.clearTimeout(locationTimeoutRef.current);
+      locationTimeoutRef.current = null;
+    }
+  };
+
+  useEffect(() => () => stopLocationWatch(), []);
+
+  const checkCustomerLocation = (latitude: number, longitude: number, accuracy: number, restLat: number, restLng: number) => {
+    const result = verifyGeofence({
+      customerLatitude: latitude,
+      customerLongitude: longitude,
+      accuracyMeters: accuracy,
+      restaurantLatitude: restLat,
+      restaurantLongitude: restLng,
+      radiusMeters: restaurant?.geofenceRadiusMeters || 150,
+    });
+    setComputedDistance(result.distanceMeters);
     setCustomerCoords({ lat: latitude, lng: longitude });
+    setLocationAccuracy(accuracy);
+    setIsLocationVerified(result.allowed);
 
-    // Allow browsing even if they are far away (non-blocking)
-    setIsLocationVerified(true);
-    localStorage.setItem("verified_inside_restaurant", "true");
-
-    if (distance > 150) {
+    if (!result.allowed) {
+      setLocationError(result.reason === "inaccurate_location"
+        ? tr(
+            `تعذر الحصول على موقع دقيق بما يكفي (الدقة الحالية نحو ${Math.round(accuracy)} متر). فعّل الموقع الدقيق وانتقل قرب نافذة ثم أعد المحاولة.`,
+            `A precise enough location was not available (current accuracy is about ${Math.round(accuracy)} m). Enable precise location, move near a window, and try again.`,
+          )
+        : tr(
+            `أنت خارج نطاق المطعم المسموح (${restaurant?.geofenceRadiusMeters || 150} متر).`,
+            `You are outside the restaurant's allowed range (${restaurant?.geofenceRadiusMeters || 150} m).`,
+          ));
       logSecurityAlert(
         "outside_range",
-        `زبون يتصفح وهو خارج المطعم بمسافة ${Math.round(distance)} متر`,
+        `محاولة من خارج النطاق أو بموقع غير دقيق${result.distanceMeters === null ? "" : ` (${Math.round(result.distanceMeters)} متر)`}`,
         "warning",
         { lat: latitude, lng: longitude },
-        distance
+        result.distanceMeters
       );
     }
   };
 
   const verifyLocation = () => {
     if (!navigator.geolocation) {
-      setLocationError("متصفحك لا يدعم نظام تحديد المواقع الجغرافي (GPS)");
+      setLocationError(tr("متصفحك لا يدعم نظام تحديد المواقع الجغرافي (GPS)", "Your browser does not support location services."));
       setIsLocationVerified(false);
       logSecurityAlert("failed_location", "متصفح الزائر لا يدعم الحصاد الجغرافي GPS", "warning");
       return;
@@ -305,37 +321,72 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
 
     setVerifyingLocation(true);
     setLocationError(null);
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setVerifyingLocation(false);
-        const { latitude, longitude } = position.coords;
-        // Default coordinate Al-Mansour, Baghdad if not set in DB
-        const restLat = (restaurant as any)?.latitude || 33.3250;
-        const restLng = (restaurant as any)?.longitude || 44.3400;
+    setComputedDistance(null);
+    stopLocationWatch();
 
-        checkCustomerLocation(latitude, longitude, restLat, restLng);
+    let bestPosition: GeolocationPosition | null = null;
+    let completed = false;
+    const finish = (position: GeolocationPosition) => {
+      if (completed) return;
+      completed = true;
+      stopLocationWatch();
+      setVerifyingLocation(false);
+      const { latitude, longitude, accuracy } = position.coords;
+      if (!Number.isFinite(restaurant?.latitude) || !Number.isFinite(restaurant?.longitude)) {
+        setLocationError(tr("لم يثبت المطعم موقعه بعد. يرجى إبلاغ الإدارة.", "The restaurant has not configured its location yet. Please tell the management."));
+        setIsLocationVerified(false);
+        return;
+      }
+      checkCustomerLocation(latitude, longitude, accuracy, restaurant!.latitude!, restaurant!.longitude!);
+    };
+
+    locationWatchRef.current = navigator.geolocation.watchPosition(
+      (position) => {
+        if (!bestPosition || position.coords.accuracy < bestPosition.coords.accuracy) {
+          bestPosition = position;
+        }
+        if (position.coords.accuracy > 0 && position.coords.accuracy <= acceptableGpsAccuracyMeters(restaurant?.geofenceRadiusMeters)) finish(position);
       },
       (error) => {
+        if (completed) return;
+        completed = true;
+        stopLocationWatch();
         setVerifyingLocation(false);
         console.error("Geolocation error:", error);
-        let errorMsg = "يرجى السماح بمشاركة الموقع لنتأكد من طلبك من داخل صالة المطعم بسلام وأمان.";
+        let errorMsg = tr(
+          "تعذر الحصول على موقعك. تأكد من تشغيل خدمة الموقع ثم أعد المحاولة.",
+          "Your location could not be obtained. Turn on location services and try again.",
+        );
         if (error.code === error.PERMISSION_DENIED) {
-          errorMsg = "العفو! لقد قمت برفض الإذن. الرجاء تعديل إعدادات الخصوصية في متصفحك لتتمكن من تقديم الطلب.";
+          errorMsg = tr(
+            "تم رفض إذن الموقع. اسمح للموقع بالوصول إلى موقعك الدقيق من إعدادات المتصفح ثم أعد المحاولة.",
+            "Location permission was denied. Allow precise location access in your browser settings, then try again.",
+          );
         }
         setLocationError(errorMsg);
         setIsLocationVerified(false);
         logSecurityAlert("failed_location", `رفض مشاركة الموقع الجغرافي (رمز الخطأ: ${error.code})`, "warning");
       },
-      { enableHighAccuracy: true, timeout: 8000 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
+
+    locationTimeoutRef.current = window.setTimeout(() => {
+      if (completed) return;
+      if (bestPosition) finish(bestPosition);
+      else {
+        completed = true;
+        stopLocationWatch();
+        setVerifyingLocation(false);
+        setIsLocationVerified(false);
+        setLocationError(tr(
+          "انتهت مهلة تحديد الموقع. تأكد من تشغيل الموقع الدقيق ثم أعد المحاولة.",
+          "Location timed out. Make sure precise location is enabled, then try again.",
+        ));
+      }
+    }, 12000);
   };
 
   useEffect(() => {
-    // If they were validated in this browser previously, allow it
-    if (localStorage.getItem("verified_inside_restaurant") === "true") {
-      setIsLocationVerified(true);
-    }
-
     if (restaurant) {
       // Inspect if visitor is on a normal PC and alert the dashboard
       const ua = navigator.userAgent;
@@ -380,45 +431,31 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
         console.warn("Failed to fetch AI settings in customer menu:", e);
       }
 
-      const resPath = `restaurants/${restaurantId}`;
-      const resDoc = await getDoc(doc(db, "restaurants", restaurantId));
-      if (resDoc.exists()) {
-        const rData = { id: resDoc.id, ...resDoc.data() } as Restaurant;
+      const publicResponse = await fetch(`/api/public/restaurants/${encodeURIComponent(restaurantId)}`);
+      if (!publicResponse.ok) {
+        if (publicResponse.status === 403) setIsExpired(true);
+        throw new Error(`restaurant_load_${publicResponse.status}`);
+      }
+      const publicData = await publicResponse.json();
+      {
+        const rData = publicData.restaurant as Restaurant;
         setRestaurant(rData);
         try {
           localStorage.setItem(`novix_customer_restaurant_${restaurantId}`, JSON.stringify(rData));
         } catch (_) {}
-        if (rData.endDate) {
-          const expiryTime = new Date(rData.endDate).getTime();
-          const now = new Date().getTime();
-          if (now >= expiryTime) {
-            setIsExpired(true);
-          }
-        }
       }
 
-      // Check if current fingerprint is banned
-      const currentFingerprint = getDeviceFingerprint();
-      const bannedQuery = query(
-        collection(db, "banned_devices"),
-        where("restaurantId", "==", restaurantId),
-        where("fingerprint", "==", currentFingerprint)
-      );
-      const bannedSnap = await getDocs(bannedQuery);
-      if (!bannedSnap.empty) {
-        const banDetails = bannedSnap.docs[0].data();
+      const statusResponse = await fetch(`/api/public/restaurants/${encodeURIComponent(restaurantId)}/customer-status`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fingerprint: getDeviceFingerprint(), restaurantId }),
+      });
+      const customerStatus = statusResponse.ok ? await statusResponse.json() : { banned: false };
+      if (customerStatus.banned) {
         setIsBanned(true);
-        setBanReason(banDetails.reason || "مخالفة شروط وسياسات استخدام الصالة");
+        setBanReason(customerStatus.reason || "مخالفة شروط وسياسات استخدام الصالة");
       }
 
-      const menuPath = "menuItems";
-      const menuSnap = await getDocs(
-        query(
-          collection(db, menuPath),
-          where("restaurantId", "==", restaurantId),
-        ),
-      );
-      const itemsList = menuSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as MenuItem);
+      const itemsList = publicData.menuItems as MenuItem[];
       setMenuItems(itemsList);
       try {
         localStorage.setItem(`novix_customer_menu_${restaurantId}`, JSON.stringify(itemsList));
@@ -457,25 +494,57 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
     return sum + itemPrice * (qty as number);
   }, 0);
 
+  const showSubmissionError = (error: unknown, requestType: "order" | "waiter") => {
+    const code = error instanceof Error ? error.message : "request_failed";
+    if (["location_required", "invalid_location", "location_rejected"].includes(code)) {
+      setIsLocationVerified(false);
+      setLocationError(tr(
+        "لم يتمكن المطعم من التحقق من موقعك. أعد تحديد الموقع الدقيق، أو اطلب من أحد الموظفين تسجيل الطلب لك.",
+        "The restaurant could not verify your location. Retry precise location or ask a staff member to place the order for you.",
+      ));
+      return;
+    }
+    if (code === "invalid_menu_item") {
+      void fetchData();
+      alert(tr("تغيرت القائمة أو لم يعد أحد الأطباق متاحاً. راجع السلة وحاول مجدداً.", "The menu changed or an item is unavailable. Review your cart and try again."));
+      return;
+    }
+    if (code === "subscription_inactive") {
+      alert(tr("الطلب الإلكتروني غير متاح حالياً لهذا المطعم. يرجى التواصل مع الموظفين.", "Online ordering is currently unavailable for this restaurant. Please contact staff."));
+      return;
+    }
+    alert(requestType === "order"
+      ? tr("تعذر إرسال الطلب. تحقق من الاتصال ثم حاول مرة أخرى؛ إذا استمرت المشكلة فأبلغ الموظفين.", "The order could not be sent. Check your connection and try again, or tell a staff member.")
+      : tr("تعذر إرسال نداء الويتر. حاول مجدداً أو اطلب المساعدة مباشرة.", "The waiter request could not be sent. Try again or ask staff directly."));
+  };
+
   const handleWaiterCallSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!customerName.trim() || !tableNumber.trim() || !waiterCallReason.trim()) {
-      alert("الرجاء ملء جميع الحقول المطلوبة.");
+      alert(tr("الرجاء ملء جميع الحقول المطلوبة.", "Please complete all required fields."));
       return;
     }
 
     setSubmittingWaiterCall(true);
     try {
-      await addDoc(collection(db, "waiter_requests"), {
-        restaurantId,
-        customerName: customerName.trim(),
-        tableNumber: tableNumber.trim(),
-        reason: waiterCallReason.trim(),
-        status: "pending",
-        createdAt: Date.now(),
-        coordinates: customerCoords,
-        distanceMeters: computedDistance
+      if (!isLocationVerified || !customerCoords || locationAccuracy === null) {
+        throw new Error("location_required");
+      }
+      waiterIdempotencyKeyRef.current ||= crypto.randomUUID();
+      const response = await fetch('/api/waiter-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          restaurantId,
+          customerName: customerName.trim(),
+          tableNumber: tableNumber.trim(),
+          reason: waiterCallReason.trim(),
+          idempotencyKey: waiterIdempotencyKeyRef.current,
+          location: { latitude: customerCoords.lat, longitude: customerCoords.lng, accuracy: locationAccuracy },
+        }),
       });
+      if (!response.ok) throw new Error((await response.json()).error || 'request_failed');
+      waiterIdempotencyKeyRef.current = null;
       setWaiterCallSuccess(true);
       setWaiterCallReason("");
       setTimeout(() => {
@@ -484,27 +553,31 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       }, 3000);
     } catch (err) {
       console.error("Error submitting waiter call:", err);
-      alert("لم نتمكن من إرسال الطلب، يرجى المحاولة مرة أخرى.");
+      showSubmissionError(err, "waiter");
     } finally {
       setSubmittingWaiterCall(false);
     }
   };
 
   const handlePlaceOrder = async () => {
-    if (!customerName || !tableNumber) {
-      alert("الرجاء إدخال اسمك ورقم الطاولة");
+    if (submittingOrder) return;
+    if (!customerName.trim() || !tableNumber.trim()) {
+      alert(tr("الرجاء إدخال اسمك ورقم الطاولة", "Enter your name and table number."));
       return;
     }
 
+    setSubmittingOrder(true);
+    try {
     const orderItems: OrderItem[] = Object.entries(cart).map(([cartKey, qty]) => {
       const { itemId, cheeseSelected, spicySelected } = parseCartKey(cartKey);
-      const item = menuItems.find((i) => i.id === itemId)!;
+      const item = menuItems.find((i) => i.id === itemId);
+      if (!item) throw new Error("invalid_menu_item");
       
       const extraList: string[] = [];
-      if (cheeseSelected) extraList.push(`جبن (+${(item.cheesePrice || 0).toLocaleString()} د.ع)`);
-      if (spicySelected) extraList.push(`سبايسي (+${(item.spicyPrice || 0).toLocaleString()} د.ع)`);
+      if (cheeseSelected) extraList.push(tr(`جبن (+${(item.cheesePrice || 0).toLocaleString()} د.ع)`, `Cheese (+${(item.cheesePrice || 0).toLocaleString()} IQD)`));
+      if (spicySelected) extraList.push(tr(`سبايسي (+${(item.spicyPrice || 0).toLocaleString()} د.ع)`, `Spicy (+${(item.spicyPrice || 0).toLocaleString()} IQD)`));
       
-      const customizationText = extraList.length > 0 ? extraList.join(" + ") : "عادي";
+      const customizationText = extraList.length > 0 ? extraList.join(" + ") : tr("عادي", "Regular");
       const customizedPrice = item.price + 
         (cheeseSelected ? (item.cheesePrice || 0) : 0) + 
         (spicySelected ? (item.spicyPrice || 0) : 0);
@@ -520,54 +593,31 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       };
     });
 
-    try {
-      const resDocRef = doc(db, "restaurants", restaurantId);
-      let orderNumber = 1;
-      
-      await runTransaction(db, async (transaction) => {
-        const resSnap = await transaction.get(resDocRef);
-        if (resSnap.exists()) {
-          const curOrderNum = Number(resSnap.data().currentOrderNumber) || 0;
-          orderNumber = curOrderNum + 1;
-          transaction.update(resDocRef, { currentOrderNumber: orderNumber });
-        }
+      if (orderItems.length === 0) throw new Error("invalid_order");
+      if (!isLocationVerified || !customerCoords || locationAccuracy === null) throw new Error("location_required");
+      orderIdempotencyKeyRef.current ||= crypto.randomUUID();
+      orderTrackingTokenRef.current ||= crypto.randomUUID();
+      const response = await fetch('/api/orders', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ restaurantId, customerName: customerName.trim(), tableNumber: tableNumber.trim(), notes, items: orderItems, idempotencyKey: orderIdempotencyKeyRef.current,
+          trackingToken: orderTrackingTokenRef.current,
+          fingerprint: getDeviceFingerprint(), location: { latitude: customerCoords.lat, longitude: customerCoords.lng, accuracy: locationAccuracy } }),
       });
-
-      const collectionPath = "orders";
-      const orderData = {
-        restaurantId,
-        customerName,
-        tableNumber,
-        items: orderItems,
-        totalAmount: totalPrice,
-        status: "pending",
-        notes,
-        createdAt: Date.now(),
-        orderNumber,
-        clearedForStaff: false,
-        deviceMetadata: {
-          userAgent: navigator.userAgent,
-          deviceType: getReadableDeviceType(navigator.userAgent),
-          screenSize: `${window.innerWidth}x${window.innerHeight} px`,
-          language: navigator.language || "ar",
-          fingerprint: getDeviceFingerprint(),
-          coordinates: customerCoords,
-          distanceMeters: computedDistance,
-        },
-      };
-      const docRef = await addDoc(collection(db, collectionPath), orderData);
-      try {
-        localStorage.setItem("novix_active_order_id", docRef.id);
-      } catch (e) {
-        console.error(e);
-      }
-      setOrderComplete({ id: docRef.id, ...orderData } as Order);
+      if (!response.ok) throw new Error((await response.json()).error || 'order_failed');
+      const orderData = await response.json();
+      orderIdempotencyKeyRef.current = null;
+      orderTrackingTokenRef.current = null;
+      localStorage.setItem("novix_active_order_id", orderData.id);
+      localStorage.setItem("novix_active_order_token", orderData.trackingToken);
+      setOrderComplete(orderData as Order);
       setShowOrderTrackingModal(true);
       setCart({});
       setShowCart(false);
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, "orders");
-      alert("فشل في إرسال الطلب. حاول مجدداً");
+      console.error(err);
+      showSubmissionError(err, "order");
+    } finally {
+      setSubmittingOrder(false);
     }
   };
 
@@ -599,57 +649,28 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       }
     }
 
-    if (orderItems.length === 0) {
-      orderItems.push({
-        id: "ai_custom_" + Date.now(),
-        name: orderInfo.items.map((i) => `${i.name} (x${i.quantity})`).join(" + "),
-        quantity: 1,
-        price: 0,
-      });
-    }
+    if (orderItems.length === 0) return;
 
+    if (submittingOrder) return;
+    setSubmittingOrder(true);
     try {
-      const resDocRef = doc(db, "restaurants", restaurantId);
-      let orderNumber = 1;
-
-      await runTransaction(db, async (transaction) => {
-        const resSnap = await transaction.get(resDocRef);
-        if (resSnap.exists()) {
-          const curOrderNum = Number(resSnap.data().currentOrderNumber) || 0;
-          orderNumber = curOrderNum + 1;
-          transaction.update(resDocRef, { currentOrderNumber: orderNumber });
-        }
+      if (!isLocationVerified || !customerCoords || locationAccuracy === null) throw new Error("location_required");
+      orderIdempotencyKeyRef.current ||= crypto.randomUUID();
+      orderTrackingTokenRef.current ||= crypto.randomUUID();
+      const response = await fetch('/api/orders', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ restaurantId, customerName: orderInfo.customerName, tableNumber: orderInfo.tableNumber,
+          notes: orderInfo.notes || "", items: orderItems, fingerprint: getDeviceFingerprint(), idempotencyKey: orderIdempotencyKeyRef.current,
+          trackingToken: orderTrackingTokenRef.current,
+          location: { latitude: customerCoords.lat, longitude: customerCoords.lng, accuracy: locationAccuracy } }),
       });
-
-      const orderData = {
-        restaurantId,
-        customerName: orderInfo.customerName,
-        tableNumber: orderInfo.tableNumber,
-        items: orderItems,
-        totalAmount: totalCalculatedPrice,
-        status: "pending",
-        notes: orderInfo.notes || "",
-        createdAt: Date.now(),
-        orderNumber,
-        clearedForStaff: false,
-        deviceMetadata: {
-          userAgent: navigator.userAgent,
-          deviceType: getReadableDeviceType(navigator.userAgent),
-          screenSize: `${window.innerWidth}x${window.innerHeight} px`,
-          language: navigator.language || "ar",
-          fingerprint: getDeviceFingerprint(),
-          coordinates: customerCoords,
-          distanceMeters: computedDistance,
-        },
-      };
-
-      const docRef = await addDoc(collection(db, "orders"), orderData);
-      try {
-        localStorage.setItem("novix_active_order_id", docRef.id);
-      } catch (e) {
-        console.error(e);
-      }
-      setOrderComplete({ id: docRef.id, ...orderData } as Order);
+      if (!response.ok) throw new Error((await response.json()).error || 'order_failed');
+      const orderData = await response.json();
+      orderIdempotencyKeyRef.current = null;
+      orderTrackingTokenRef.current = null;
+      localStorage.setItem("novix_active_order_id", orderData.id);
+      localStorage.setItem("novix_active_order_token", orderData.trackingToken);
+      setOrderComplete(orderData as Order);
       setShowOrderTrackingModal(true);
       
       setCustomerName(orderInfo.customerName);
@@ -659,7 +680,10 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       setCart({});
       setShowCart(false);
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, "orders");
+      console.error(err);
+      showSubmissionError(err, "order");
+    } finally {
+      setSubmittingOrder(false);
     }
   };
 
@@ -694,9 +718,11 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
     const response = await chatWithAI(
       userText,
       menuItems,
-      restaurant?.restaurantName || "مطعمنا",
+      restaurant?.restaurantName || tr("مطعمنا", "our restaurant"),
+      restaurantId,
       history,
-      aiSettings
+      aiSettings,
+      language,
     );
 
     setAiLoading(false);
@@ -745,7 +771,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
 
   if (isExpired) {
     return (
-      <div className="min-h-screen bg-bg-paper flex items-center justify-center p-4 font-sans text-right" dir="rtl">
+      <div className="min-h-screen bg-bg-paper flex items-center justify-center p-4 font-sans" dir={dir}>
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -755,9 +781,9 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
             <Utensils className="w-10 h-10" />
           </div>
           <div className="space-y-3">
-            <h1 className="text-2xl font-bold text-gray-800 font-display">عذراً، المنيو غير متاح حالياً</h1>
+            <h1 className="text-2xl font-bold text-gray-800 font-display">{tr('عذراً، المنيو غير متاح حالياً', 'Sorry, the menu is unavailable')}</h1>
             <p className="text-sm text-text-muted leading-relaxed">
-              المنيو الإلكتروني لهذا المطعم متوقف مؤقتاً وغير متاح للتصفح في الوقت الحالي. يرجى مراجعة إدارة المطعم لمزيد من التفاصيل.
+              {tr('المنيو الإلكتروني لهذا المطعم متوقف مؤقتاً وغير متاح للتصفح في الوقت الحالي. يرجى مراجعة إدارة المطعم لمزيد من التفاصيل.', 'This restaurant menu is temporarily unavailable. Please contact the restaurant for details.')}
             </p>
           </div>
         </motion.div>
@@ -767,7 +793,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
 
   if (isBanned) {
     return (
-      <div className="min-h-screen bg-bg-paper flex items-center justify-center p-4 font-sans text-right" dir="rtl">
+      <div className="min-h-screen bg-bg-paper flex items-center justify-center p-4 font-sans" dir={dir}>
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -777,17 +803,17 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
             <ShieldAlert className="w-10 h-10" />
           </div>
           <div className="space-y-3">
-            <h1 className="text-2xl font-bold text-red-700 font-display">عذراً، لقد تم تقييد وصولك</h1>
+            <h1 className="text-2xl font-bold text-red-700 font-display">{tr('عذراً، لقد تم تقييد وصولك', 'Access restricted')}</h1>
             <p className="text-xs text-text-muted leading-relaxed">
-              تم حظر هذا الجهاز من تصفح المنيو الإلكتروني أو تقديم طلبات جديدة من قبل إدارة المطعم.
+              {tr('تم حظر هذا الجهاز من تصفح المنيو الإلكتروني أو تقديم طلبات جديدة من قبل إدارة المطعم.', 'Restaurant management has blocked this device from browsing or placing new orders.')}
             </p>
           </div>
           <div className="bg-red-50/50 p-6 rounded-xl border border-red-100 text-right space-y-2">
-            <p className="text-[10px] font-bold text-red-800 uppercase tracking-widest leading-none">⚠️ سبب الحظر:</p>
+            <p className="text-[10px] font-bold text-red-800 uppercase tracking-widest leading-none">⚠️ {tr('سبب الحظر:', 'Reason:')}</p>
             <p className="text-xs text-red-900 font-bold leading-relaxed">{banReason}</p>
           </div>
           <p className="text-[10.5px] text-text-muted">
-            إذا كنت تعتقد أن هذا الإجراء تم بالخطأ، يرجى مراجعة كابتن الصالة أو مدير المطعم لتأكيد هويتك وتواجدك.
+            {tr('إذا كنت تعتقد أن هذا الإجراء تم بالخطأ، يرجى مراجعة كابتن الصالة أو مدير المطعم لتأكيد هويتك وتواجدك.', 'If you believe this is a mistake, please speak to the waiter or restaurant manager.')}
           </p>
         </motion.div>
       </div>
@@ -812,14 +838,16 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
 
   return (
     <div
-      className="min-h-screen bg-bg-paper font-sans pb-28 text-text-main selection:bg-brand-primary/10"
-      dir="rtl"
+      className="menu-theme min-h-screen bg-bg-paper font-sans pb-28 text-text-main selection:bg-brand-primary/10"
+      data-menu-theme={restaurant?.themeId || "italian-luxury"}
+      style={themeStyle(resolveTheme(restaurant?.themeId, restaurant?.themeColors))}
+      dir={dir}
     >
       {/* Offline Alert Banner */}
       {!isOnline && (
-        <div className="bg-amber-600 text-white text-xs py-2.5 px-4 text-center font-bold relative z-[110] flex items-center justify-center gap-2 border-b border-amber-700/50 shadow-inner" dir="rtl">
+        <div className="bg-amber-600 text-white text-xs py-2.5 px-4 text-center font-bold relative z-[110] flex items-center justify-center gap-2 border-b border-amber-700/50 shadow-inner">
           <span className="inline-block w-2.5 h-2.5 rounded-full bg-white animate-ping" />
-          <span>عيني زبائننا الكرام، جهازكم غير متصل بالإنترنت حالياً. لا تشيلون هم دقيقة، المنيو متوفر أوفلاين وسنحاول إعادة الاتصال تلقائياً لتحديث طلبكم فوراً!</span>
+          <span>{tr('عيني زبائننا الكرام، جهازكم غير متصل بالإنترنت حالياً. لا تشيلون هم دقيقة، المنيو متوفر أوفلاين وسنحاول إعادة الاتصال تلقائياً لتحديث طلبكم فوراً!', 'You are offline. The menu remains available and we will reconnect automatically.')}</span>
         </div>
       )}
 
@@ -829,14 +857,14 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       {/* --------------------------------------------------------- */}
       {/* SECURITY OUTSIDE-RANGE GEOFENCE OVERLAY */}
       {/* --------------------------------------------------------- */}
-      {isLocationVerified !== true && !bypassGeofence && (
+      {isLocationVerified !== true && (
         <AnimatePresence>
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-brand-primary/95 backdrop-blur-md z-[1000] flex items-center justify-center p-4 sm:p-6 text-right font-sans"
-            dir="rtl"
+            dir={dir}
           >
             <div className="bg-white border border-border-delicate p-6 sm:p-10 max-w-md w-full shadow-2xl space-y-8 relative">
               <div className="absolute top-0 right-0 left-0 h-1 bg-brand-gold animate-pulse" />
@@ -846,33 +874,33 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                   <ShieldAlert className="w-8 h-8" />
                 </div>
                 <h3 className="text-2xl font-display text-brand-primary tracking-tight">
-                  نظام حماية صالة المطعم والأمن
+                  {tr('نظام حماية صالة المطعم والأمن', 'Restaurant location check')}
                 </h3>
                 <p className="text-xs text-text-muted leading-relaxed">
-                  أهلاً بك عيني في {restaurant?.restaurantName || "مطعمنا"}! لإنتاج وخدمة ألذ المأكولات طازجة لزبائننا بالصالة، يرجى تفعيل الموقع للتأكد من تواجدك بالداخل وحماية طلبك من عابثي الخارج.
+                  {tr(`أهلاً بك عيني في ${restaurant?.restaurantName || 'مطعمنا'}! يرجى تفعيل الموقع للتأكد من تواجدك بالداخل وحماية طلبك.`, `Welcome to ${restaurant?.restaurantName || 'our restaurant'}. Please enable location so we can verify this table request.`)}
                 </p>
               </div>
 
               {locationError ? (
                 <div className="bg-red-50 text-red-800 border-r-4 border-r-red-600 p-4 rounded text-xs leading-relaxed space-y-2">
                   <p className="font-bold flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 shrink-0" /> تلميح أمني
+                    <AlertTriangle className="w-4 h-4 shrink-0" /> {tr('تلميح أمني', 'Location notice')}
                   </p>
                   <p>{locationError}</p>
                 </div>
-              ) : computedDistance !== null && computedDistance > 150 ? (
+              ) : computedDistance !== null && computedDistance > (restaurant?.geofenceRadiusMeters || 150) ? (
                 <div className="bg-amber-50 text-amber-950 border-r-4 border-r-amber-500 p-4 rounded text-xs leading-relaxed space-y-2">
                   <p className="font-bold flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 shrink-0" /> خارج صالة المطعم الجغرافية!
+                    <AlertTriangle className="w-4 h-4 shrink-0" /> {tr('خارج صالة المطعم الجغرافية!', 'Outside the restaurant area')}
                   </p>
                   <p>
-                    أنت حالياً تبعد حوالي <strong className="text-amber-800">{Math.round(computedDistance)} متر</strong> خارج نطاق صالة الطعام. يمكنك الاستمرار بالطلب براحتك، وسنقوم بإشعار موظفينا بالمسافة.
+                    {tr('أنت حالياً تبعد حوالي', 'You are currently about')} <strong className="text-amber-800">{Math.round(computedDistance)} {tr('متر', 'm')}</strong> {tr('خارج نطاق صالة الطعام.', 'outside the dining area.')}
                   </p>
                 </div>
               ) : (
                 <div className="bg-bg-paper p-4 rounded border border-border-delicate text-xs text-text-muted leading-relaxed flex items-center gap-3">
                   <MapPin className="text-brand-gold w-5 h-5 shrink-0" />
-                  تحميل الموقع يساعدنا لتأكيد تواجد هاتفك داخل صالة ومقاعد المطعم وتوصيل الطعام لطاولتك بسرعة فائقة.
+                  {tr('تحميل الموقع يساعدنا لتأكيد تواجد هاتفك داخل صالة المطعم وتوصيل الطعام لطاولتك بسرعة.', 'Location helps us confirm that your phone is inside the restaurant and deliver the order to your table quickly.')}
                 </div>
               )}
 
@@ -885,19 +913,13 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                   {verifyingLocation ? (
                     <>
                       <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      جاري التحقق من موقعك الحالي...
+                      {tr('جاري التحقق من موقعك الحالي...', 'Checking your location...')}
                     </>
                   ) : (
                     <>
-                      تحديد ومشاركة الموقع 📍
+                      {tr('تحديد ومشاركة الموقع', 'Share location')} 📍
                     </>
                   )}
-                </button>
-                <button
-                  onClick={() => setBypassGeofence(true)}
-                  className="w-full py-3.5 border border-border-delicate hover:bg-slate-50 text-text-main text-[11px] font-bold uppercase tracking-widest transition-all text-center rounded-none"
-                >
-                  استمرار للطلب وعرض المنيو على أي حال 🍽️
                 </button>
               </div>
             </div>
@@ -906,62 +928,62 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       )}
 
       {/* Header */}
-      <header className="fixed top-0 inset-x-0 z-40 bg-white/80 backdrop-blur-md border-b border-border-delicate px-4 sm:px-8 py-3.5 sm:py-5 flex items-center justify-between">
-        <div className="flex items-center gap-2 sm:gap-4">
-          <div className="bg-white border border-border-delicate p-1 rounded-full shadow-sm">
+      <header className="fixed top-0 inset-x-0 z-40 bg-white/95 backdrop-blur-xl border-b border-border-delicate shadow-sm px-4 sm:px-8 h-16 sm:h-20 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="bg-bg-paper border border-border-delicate p-1 rounded-xl shrink-0">
             {restaurant?.logoUrl ? (
               <img
                 src={restaurant.logoUrl}
-                className="w-8 h-8 sm:w-10 sm:h-10 rounded-full object-cover"
+                alt={restaurant.restaurantName}
+                className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg object-cover"
                 referrerPolicy="no-referrer"
               />
             ) : (
-              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-brand-primary/5 flex items-center justify-center">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-brand-primary/5 flex items-center justify-center">
                 <Utensils className="text-brand-primary w-3.5 h-3.5 sm:w-5 sm:h-5" />
               </div>
             )}
           </div>
-          <div>
-            <h1 className="font-display text-lg sm:text-2xl text-brand-primary tracking-tight leading-none">
+          <div className="min-w-0">
+            <h1 className="font-display text-base sm:text-xl font-bold text-brand-primary truncate leading-tight">
               {restaurant?.restaurantName}
             </h1>
-            <p className="text-[7px] sm:text-[9px] text-brand-gold font-bold uppercase tracking-[0.3em] sm:tracking-[0.4em] mt-0.5 sm:mt-1.5">
-              {restaurant?.province} — {restaurant?.area}
+            <p className="text-[10px] sm:text-xs text-text-muted font-medium mt-0.5 truncate">
+              {tr('القائمة الرقمية', 'Digital menu')}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-1.5 sm:gap-3">
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={toggleLanguage}
+            className="flex items-center justify-center h-10 px-2 sm:px-3 rounded-full border border-border-delicate bg-bg-paper text-brand-primary hover:border-brand-gold transition-colors text-[10px] sm:text-xs font-bold"
+            aria-label={tr('تغيير اللغة', 'Change language')}
+          >
+            <Languages className="w-4 h-4 sm:me-1" />
+            <span>{isEnglish ? 'AR' : 'EN'}</span>
+          </button>
           <button
             onClick={() => setShowWaiterModal(true)}
-            className="relative flex items-center gap-1 sm:gap-2 px-2.5 sm:px-5 py-2 sm:py-2.5 bg-brand-primary text-white hover:bg-brand-secondary border border-transparent text-[10px] sm:text-xs font-bold rounded-full transition-all duration-300 transform hover:-translate-y-0.5 active:translate-y-0 hover:shadow-lg hover:shadow-brand-primary/20 group shrink-0"
+            className="flex items-center gap-2 px-3 sm:px-4 h-10 bg-brand-primary text-white hover:bg-brand-secondary text-xs font-bold rounded-full transition-colors"
+            aria-label={tr('طلب ويتر', 'Call waiter')}
           >
-            <Bell className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-brand-gold group-hover:animate-bounce shrink-0" />
-            <span className="shrink-0">
-              طلب ويتر 🔔
-            </span>
+            <Bell className="w-4 h-4 shrink-0" />
+            <span className="hidden sm:inline">{tr('طلب ويتر', 'Call waiter')}</span>
           </button>
 
           <button
             onClick={() => setShowAIChat(true)}
-            className="relative flex items-center gap-1 sm:gap-2 px-2.5 sm:px-5 py-2 sm:py-2.5 bg-brand-gold text-white hover:bg-brand-gold/90 border border-transparent text-[10px] sm:text-xs font-bold rounded-full transition-all duration-300 transform hover:-translate-y-0.5 active:translate-y-0 hover:shadow-lg hover:shadow-brand-gold/20 group shrink-0"
+            className="flex items-center justify-center h-10 w-10 rounded-full border border-border-delicate bg-bg-paper text-brand-primary hover:border-brand-gold hover:text-brand-gold transition-colors"
+            aria-label={tr('المساعد الذكي', 'AI assistant')}
           >
-            <span className="relative flex h-1.5 w-1.5 sm:h-2 sm:w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-1.5 w-1.5 sm:h-2 sm:w-2 bg-white"></span>
-            </span>
-            <span className="shrink-0 hidden sm:inline">
-              اطلب بمساعدة الذكاء الاصطناعي ✨
-            </span>
-            <span className="shrink-0 sm:hidden">
-              المساعد الذكي ✨
-            </span>
-            <MessageSquare className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white group-hover:scale-110 transition-transform" />
+            <MessageSquare className="w-4 h-4" />
           </button>
         </div>
       </header>
 
       {/* Hero Section */}
-      <section className="pt-40 px-6 sm:px-8 pb-12 relative overflow-hidden">
+      <section className="pt-32 sm:pt-36 px-6 sm:px-8 pb-12 relative overflow-hidden">
         <div className="max-w-3xl mx-auto text-center space-y-8">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -971,15 +993,15 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
             <div className="flex items-center justify-center gap-3">
               <span className="w-10 h-[1px] bg-brand-gold" />
               <span className="text-[11px] font-bold uppercase tracking-widest text-brand-gold">
-                أهلاً ومرحباً بكم في مطعمنا
+                {tr('أهلاً ومرحباً بكم في مطعمنا', 'Welcome to our restaurant')}
               </span>
               <span className="w-10 h-[1px] bg-brand-gold" />
             </div>
             <h2 className="text-4xl md:text-7xl font-display text-brand-primary leading-[1.2] tracking-tight">
-              صـحـة و <span className="italic text-brand-gold">عـافـيـة.</span>
+              {tr('صـحـة و ', 'Enjoy your ')}<span className="italic text-brand-gold">{tr('عـافـيـة.', 'meal.')}</span>
             </h2>
             <p className="text-text-muted text-base max-w-xl leading-relaxed font-light mx-auto">
-              نهتم بتقديم وجبات ومأكولات طازجة ومحضرة يومياً بأعلى درجات الجودة والنظافة لتنال رضاكم.
+              {tr('نهتم بتقديم وجبات ومأكولات طازجة ومحضرة يومياً بأعلى درجات الجودة والنظافة لتنال رضاكم.', 'Freshly prepared food, made every day with care and quality ingredients.')}
             </p>
 
             {/* Callouts Section: AI Assistant, Waiter Request, & Live Order Status Tracking */}
@@ -996,11 +1018,11 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                 </div>
                 <div className="space-y-0.5 flex-1 select-none">
                   <h4 className="text-sm font-bold text-brand-primary flex items-center gap-2">
-                    اطلب الآن بالذكاء الاصطناعي ✨
-                    <span className="text-[9px] bg-green-500/10 text-green-700 px-2 py-0.5 rounded-full font-bold shrink-0">نشط</span>
+                    {tr('اطلب الآن بالذكاء الاصطناعي', 'Order with AI')} ✨
+                    <span className="text-[9px] bg-green-500/10 text-green-700 px-2 py-0.5 rounded-full font-bold shrink-0">{tr('نشط', 'Available')}</span>
                   </h4>
                   <p className="text-xs text-text-muted leading-relaxed font-medium">
-                    اضغط هنا للتحدث مع المساعد الذكي لمساعدتك في المنيو وتسجيل طلبك مباشرة وطاولتك تلقائياً!
+                    {tr('اضغط هنا للتحدث مع المساعد الذكي لمساعدتك في المنيو وتسجيل طلبك مباشرة وطاولتك تلقائياً!', 'Chat with the assistant to explore the menu and place an order for your table.')}
                   </p>
                 </div>
               </motion.div>
@@ -1017,11 +1039,11 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                 </div>
                 <div className="space-y-0.5 flex-1 select-none">
                   <h4 className="text-sm font-bold text-brand-primary flex items-center gap-2">
-                    طلب الويتر الآن 🔔
-                    <span className="text-[9px] bg-green-500/10 text-green-700 px-2 py-0.5 rounded-full font-bold shrink-0">نشط</span>
+                    {tr('طلب الويتر الآن', 'Call a waiter')} 🔔
+                    <span className="text-[9px] bg-green-500/10 text-green-700 px-2 py-0.5 rounded-full font-bold shrink-0">{tr('نشط', 'Available')}</span>
                   </h4>
                   <p className="text-xs text-text-muted leading-relaxed font-medium">
-                    اضغط هنا لطلب الويتر طاولتك مباشرة مع كتابة اسمك وتحديد نوع احتياجك (حساب، استفسار...)!
+                    {tr('اضغط هنا لطلب الويتر طاولتك مباشرة مع كتابة اسمك وتحديد نوع احتياجك (حساب، استفسار...)!', 'Request help at your table for the bill, a question, or anything else.')}
                   </p>
                 </div>
               </motion.div>
@@ -1057,7 +1079,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                   </div>
                   <div className="space-y-0.5 flex-1 min-w-0 text-right">
                     <h4 className="text-sm font-bold text-brand-primary flex items-center gap-2">
-                      تتبع حالة طلبك الحالي 📊
+                      {tr('تتبع حالة طلبك الحالي', 'Track your order')} 📊
                       <span className={`text-[9.5px] px-2.5 py-0.5 rounded-full font-bold shrink-0 ${
                         orderComplete.status === "pending"
                           ? "bg-amber-500/10 text-amber-700 font-bold"
@@ -1069,19 +1091,19 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                                 ? "bg-gray-500/10 text-gray-700 font-bold"
                                 : "bg-red-500/10 text-red-700 font-bold"
                       }`}>
-                        {orderComplete.status === "pending" && "بإنتظار الموافقة"}
-                        {orderComplete.status === "preparing" && "قيد التحضير"}
-                        {orderComplete.status === "ready" && "جاهز للتسليم"}
-                        {orderComplete.status === "served" && "تم تسليم الطلب"}
-                        {orderComplete.status === "rejected" && "مرفوض"}
+                        {orderComplete.status === "pending" && tr('بإنتظار الموافقة', 'Pending')}
+                        {orderComplete.status === "preparing" && tr('قيد التحضير', 'Preparing')}
+                        {orderComplete.status === "ready" && tr('جاهز للتسليم', 'Ready')}
+                        {orderComplete.status === "served" && tr('تم تسليم الطلب', 'Served')}
+                        {orderComplete.status === "rejected" && tr('مرفوض', 'Rejected')}
                       </span>
                     </h4>
                     <p className="text-xs text-text-muted leading-relaxed font-medium truncate">
-                      {orderComplete.status === "pending" && "بإنتظار موافقة كابتن الصالة لتأكيد طاولتك..."}
-                      {orderComplete.status === "preparing" && "المطبخ يعمل الآن على تحضير وجبتك بكل حب! 🍳"}
-                      {orderComplete.status === "ready" && "نور الصالة! وجبتك جاهزة للتقديم والتسليم.. 🎉"}
-                      {orderComplete.status === "served" && "🍽️ بالهناء والشفاء! نتمنى لك وقتاً طيباً ووجبة شهية."}
-                      {orderComplete.status === "rejected" && `⚠️ نعتذر، تم رفض الطلب: ${orderComplete.rejectionReason || "تواصل معنا"}`}
+                      {orderComplete.status === "pending" && tr('بإنتظار موافقة كابتن الصالة لتأكيد طاولتك...', 'Waiting for the waiter to confirm your table...')}
+                      {orderComplete.status === "preparing" && tr('المطبخ يعمل الآن على تحضير وجبتك بكل حب! 🍳', 'The kitchen is preparing your food. 🍳')}
+                      {orderComplete.status === "ready" && tr('نور الصالة! وجبتك جاهزة للتقديم والتسليم.. 🎉', 'Your order is ready to be served. 🎉')}
+                      {orderComplete.status === "served" && tr('🍽️ بالهناء والشفاء! نتمنى لك وقتاً طيباً ووجبة شهية.', '🍽️ Your order has been served. Enjoy your meal!')}
+                      {orderComplete.status === "rejected" && tr(`⚠️ نعتذر، تم رفض الطلب: ${orderComplete.rejectionReason || "تواصل معنا"}`, `⚠️ Order rejected: ${orderComplete.rejectionReason || 'Please contact staff'}`)}
                     </p>
                   </div>
                 </motion.div>
@@ -1092,7 +1114,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       </section>
 
       {/* Search and Categories Bar */}
-      <div className="sticky top-[84px] z-30 bg-white/95 backdrop-blur-md border-b border-border-delicate py-6 space-y-4">
+      <div className="sticky top-16 sm:top-20 z-30 bg-white/95 backdrop-blur-md border-b border-border-delicate py-6 space-y-4">
         {/* Search Input */}
         <div className="max-w-xl mx-auto px-6 sm:px-8">
           <div className="relative">
@@ -1101,7 +1123,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
             </span>
             <input
               type="text"
-              placeholder="ابحث عن وجبتك المفضلة بالاسم أو المكونات..."
+              placeholder={tr('ابحث عن وجبتك المفضلة بالاسم أو المكونات...', 'Search by item or ingredient...')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full bg-bg-paper border border-border-delicate focus:border-brand-gold pr-12 pl-4 py-3 text-sm text-brand-primary placeholder:text-text-muted/50 outline-none text-right transition-all font-bold"
@@ -1134,7 +1156,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                 <span className={`transition-transform duration-300 ${isSelected ? "scale-110 text-brand-gold" : "text-text-muted/60"}`}>
                   {getCategoryIcon(cat)}
                 </span>
-                <span className="tracking-wide">{cat}</span>
+                <span className="tracking-wide">{cat === 'الكل' ? tr('الكل', 'All') : localizeCategory(cat, language)}</span>
                 {isSelected && (
                   <motion.div
                     layoutId="activeCatBubble"
@@ -1154,11 +1176,11 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
           <div className="space-y-1">
             <h2 className="text-2xl sm:text-3xl font-display font-medium text-brand-primary flex items-center gap-3">
               <span className="w-1.5 h-6 bg-brand-gold rounded-full" />
-              {selectedCategory === "الكل" ? "جميع المأكولات والأصناف" : selectedCategory}
+              {selectedCategory === "الكل" ? tr('جميع المأكولات والأصناف', 'All menu items') : localizeCategory(selectedCategory, language)}
             </h2>
           </div>
           <span className="text-[10px] font-bold text-brand-gold uppercase tracking-widest bg-brand-primary/5 px-4 py-2 border border-brand-primary/10 rounded-full">
-            {filteredMenuItems.length} أصناف متوفرة
+            {filteredMenuItems.length} {tr('أصناف متوفرة', 'items available')}
           </span>
         </div>
       </div>
@@ -1168,7 +1190,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
         {filteredMenuItems.length === 0 ? (
           <div className="text-center py-24 sm:py-32 border border-dashed border-border-delicate bg-white">
             <p className="font-display italic text-2xl text-brand-gold opacity-40">
-              لا توجد أطباق متوفرة في هذا القسم حالياً.
+              {tr('لا توجد أطباق متوفرة في هذا القسم حالياً.', 'No dishes are available in this category yet.')}
             </p>
           </div>
         ) : (
@@ -1193,19 +1215,19 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                       />
                     ) : (
                       <div className="w-full h-full bg-bg-paper flex items-center justify-center text-border-delicate text-xs italic">
-                        صورة الوجبة
+                        {tr('صورة الوجبة', 'Dish image')}
                       </div>
                     )}
                     {item.isAvailable === false && (
                       <div className="absolute inset-0 bg-white/70 backdrop-blur-[1.5px] z-10 flex items-center justify-center">
                         <span className="bg-red-600 text-white text-[10px] sm:text-xs py-1.5 px-3 font-bold uppercase tracking-wider shadow">
-                          غير متاح حالياً 🚫
+                          {tr('غير متاح حالياً', 'Unavailable')} 🚫
                         </span>
                       </div>
                     )}
                     {item.isSpicy && (
                       <div className="absolute top-2 right-2 bg-brand-primary/80 backdrop-blur-sm text-white text-[8px] sm:text-[9px] py-1 px-2 font-bold uppercase tracking-wider z-20">
-                        🔥 حار
+                        🔥 {tr('حار', 'Spicy')}
                       </div>
                     )}
                   </div>
@@ -1213,7 +1235,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                   <div className="p-3 sm:p-5 space-y-2 text-right">
                     {item.category && (
                       <p className="text-[8px] sm:text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
-                        {item.category}
+                        {localizeCategory(item.category, language)}
                       </p>
                     )}
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-baseline gap-1">
@@ -1222,12 +1244,12 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                       </h3>
                       <p className="font-display text-xs sm:text-sm font-bold text-brand-gold">
                         <span className="font-sans">{item.price.toLocaleString()}</span>{" "}
-                        <span className="text-[9px] opacity-70">د.ع</span>
+                        <span className="text-[9px] opacity-70">{tr('د.ع', 'IQD')}</span>
                       </p>
                     </div>
 
                     <p className="text-text-muted text-[10px] sm:text-xs font-light leading-relaxed line-clamp-2">
-                      {item.ingredients || "أجود المكونات الطازجة المحضّرة بحب وعناية."}
+                      {item.ingredients || tr('أجود المكونات الطازجة المحضّرة بحب وعناية.', 'Fresh ingredients, prepared with care.')}
                     </p>
                   </div>
                 </div>
@@ -1236,7 +1258,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                   <div className="pt-2 sm:pt-3 border-t border-border-delicate/50 flex items-center justify-between gap-2">
                     {item.isAvailable === false ? (
                       <div className="w-full text-center bg-gray-100 border border-gray-200 text-gray-400 text-[10px] sm:text-xs font-bold py-2 px-3 cursor-not-allowed select-none">
-                        غير متاح حالياً 🚫
+                        {tr('غير متاح حالياً', 'Unavailable')} 🚫
                       </div>
                     ) : (item.hasCheese || item.isSpicy) ? (
                       <div className="space-y-2 w-full">
@@ -1247,11 +1269,11 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                           }}
                           className="w-full bg-brand-gold hover:bg-brand-gold/90 text-white text-[10px] sm:text-xs font-bold py-2.5 px-3 transition-all duration-300 text-center flex items-center justify-center gap-1.5 shadow-sm rounded-full transform hover:-translate-y-0.5 active:translate-y-0 text-right"
                         >
-                          <Sparkles className="w-3.5 h-3.5 shrink-0" /> تخصيص وإضافة للسلة ➕
+                          <Sparkles className="w-3.5 h-3.5 shrink-0" /> {tr('تخصيص وإضافة للسلة', 'Customize and add')} ➕
                         </button>
                         {getQuantityInCart(item.id) > 0 && (
                           <div className="text-center text-[9px] font-bold text-brand-primary bg-brand-primary/5 py-1 px-2 border border-brand-primary/10 rounded">
-                            تمت إضافة {getQuantityInCart(item.id)} بالسلة بخيارات مختلفة
+                            {tr(`تمت إضافة ${getQuantityInCart(item.id)} بالسلة بخيارات مختلفة`, `${getQuantityInCart(item.id)} added with selected options`)}
                           </div>
                         )}
                       </div>
@@ -1287,7 +1309,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                         }}
                         className="w-full bg-bg-paper hover:bg-brand-primary hover:text-white border border-border-delicate text-text-muted hover:border-brand-primary text-[10px] sm:text-xs font-bold py-2 px-3 transition-all duration-300 text-center flex items-center justify-center gap-1.5"
                       >
-                        <Plus className="w-3.5 h-3.5 shrink-0" /> إضافة للسلة
+                        <Plus className="w-3.5 h-3.5 shrink-0" /> {tr('إضافة للسلة', 'Add to cart')}
                       </button>
                     )}
                   </div>
@@ -1315,10 +1337,10 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                 <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
                 <div className="text-right">
                   <p className="text-[8px] sm:text-[10px] font-bold uppercase tracking-widest opacity-60">
-                    مراجعة وتأكيد طلبك
+                    {tr('مراجعة وتأكيد طلبك', 'Review order')}
                   </p>
                   <p className="text-base sm:text-xl font-display italic leading-none">
-                    {totalItems} أطباق مختارة
+                    {totalItems} {tr('أطباق مختارة', 'items selected')}
                   </p>
                 </div>
               </div>
@@ -1353,7 +1375,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
               exit={{ x: "100%" }}
               transition={{ type: "spring", damping: 35, stiffness: 300 }}
               className="bg-white w-full max-w-md h-full relative flex flex-col p-6 sm:p-10 shadow-2xl border-l border-border-delicate overflow-hidden text-right"
-              dir="rtl"
+              dir={dir}
             >
               {/* Texture Overlay */}
               <div className="absolute inset-0 pointer-events-none opacity-[0.03] bg-[url('https://www.transparenttextures.com/patterns/natural-paper.png')]" />
@@ -1362,10 +1384,10 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
               <div className="flex justify-between items-center mb-6 sm:mb-8 relative border-b border-border-delicate pb-4">
                 <div>
                   <h2 className="text-2xl sm:text-3xl font-display font-black text-brand-primary leading-none">
-                    سلة المشتريات
+                    {tr('سلة المشتريات', 'Your cart')}
                   </h2>
                   <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest mt-2">
-                     الوجبات التي قمت باختيارها
+                     {tr('الوجبات التي قمت باختيارها', 'Selected dishes')}
                   </p>
                 </div>
                 <button
@@ -1373,7 +1395,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                   onClick={() => setShowCart(false)}
                   className="px-4 py-2 border border-border-delicate hover:bg-bg-paper text-brand-primary hover:text-brand-secondary transition-all text-xs font-bold"
                 >
-                  إغلاق السلة
+                  {tr('إغلاق السلة', 'Close cart')}
                 </button>
               </div>
 
@@ -1385,9 +1407,9 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                       <ShoppingBag className="w-8 h-8" />
                     </div>
                     <div className="space-y-1">
-                      <p className="text-base font-bold text-brand-primary">سلتك لا تزال فارغة</p>
+                      <p className="text-base font-bold text-brand-primary">{tr('سلتك لا تزال فارغة', 'Your cart is empty')}</p>
                       <p className="text-xs text-text-muted max-w-[240px] leading-relaxed">
-                        اختر من بين تشكيلة أطباقنا الشهية لتضيفها إلى سلتك وتستمتع بمذاق مميز.
+                        {tr('اختر من بين تشكيلة أطباقنا الشهية لتضيفها إلى سلتك وتستمتع بمذاق مميز.', 'Choose dishes from the menu to add them to your cart.')}
                       </p>
                     </div>
                   </div>
@@ -1426,15 +1448,15 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                               </h4>
                               {(cheeseSelected || spicySelected) && (
                                 <div className="text-[10px] text-brand-gold font-bold flex gap-1 justify-end flex-wrap">
-                                  <span>✨ خيارات:</span>
+                                  <span>✨ {tr('خيارات:', 'Options:')}</span>
                                   <span>{[
-                                    cheeseSelected ? "جبن 🧀" : null,
-                                    spicySelected ? "سبايسي 🌶️" : null
+                                    cheeseSelected ? tr('جبن 🧀', 'Cheese 🧀') : null,
+                                    spicySelected ? tr('سبايسي 🌶️', 'Spicy 🌶️') : null
                                   ].filter(Boolean).join(" + ")}</span>
                                 </div>
                               )}
                               <p className="text-xs text-brand-gold font-bold">
-                                {itemPrice.toLocaleString()} <span className="text-[10px] opacity-70">د.ع</span>
+                                {itemPrice.toLocaleString()} <span className="text-[10px] opacity-70">{tr('د.ع', 'IQD')}</span>
                               </p>
                             </div>
                             <div className="flex items-center gap-3 bg-white border border-border-delicate rounded-full py-1 px-3">
@@ -1464,38 +1486,38 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                     <div className="pt-6 border-t border-border-delicate space-y-6 pb-6">
                       <div className="space-y-2">
                         <label className="text-[10px] font-bold text-brand-gold uppercase tracking-widest block">
-                          اسم الزبون الكريم
+                          {tr('اسم الزبون الكريم', 'Your name')}
                         </label>
                         <input
                           required
                           value={customerName}
                           onChange={(e) => setCustomerName(e.target.value)}
                           type="text"
-                          placeholder="الرجاء إدخال الاسم الكامل"
+                          placeholder={tr('الرجاء إدخال الاسم الكامل', 'Enter your full name')}
                           className="w-full bg-bg-paper border border-border-delicate py-3 px-4 focus:outline-none focus:border-brand-primary transition-all text-sm text-brand-primary text-right font-bold focus:bg-white"
                         />
                       </div>
                       <div className="space-y-2">
                         <label className="text-[10px] font-bold text-brand-gold uppercase tracking-widest block">
-                          رقم الطاولة المخصصة
+                          {tr('رقم الطاولة المخصصة', 'Table number')}
                         </label>
                         <input
                           required
                           value={tableNumber}
                           onChange={(e) => setTableNumber(e.target.value)}
                           type="text"
-                          placeholder="أدخل رقم طاولة جلوسك"
+                          placeholder={tr('أدخل رقم طاولة جلوسك', 'Enter your table number')}
                           className="w-full bg-bg-paper border border-border-delicate py-3 px-4 focus:outline-none focus:border-brand-primary transition-all text-sm text-brand-primary text-right font-bold focus:bg-white"
                         />
                       </div>
                       <div className="space-y-2">
                         <label className="text-[10px] font-bold text-brand-gold uppercase tracking-widest block">
-                          رغبات أو توجيهات خاصة بالطلب
+                          {tr('رغبات أو توجيهات خاصة بالطلب', 'Special instructions')}
                         </label>
                         <textarea
                           value={notes}
                           onChange={(e) => setNotes(e.target.value)}
-                          placeholder="مثال: بدون بصل، صوص خارجي، درجة الاستواء..."
+                          placeholder={tr('مثال: بدون بصل، صوص خارجي، درجة الاستواء...', 'Example: no onion, extra sauce...')}
                           className="w-full bg-bg-paper border border-border-delicate p-4 rounded-none focus:outline-none focus:border-brand-primary transition-all text-xs h-24 resize-none leading-relaxed text-right font-bold focus:bg-white"
                         />
                       </div>
@@ -1509,18 +1531,19 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                 <div className="pt-4 border-t border-border-delicate relative bg-white">
                   <div className="flex justify-between items-baseline mb-6 bg-bg-paper border border-border-delicate p-4">
                     <span className="text-xs font-bold text-brand-primary uppercase tracking-widest">
-                      المجموع الإجمالي للوجبات
+                      {tr('المجموع الإجمالي للوجبات', 'Order total')}
                     </span>
                     <span className="text-xl sm:text-2xl font-sans text-brand-primary font-black">
-                      {totalPrice.toLocaleString()} <span className="text-xs font-bold">د.ع</span>
+                      {totalPrice.toLocaleString()} <span className="text-xs font-bold">{tr('د.ع', 'IQD')}</span>
                     </span>
                   </div>
                   <button
                     type="button"
                     onClick={handlePlaceOrder}
-                    className="w-full py-4 bg-brand-primary text-white font-bold hover:bg-brand-secondary transition-all text-xs sm:text-sm tracking-widest text-center shadow-md uppercase"
+                    disabled={submittingOrder}
+                    className="w-full py-4 bg-brand-primary text-white font-bold hover:bg-brand-secondary transition-all text-xs sm:text-sm tracking-widest text-center shadow-md uppercase disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    إرسال الطلب للمطبخ والويترز
+                    {submittingOrder ? tr('جاري إرسال الطلب...', 'Sending order...') : tr('إرسال الطلب للمطبخ والويترز', 'Send order to kitchen and waiters')}
                   </button>
                 </div>
               )}
@@ -1552,17 +1575,17 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
               <div className="flex justify-between items-center mb-8 sm:mb-16 relative">
                 <div>
                   <h2 className="text-4xl font-display text-brand-primary leading-none">
-                    المنسق
+                    {tr('المنسق', 'Assistant')}
                   </h2>
                   <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest mt-3">
-                     المساعد الذكي لتنسيق طعامك
+                     {tr('المساعد الذكي لتنسيق طعامك', 'Your menu assistant')}
                   </p>
                 </div>
                 <button
                   onClick={() => setShowAIChat(false)}
                   className="text-text-muted hover:text-brand-primary font-bold"
                 >
-                  إغلاق
+                  {tr('إغلاق', 'Close')}
                 </button>
               </div>
 
@@ -1571,10 +1594,9 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                 className="flex-1 overflow-y-auto space-y-12 no-scrollbar px-2 relative"
               >
                 <div className="bg-bg-paper p-8 rounded-[1.5rem] border border-border-delicate italic text-text-muted text-sm leading-relaxed shadow-sm">
-                  أهلاً بك. أنا منسقك الشخصي في {restaurant?.restaurantName}.{" "}
+                  {tr('أهلاً بك. أنا منسقك الشخصي في', 'Welcome! I am your menu assistant at')} {restaurant?.restaurantName}.{" "}
                   <br /> <br />
-                  نحن فخورون بتقديم قائمة طعام متنوعة. هل يمكنني مساعدتك في
-                  العثور على ما يناسب ذوقك اليوم؟
+                  {tr('نحن فخورون بتقديم قائمة طعام متنوعة. هل يمكنني مساعدتك في العثور على ما يناسب ذوقك اليوم؟', 'Can I help you find something you will enjoy today?')}
                 </div>
 
                 {messages.map((m, i) => (
@@ -1596,7 +1618,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
 
                 {aiLoading && (
                   <div className="text-[11px] text-text-muted animate-pulse font-bold">
-                    جاري معالجة الرد ومساعدتك...
+                    {tr('جاري معالجة الرد ومساعدتك...', 'Thinking...')}
                   </div>
                 )}
               </div>
@@ -1608,7 +1630,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                     value={inputMessage}
                     onChange={(e) => setInputMessage(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleAISend()}
-                    placeholder="كيف يمكنني مساعدتك؟"
+                    placeholder={tr('كيف يمكنني مساعدتك؟', 'How can I help you?')}
                     className="flex-1 bg-transparent px-6 py-4 text-sm focus:outline-none placeholder:text-text-muted/50"
                   />
                   <button
@@ -1646,10 +1668,10 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                   </div>
                   <div>
                     <h1 className="text-2xl font-display text-brand-primary tracking-tight">
-                      حالة وتفاصيل طلبك النشط ✨
+                      {tr('حالة وتفاصيل طلبك النشط', 'Your active order')} ✨
                     </h1>
                     <p className="text-text-muted mt-1 text-sm font-medium">
-                      رقم الطلب:{" "}
+                      {tr('رقم الطلب:', 'Order number:')}{" "}
                       {orderComplete.orderNumber ? (
                         <span className="font-sans font-bold text-brand-gold italic text-xl">
                           {orderComplete.orderNumber}
@@ -1666,15 +1688,15 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                 <div className="bg-bg-paper/50 p-6 rounded-2xl text-right space-y-4 border border-border-delicate shadow-inner relative overflow-hidden">
                   <div className="absolute top-0 left-0 w-2 h-full bg-brand-gold opacity-30" />
                   <p className="text-xs font-bold flex justify-between text-text-muted uppercase tracking-widest">
-                    الاسم:{" "}
+                    {tr('الاسم:', 'Name:')}{" "}
                     <span className="text-text-main">
-                      {orderComplete.customerName || "زبون مجهول"}
+                      {orderComplete.customerName || tr('زبون مجهول', 'Guest')}
                     </span>
                   </p>
                   <p className="text-xs font-bold flex justify-between text-text-muted uppercase tracking-widest">
-                    الطاولة:{" "}
+                    {tr('الطاولة:', 'Table:')}{" "}
                     <span className="text-text-main">
-                      {orderComplete.tableNumber || "غير محددة"}
+                      {orderComplete.tableNumber || tr('غير محددة', 'Not specified')}
                     </span>
                   </p>
                   <div className="pt-4 border-t border-border-delicate space-y-2">
@@ -1693,11 +1715,11 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                         </p>
                       ))
                     ) : (
-                      <p className="text-xs text-text-muted italic text-center">جاري جلب تفاصيل المواد من السيرفر...</p>
+                      <p className="text-xs text-text-muted italic text-center">{tr('جاري جلب تفاصيل المواد من السيرفر...', 'Loading order details...')}</p>
                     )}
                   </div>
                   <p className="pt-4 font-display text-brand-primary flex justify-between border-t border-border-delicate text-lg italic">
-                    المجموع الكلي:{" "}
+                    {tr('المجموع الكلي:', 'Total:')}{" "}
                     <span>{(orderComplete.totalAmount || 0).toLocaleString()} IQD</span>
                   </p>
                 </div>
@@ -1706,13 +1728,13 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                 <div className="bg-bg-paper p-5 rounded-2xl border border-border-delicate text-right space-y-3">
                   <h4 className="text-xs font-bold text-brand-gold uppercase tracking-widest flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
-                    تتبع حالة طلبك المباشرة
+                    {tr('تتبع حالة طلبك المباشرة', 'Live order status')}
                   </h4>
 
                   {orderComplete.status === "rejected" ? (
                     <div className="p-3 bg-red-50 border border-red-100 rounded text-red-700 text-xs">
-                      <p className="font-bold underline">⚠️ تم إلغاء / رفض هذا الطلب:</p>
-                      <p className="mt-1">{orderComplete.rejectionReason || "تواصل مع كابتن الصالة لمعرفة السبب."}</p>
+                      <p className="font-bold underline">⚠️ {tr('تم إلغاء / رفض هذا الطلب:', 'This order was cancelled or rejected:')}</p>
+                      <p className="mt-1">{orderComplete.rejectionReason || tr('تواصل مع كابتن الصالة لمعرفة السبب.', 'Ask a waiter for details.')}</p>
                     </div>
                   ) : (
                     <div className="grid grid-cols-3 gap-1 relative mt-1 pt-1">
@@ -1743,7 +1765,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                           <span className="text-[9px] font-bold">1</span>
                         </div>
                         <span className={`text-[8px] font-bold mt-1 leading-tight ${orderComplete.status === "pending" ? "text-brand-primary" : "text-text-muted"}`}>
-                          موافقة الكابتن
+                          {tr('موافقة الكابتن', 'Confirmed')}
                         </span>
                       </div>
 
@@ -1759,7 +1781,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                           <span className="text-[9px] font-bold">2</span>
                         </div>
                         <span className={`text-[8px] font-bold mt-1 leading-tight ${orderComplete.status === "preparing" ? "text-brand-primary font-bold" : "text-text-muted"}`}>
-                          قيد التحضير
+                          {tr('قيد التحضير', 'Preparing')}
                         </span>
                       </div>
 
@@ -1775,7 +1797,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                         <span className={`text-[8px] font-bold mt-1 leading-tight ${
                           (orderComplete.status === "ready" || orderComplete.status === "served") ? "text-emerald-600 font-bold" : "text-text-muted"
                         }`}>
-                          جاهز للتسليم
+                          {tr('جاهز للتسليم', 'Ready')}
                         </span>
                       </div>
                     </div>
@@ -1783,18 +1805,18 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
 
                   {orderComplete.status === "ready" && (
                     <div className="mt-3 p-2 bg-emerald-50 border border-emerald-100 rounded text-emerald-800 text-[11px] font-bold text-center leading-relaxed">
-                      🎉 وجبتك جاهزة للتسليم! سيوصلها كابتن الصالة إلى طاولتك الآن!
+                      🎉 {tr('وجبتك جاهزة للتسليم! سيوصلها كابتن الصالة إلى طاولتك الآن!', 'Your order is ready. A waiter will bring it to your table shortly!')}
                     </div>
                   )}
                   {orderComplete.status === "served" && (
                     <div className="mt-3 p-2 bg-brand-primary/5 border border-brand-primary/10 rounded text-brand-primary text-[11px] font-bold text-center leading-relaxed font-display">
-                      🍽️ تم تقديم الوجبة لك بنجاح، نتمنى لك وقتاً طيباً ووجبة شهية ممتعة!
+                      🍽️ {tr('تم تقديم الوجبة لك بنجاح، نتمنى لك وقتاً طيباً ووجبة شهية ممتعة!', 'Your order has been served. Enjoy your meal!')}
                     </div>
                   )}
                 </div>
 
                 <p className="text-[10px] text-text-muted uppercase tracking-widest text-center leading-relaxed">
-                  الضيافة الرفيعة هي رحلة في عوالم النكهات. <br /> جاري تحضير وجبتك بكل حب وعناية.
+                  {tr('الضيافة الرفيعة هي رحلة في عوالم النكهات.', 'Great hospitality begins with good food.')} <br /> {tr('جاري تحضير وجبتك بكل حب وعناية.', 'Your order is being prepared with care.')}
                 </p>
               </div>
 
@@ -1813,7 +1835,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                   }}
                   className="w-full py-4 bg-brand-primary text-white rounded-xl font-bold shadow-xl shadow-brand-primary/10 hover:bg-brand-secondary transition-all text-xs"
                 >
-                  {orderComplete.status === 'served' || orderComplete.status === 'rejected' ? "موافق وبدء طلب جديد 🍽️" : "متابعة التصفح بالخلفية 🥣"}
+                  {orderComplete.status === 'served' || orderComplete.status === 'rejected' ? tr('موافق وبدء طلب جديد 🍽️', 'Done — start a new order 🍽️') : tr('متابعة التصفح بالخلفية 🥣', 'Continue browsing 🥣')}
                 </button>
               </div>
             </motion.div>
@@ -1830,12 +1852,12 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
               className="bg-white max-w-md w-full p-6 sm:p-8 border border-border-delicate relative text-right rounded shadow-2xl z-10"
-              dir="rtl"
+              dir={dir}
             >
               <div className="absolute top-0 right-0 w-full h-1 bg-brand-gold" />
               <div className="flex justify-between items-start mb-6 w-full">
                 <div className="space-y-1">
-                  <span className="text-[9px] font-bold text-brand-gold uppercase tracking-widest block font-sans">خيارات وتخصيص الوجبة</span>
+                  <span className="text-[9px] font-bold text-brand-gold uppercase tracking-widest block font-sans">{tr('خيارات وتخصيص الوجبة', 'Customize your dish')}</span>
                   <h3 className="text-xl font-display font-bold text-brand-primary font-sans">{showCustomizer.item.name}</h3>
                 </div>
                 <button
@@ -1862,16 +1884,16 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                     )}
                   </div>
                   <div className="space-y-0.5 text-right flex-1">
-                    <p className="text-xs text-text-muted leading-relaxed line-clamp-2">{showCustomizer.item.ingredients || "طعم لذيذ ومكونات طازجة."}</p>
+                    <p className="text-xs text-text-muted leading-relaxed line-clamp-2">{showCustomizer.item.ingredients || tr('طعم لذيذ ومكونات طازجة.', 'Fresh ingredients, delicious flavor.')}</p>
                     <p className="text-sm font-bold text-brand-primary font-mono mt-1">
-                      السعر الأساسي: {showCustomizer.item.price.toLocaleString()} د.ع
+                      {tr('السعر الأساسي:', 'Base price:')} {showCustomizer.item.price.toLocaleString()} {tr('د.ع', 'IQD')}
                     </p>
                   </div>
                 </div>
 
                 {/* خيارات التخصيص المتوفرة */}
                 <div className="space-y-4">
-                  <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider border-b border-border-delicate pb-2 font-sans">اختر خيارات وعناصر الإضافة المتاحة:</p>
+                  <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider border-b border-border-delicate pb-2 font-sans">{tr('اختر خيارات وعناصر الإضافة المتاحة:', 'Available options:')}</p>
 
                   {showCustomizer.item.hasCheese && (
                     <div 
@@ -1882,9 +1904,9 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                         <div className={`w-5 h-5 border flex items-center justify-center rounded transition-all ${custCheese ? "bg-brand-gold border-brand-gold text-white" : "border-border-delicate bg-white"}`}>
                           {custCheese && <span className="text-xs">✕</span>}
                         </div>
-                        <span className="text-sm font-bold text-brand-primary font-sans">إضافة الجبن الإضافي 🧀</span>
+                        <span className="text-sm font-bold text-brand-primary font-sans">{tr('إضافة الجبن الإضافي', 'Extra cheese')} 🧀</span>
                       </div>
-                      <span className="text-xs font-bold text-brand-gold font-mono">+{showCustomizer.item.cheesePrice ? showCustomizer.item.cheesePrice.toLocaleString() : "0"} د.ع</span>
+                      <span className="text-xs font-bold text-brand-gold font-mono">+{showCustomizer.item.cheesePrice ? showCustomizer.item.cheesePrice.toLocaleString() : "0"} {tr('د.ع', 'IQD')}</span>
                     </div>
                   )}
 
@@ -1897,25 +1919,25 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                         <div className={`w-5 h-5 border flex items-center justify-center rounded transition-all ${custSpicy ? "bg-brand-primary border-brand-primary text-white" : "border-border-delicate bg-white"}`}>
                           {custSpicy && <span className="text-xs">✕</span>}
                         </div>
-                        <span className="text-sm font-bold text-brand-primary font-sans">خيار سبايسي (حار) 🌶️</span>
+                        <span className="text-sm font-bold text-brand-primary font-sans">{tr('خيار سبايسي (حار)', 'Spicy option')} 🌶️</span>
                       </div>
-                      <span className="text-xs font-bold text-brand-primary font-mono">+{showCustomizer.item.spicyPrice ? showCustomizer.item.spicyPrice.toLocaleString() : "0"} د.ع</span>
+                      <span className="text-xs font-bold text-brand-primary font-mono">+{showCustomizer.item.spicyPrice ? showCustomizer.item.spicyPrice.toLocaleString() : "0"} {tr('د.ع', 'IQD')}</span>
                     </div>
                   )}
 
                   {!showCustomizer.item.hasCheese && !showCustomizer.item.isSpicy && (
-                    <p className="text-xs text-text-muted font-sans">لا تتوفر إضافات مخصصة لهذا الصنف، سيقدم كـ عادي.</p>
+                    <p className="text-xs text-text-muted font-sans">{tr('لا تتوفر إضافات مخصصة لهذا الصنف، سيقدم كـ عادي.', 'No custom options are available for this item.')}</p>
                   )}
                 </div>
 
                 {/* المجموع الكلي */}
                 <div className="bg-brand-primary/5 p-4 border border-brand-primary/10 flex justify-between items-center">
-                  <span className="text-xs font-bold text-brand-primary font-sans">المجموع بعد التخصيص:</span>
+                  <span className="text-xs font-bold text-brand-primary font-sans">{tr('المجموع بعد التخصيص:', 'Customized total:')}</span>
                   <span className="text-base font-bold text-brand-primary font-mono">
                     {(showCustomizer.item.price + 
                       (custCheese ? (showCustomizer.item.cheesePrice || 0) : 0) + 
                       (custSpicy ? (showCustomizer.item.spicyPrice || 0) : 0)
-                    ).toLocaleString()} د.ع
+                    ).toLocaleString()} {tr('د.ع', 'IQD')}
                   </span>
                 </div>
 
@@ -1925,13 +1947,13 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                     onClick={handleAddCustomizedToCart}
                     className="flex-1 py-3 bg-brand-primary text-white text-xs font-bold uppercase tracking-wider hover:bg-brand-secondary transition-colors font-sans"
                   >
-                    أضف للسلة 🛒
+                    {tr('أضف للسلة', 'Add to cart')} 🛒
                   </button>
                   <button
                     onClick={() => setShowCustomizer({ open: false, item: null })}
                     className="px-6 py-3 border border-border-delicate text-xs font-bold text-text-muted hover:bg-bg-paper transition-colors font-sans"
                   >
-                    إلغاء
+                    {tr('إلغاء', 'Cancel')}
                   </button>
                 </div>
               </div>
@@ -1956,7 +1978,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
               animate={{ scale: 1, y: 0, opacity: 1 }}
               exit={{ scale: 0.95, y: 15, opacity: 0 }}
               className="bg-white w-full max-w-md p-6 sm:p-10 relative shadow-2xl border border-border-delicate rounded-sm text-right font-sans z-10"
-              dir="rtl"
+              dir={dir}
             >
               {/* Top border accent */}
               <div className="absolute top-0 right-0 left-0 h-1.5 bg-brand-gold" />
@@ -1967,7 +1989,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                     <Bell className="w-5 h-5 animate-bounce" />
                   </div>
                   <h3 className="text-xl font-display text-brand-primary font-bold">
-                    نداء نادل الخدمة (الويتر)
+                    {tr('نداء نادل الخدمة (الويتر)', 'Call a waiter')}
                   </h3>
                 </div>
                 <button
@@ -1988,25 +2010,25 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                   <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto border border-emerald-100">
                     <Check className="w-8 h-8 font-bold" />
                   </div>
-                  <h4 className="text-xl font-bold text-brand-primary">تم إرسال النداء بنجاح!</h4>
+                  <h4 className="text-xl font-bold text-brand-primary">{tr('تم إرسال النداء بنجاح!', 'Request sent!')}</h4>
                   <p className="text-xs text-text-muted">
-                    تم إشعار الويترز بطاولتك (طاولة {tableNumber}). سيحضر إليك أحد الموظفين فوراً لتلبية طلبك.
+                    {tr(`تم إشعار الويترز بطاولتك (طاولة ${tableNumber}). سيحضر إليك أحد الموظفين فوراً لتلبية طلبك.`, `A waiter has been notified for table ${tableNumber} and will be with you shortly.`)}
                   </p>
                 </motion.div>
               ) : (
                 <form onSubmit={handleWaiterCallSubmit} className="space-y-6">
                   <p className="text-xs text-text-muted leading-relaxed">
-                    يرجى ملء الاسم ورقم الطاولة لتحديد مكان جلوسك بدقة وتأكيد احتياجك السريع للنداء.
+                    {tr('يرجى ملء الاسم ورقم الطاولة لتحديد مكان جلوسك بدقة وتأكيد احتياجك السريع للنداء.', 'Enter your name, table number, and what you need so staff can find you quickly.')}
                   </p>
 
                   <div className="space-y-4">
                     {/* User Name */}
                     <div className="space-y-1.5">
-                      <label className="block text-[10px] font-bold text-brand-gold uppercase tracking-wider">الاسم بالكامل</label>
+                      <label className="block text-[10px] font-bold text-brand-gold uppercase tracking-wider">{tr('الاسم بالكامل', 'Full name')}</label>
                       <input
                         type="text"
                         required
-                        placeholder="أدخل اسمك هنا"
+                        placeholder={tr('أدخل اسمك هنا', 'Enter your name')}
                         value={customerName}
                         onChange={(e) => setCustomerName(e.target.value)}
                         className="w-full bg-slate-50 border border-border-delicate px-4 py-3 text-sm font-bold focus:outline-none focus:border-brand-primary focus:bg-white text-right"
@@ -2015,11 +2037,11 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
 
                     {/* Table Number */}
                     <div className="space-y-1.5">
-                      <label className="block text-[10px] font-bold text-brand-gold uppercase tracking-wider">رقم الطاولة</label>
+                      <label className="block text-[10px] font-bold text-brand-gold uppercase tracking-wider">{tr('رقم الطاولة', 'Table number')}</label>
                       <input
                         type="text"
                         required
-                        placeholder="أدخل رقم طاولتك"
+                        placeholder={tr('أدخل رقم طاولتك', 'Enter your table number')}
                         value={tableNumber}
                         onChange={(e) => setTableNumber(e.target.value)}
                         className="w-full bg-slate-50 border border-border-delicate px-4 py-3 text-sm font-bold focus:outline-none focus:border-brand-primary focus:bg-white text-right font-mono"
@@ -2028,11 +2050,11 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
 
                     {/* Call Reason / Need */}
                     <div className="space-y-1.5">
-                      <label className="block text-[10px] font-bold text-brand-gold uppercase tracking-wider">ما هو احتياجك؟ المختصر</label>
+                      <label className="block text-[10px] font-bold text-brand-gold uppercase tracking-wider">{tr('ما هو احتياجك؟ المختصر', 'How can we help?')}</label>
                       <input
                         type="text"
                         required
-                        placeholder="مثال: دفع الحساب، استفسار عن طبق، شوكة إضافية..."
+                        placeholder={tr('مثال: دفع الحساب، استفسار عن طبق، شوكة إضافية...', 'Example: bill, question, extra cutlery...')}
                         value={waiterCallReason}
                         onChange={(e) => setWaiterCallReason(e.target.value)}
                         className="w-full bg-slate-50 border border-border-delicate px-4 py-3 text-sm font-bold focus:outline-none focus:border-brand-primary focus:bg-white text-right"
@@ -2041,13 +2063,13 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
 
                     {/* Quick Suggestions template */}
                     <div className="space-y-1.5">
-                      <label className="block text-[9px] font-bold text-text-muted uppercase tracking-wider">خيارات سريعة شائعة:</label>
+                      <label className="block text-[9px] font-bold text-text-muted uppercase tracking-wider">{tr('خيارات سريعة شائعة:', 'Quick options:')}</label>
                       <div className="flex flex-wrap gap-2 justify-start">
                         {[
-                          "دفع وتصفية الـفـاتـورة 💳",
-                          "استفسار بخصوص وجبة طعام 🍽️",
-                          "طلب نادل على الطاولة 🧑‍🍳",
-                          "طلب ماء / مناديل إضافية 🥤",
+                          tr('دفع وتصفية الـفـاتـورة 💳', 'Pay the bill 💳'),
+                          tr('استفسار بخصوص وجبة طعام 🍽️', 'Question about a dish 🍽️'),
+                          tr('طلب نادل على الطاولة 🧑‍🍳', 'Waiter at the table 🧑‍🍳'),
+                          tr('طلب ماء / مناديل إضافية 🥤', 'Water or napkins 🥤'),
                         ].map((suggestion, idx) => (
                           <button
                             key={idx}
@@ -2071,10 +2093,10 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                       {submittingWaiterCall ? (
                         <>
                           <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                          جاري إرسال النداء...
+                          {tr('جاري إرسال النداء...', 'Sending request...')}
                         </>
                       ) : (
-                        "تأكيد وإرسال نداء الويتر 🔔"
+                        tr('تأكيد وإرسال نداء الويتر 🔔', 'Send waiter request 🔔')
                       )}
                     </button>
                     <button
@@ -2082,7 +2104,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                       onClick={() => setShowWaiterModal(false)}
                       className="px-5 py-3.5 border border-border-delicate hover:bg-slate-50 text-text-muted text-[11px] font-bold uppercase tracking-widest transition-all"
                     >
-                      إلغاء
+                      {tr('إلغاء', 'Cancel')}
                     </button>
                   </div>
                 </form>

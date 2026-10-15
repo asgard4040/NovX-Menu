@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Utensils, Clock, CheckCircle2, User, ChevronRight, ChefHat, Bell, Timer, ShieldAlert } from 'lucide-react';
-import { collection, query, where, onSnapshot, doc, updateDoc, orderBy, Timestamp, getDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
-import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
+import { collection, query, where, onSnapshot, doc, updateDoc, orderBy, Timestamp, getDoc, db } from '../lib/supabase-db';
 import { Order, OrderStatus } from '../types';
 import { format } from 'date-fns';
+import { useLanguage } from '../lib/i18n';
 
 const safeFormatDate = (dateVal: any, formatStr: string, fallback: string = "---") => {
   if (!dateVal) return fallback;
@@ -24,12 +23,14 @@ interface KitchenDashboardProps {
 }
 
 export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps) {
+  const { dir, tr } = useLanguage();
   const [restaurant, setRestaurant] = useState<any | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [rejectingOrder, setRejectingOrder] = useState<Order | null>(null);
   const [supportPhone, setSupportPhone] = useState(() => localStorage.getItem("novix_support_phone") || "07740064528");
   const [systemLogo, setSystemLogo] = useState(() => localStorage.getItem("novix_system_logo") || "");
+  const [mobileView, setMobileView] = useState<'preparing' | 'ready'>('preparing');
 
   useEffect(() => {
     const fetchSupport = async () => {
@@ -88,7 +89,7 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
       setOrders(sorted);
       setLoading(false);
     }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'orders');
+      console.error('Unable to load kitchen orders', err);
       setLoading(false);
     });
 
@@ -102,13 +103,14 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
         updatedAt: Timestamp.now()
       };
       if (newStatus === "preparing") {
-        updateFields.approvedAt = Date.now();
+        updateFields.approvedAt = new Date().toISOString();
       } else if (newStatus === "ready") {
-        updateFields.readyAt = Date.now();
+        updateFields.readyAt = new Date().toISOString();
       }
       await updateDoc(doc(db, 'orders', orderId), updateFields);
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
+      console.error('Unable to update kitchen order', err);
+      alert(tr('تعذر تحديث حالة الطلب. حاول مجدداً.', 'Could not update the order status. Please retry.'));
     }
   };
 
@@ -122,7 +124,8 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
         updatedAt: Timestamp.now(),
       });
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
+      console.error('Unable to reject kitchen order', err);
+      alert(tr('تعذر رفض الطلب. حاول مجدداً.', 'Could not reject the order. Please retry.'));
     }
   };
 
@@ -146,17 +149,17 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
 
   if (isExpiredAndLocked || isSuspended) {
     return (
-      <div className="flex flex-col items-center justify-center p-12 min-h-[60vh] text-center space-y-8 bg-white border border-red-200" dir="rtl">
+      <div className="flex flex-col items-center justify-center p-12 min-h-[60vh] text-center space-y-8 bg-white border border-red-200" dir={dir}>
         <div className="w-20 h-20 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto border border-red-100">
           <ShieldAlert className="w-10 h-10" />
         </div>
         <div className="space-y-4 max-w-lg">
-          <h2 className="text-3xl font-display text-red-700 font-bold">تنبيه: انتهت صلاحية الاشتراك بالنظام!</h2>
+          <h2 className="text-3xl font-display text-red-700 font-bold">{tr('تنبيه: انتهت صلاحية الاشتراك بالنظام!', 'Subscription expired')}</h2>
           <p className="text-sm text-text-muted leading-relaxed font-sans">
-            لقد تم إيقاف الخدمة مؤقتًا بسبب انتهاء فترة الاشتراك والمهلة الإضافية المحددة للمطعم. يرجى التواصل مع الإدارة من أجل تجديد الخدمة.
+            {tr('لقد تم إيقاف الخدمة مؤقتًا بسبب انتهاء فترة الاشتراك والمهلة الإضافية المحددة للمطعم. يرجى التواصل مع الإدارة من أجل تجديد الخدمة.', 'Service is temporarily unavailable. Please contact management to renew the restaurant subscription.')}
           </p>
           <div className="bg-red-50 p-6 rounded-xl border border-red-100 text-center font-display space-y-2">
-            <p className="text-xs text-red-800 font-bold">يرجى من الإدارة الاتصال بالدعم الفني للتجديد الفوري وتفعيل اللوحة:</p>
+            <p className="text-xs text-red-800 font-bold">{tr('يرجى من الإدارة الاتصال بالدعم الفني للتجديد الفوري وتفعيل اللوحة:', 'Technical support:')}</p>
             <p className="text-2xl font-bold text-red-900 tracking-wider">{supportPhone}</p>
           </div>
         </div>
@@ -165,7 +168,7 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
   }
 
   return (
-    <div className="space-y-12" dir="rtl">
+    <div className="space-y-8 lg:space-y-12 pb-24 lg:pb-0" dir={dir}>
       {/* Header */}
       <div className="bg-white border border-border-delicate p-6 sm:p-12 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-1.5 h-full bg-brand-primary" />
@@ -179,19 +182,19 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
                )}
             </div>
             <div className="space-y-1">
-              <p className="text-[10px] font-bold text-brand-gold uppercase tracking-[0.5em] italic">شاشات المطبخ</p>
-              <h1 className="text-3xl sm:text-4xl font-display text-brand-primary italic tracking-tighter">قسم الطهي والتحضير</h1>
-              <p className="text-xs font-bold text-text-muted/60 uppercase tracking-widest">إدارة متكاملة للطلبات مباشرة</p>
+              <p className="text-[10px] font-bold text-brand-gold uppercase tracking-[0.5em] italic">{tr('شاشات المطبخ', 'Kitchen display')}</p>
+              <h1 className="text-3xl sm:text-4xl font-display text-brand-primary italic tracking-tighter">{tr('قسم الطهي والتحضير', 'Kitchen workspace')}</h1>
+              <p className="text-xs font-bold text-text-muted/60 uppercase tracking-widest">{tr('إدارة متكاملة للطلبات مباشرة', 'Live preparation workflow')}</p>
             </div>
           </div>
           
           <div className="flex gap-8 justify-center lg:justify-end border-t border-border-delicate pt-6 lg:border-t-0 lg:pt-0 w-full lg:w-auto">
              <div className="text-center sm:text-right">
-                <p className="text-[9px] font-bold text-brand-gold uppercase tracking-widest opacity-60 font-sans">قيد التحضير</p>
+                <p className="text-[9px] font-bold text-brand-gold uppercase tracking-widest opacity-60 font-sans">{tr('قيد التحضير', 'Preparing')}</p>
                 <p className="text-2xl font-display not-italic text-brand-primary font-bold"><span className="font-sans">{preparingOrders.length}</span></p>
              </div>
              <div className="text-center sm:text-right">
-                <p className="text-[9px] font-bold text-brand-gold uppercase tracking-widest opacity-60 font-sans">جاهز للتقديم</p>
+                <p className="text-[9px] font-bold text-brand-gold uppercase tracking-widest opacity-60 font-sans">{tr('جاهز للتقديم', 'Ready')}</p>
                 <p className="text-2xl font-display not-italic text-emerald-600 font-bold"><span className="font-sans">{readyOrders.length}</span></p>
              </div>
           </div>
@@ -200,10 +203,10 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-12">
         {/* Preparing Column */}
-        <div className="space-y-10">
+        <div className={`${mobileView === 'preparing' ? 'block' : 'hidden'} xl:block space-y-10`}>
            <div className="flex items-center gap-4 border-b border-border-delicate pb-4">
               <div className="h-0.5 w-12 bg-brand-gold" />
-               <h2 className="text-sm font-bold text-brand-primary uppercase tracking-widest">طلبات قيد الطهي والتحضير</h2>
+               <h2 className="text-sm font-bold text-brand-primary uppercase tracking-widest">{tr('طلبات قيد الطهي والتحضير', 'Preparing orders')}</h2>
             </div>
             
             <div className="space-y-8">
@@ -213,21 +216,21 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
                      key={order.id} 
                      order={order} 
                      onAction={() => updateStatus(order.id, 'ready')}
-                     actionLabel="اكتمال التحضير وجهوزية الطبق"
+                     actionLabel={tr('اكتمال التحضير وجهوزية الطبق', 'Mark ready')}
                      type="preparing"
                      onReject={() => setRejectingOrder(order)}
                    />
                  ))}
                </AnimatePresence>
-               {preparingOrders.length === 0 && <EmptyState icon={<Clock className="w-10 h-10" />} text="المطبخ هادئ ومستقر حالياً." />}
+               {preparingOrders.length === 0 && <EmptyState icon={<Clock className="w-10 h-10" />} text={tr('المطبخ هادئ ومستقر حالياً.', 'No orders are being prepared.')} />}
             </div>
         </div>
 
         {/* Ready Column */}
-        <div className="space-y-10">
+        <div className={`${mobileView === 'ready' ? 'block' : 'hidden'} xl:block space-y-10`}>
            <div className="flex items-center gap-4 border-b border-border-delicate pb-4">
               <div className="h-0.5 w-12 bg-emerald-500" />
-               <h2 className="text-sm font-bold text-brand-primary uppercase tracking-widest">أطباق جاهزة للتقديم فوراً</h2>
+               <h2 className="text-sm font-bold text-brand-primary uppercase tracking-widest">{tr('أطباق جاهزة للتقديم فوراً', 'Ready for service')}</h2>
             </div>
             
             <div className="space-y-8">
@@ -237,16 +240,25 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
                        key={order.id} 
                        order={order} 
                        onAction={() => updateStatus(order.id, 'preparing')}
-                       actionLabel="إرجاع الطبق إلى قيد التحضير"
+                       actionLabel={tr('إرجاع الطبق إلى قيد التحضير', 'Return to preparing')}
                        type="ready"
                        onReject={() => setRejectingOrder(order)}
                      />
                   ))}
                </AnimatePresence>
-               {readyOrders.length === 0 && <EmptyState icon={<CheckCircle2 className="w-10 h-10" />} text="لا توجد أطباق جاهزة بانتظار الخدمة." />}
+               {readyOrders.length === 0 && <EmptyState icon={<CheckCircle2 className="w-10 h-10" />} text={tr('لا توجد أطباق جاهزة بانتظار الخدمة.', 'No dishes are waiting for service.')} />}
             </div>
         </div>
       </div>
+
+      <nav className="fixed xl:hidden bottom-0 inset-x-0 z-50 grid grid-cols-2 gap-2 border-t border-border-delicate workspace-shell-panel px-2 pt-2 pb-[calc(.5rem+env(safe-area-inset-bottom))] shadow-[0_-10px_30px_rgba(0,0,0,.10)]" aria-label={tr('مراحل طلبات المطبخ', 'Kitchen order stages')}>
+        <button onClick={() => setMobileView('preparing')} className={`h-16 flex items-center justify-center gap-2 text-xs font-bold ${mobileView === 'preparing' ? 'bg-brand-primary text-white' : 'text-brand-primary'}`}>
+          <Clock className="w-5 h-5" /> {tr('تحضير', 'Preparing')} <span className="min-w-5 h-5 px-1 rounded-full bg-brand-gold text-white flex items-center justify-center">{preparingOrders.length}</span>
+        </button>
+        <button onClick={() => setMobileView('ready')} className={`h-16 flex items-center justify-center gap-2 text-xs font-bold ${mobileView === 'ready' ? 'bg-emerald-600 text-white' : 'text-brand-primary'}`}>
+          <CheckCircle2 className="w-5 h-5" /> {tr('جاهز', 'Ready')} <span className="min-w-5 h-5 px-1 rounded-full bg-emerald-500 text-white flex items-center justify-center">{readyOrders.length}</span>
+        </button>
+      </nav>
 
       <AnimatePresence>
         {rejectingOrder && (
@@ -279,6 +291,7 @@ function KitchenOrderCard({
   onReject?: () => void,
   key?: string 
 }) {
+  const { tr } = useLanguage();
   return (
     <motion.div
       layout
@@ -291,12 +304,12 @@ function KitchenOrderCard({
       
       <div className="flex justify-between items-start">
          <div className="space-y-1">
-            <h3 className="font-display text-xl sm:text-2xl italic text-brand-primary tracking-tight">طاولة <span className="not-italic inline-block font-sans font-bold">{order.tableNumber}</span> <span className="text-text-muted opacity-40 font-bold ml-2">/ {order.customerName}</span></h3>
+            <h3 className="font-display text-xl sm:text-2xl italic text-brand-primary tracking-tight">{tr('طاولة', 'Table')} <span className="not-italic inline-block font-sans font-bold">{order.tableNumber}</span> <span className="text-text-muted opacity-40 font-bold ml-2">/ {order.customerName}</span></h3>
             <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 text-[9px] font-bold text-brand-gold uppercase tracking-[0.3em]">
                <span className="flex items-center gap-2"><Timer className="w-3 h-3" /> <span className="not-italic inline-block font-sans">{safeFormatDate(order.createdAt, 'hh:mm a')}</span></span>
                <span className="text-text-muted/40 hidden sm:inline">|</span>
                <span className="text-text-muted/40 flex items-center gap-1.5">
-                  رقم الطلب: <span className="text-brand-gold font-sans font-bold text-xs bg-brand-gold/10 px-2 py-0.5 rounded">{order.orderNumber || `#${order.id.slice(-6).toUpperCase()}`}</span>
+                  {tr('رقم الطلب:', 'Order:')} <span className="text-brand-gold font-sans font-bold text-xs bg-brand-gold/10 px-2 py-0.5 rounded">{order.orderNumber || `#${order.id.slice(-6).toUpperCase()}`}</span>
                </span>
             </div>
          </div>
@@ -319,7 +332,7 @@ function KitchenOrderCard({
         <div className="p-4 sm:p-6 bg-red-50 border border-red-100 flex items-start gap-4 italic">
            <Bell className="w-5 h-5 text-red-400 shrink-0" />
            <div>
-              <p className="text-[9px] font-bold text-red-600 uppercase tracking-widest mb-1">توجيهات خاصة وجانبية</p>
+              <p className="text-[9px] font-bold text-red-600 uppercase tracking-widest mb-1">{tr('توجيهات خاصة وجانبية', 'Special instructions')}</p>
               <p className="text-sm font-bold text-red-900/80 leading-relaxed">{order.notes}</p>
            </div>
         </div>
@@ -343,7 +356,7 @@ function KitchenOrderCard({
             onClick={onReject}
             className="py-5 sm:py-6 px-6 border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-colors text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2"
           >
-            رفض الطلب
+            {tr('رفض الطلب', 'Reject order')}
           </button>
         )}
       </div>

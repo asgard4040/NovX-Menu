@@ -27,6 +27,8 @@ import {
   MessageSquare,
   Sparkles,
   Image,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import {
   collection,
@@ -42,8 +44,8 @@ import {
   setDoc,
   deleteDoc,
   type DocumentData,
-} from "firebase/firestore";
-import { db } from "../lib/firebase";
+} from "../lib/supabase-db";
+import { db } from "../lib/supabase-db";
 import { handleFirestoreError, OperationType } from "../lib/firestore-utils";
 import {
   IRAQI_PROVINCES,
@@ -51,8 +53,20 @@ import {
   SUBSCRIPTION_DURATIONS,
 } from "../constants";
 import { Restaurant, SubscriptionType, SubscriptionDuration } from "../types";
-import { addWeeks, addMonths, addYears, format } from "date-fns";
+import { format } from "date-fns";
+import { calculateSubscriptionEnd } from "../lib/subscription";
 import QRCode from "react-qr-code";
+import { supabase } from "../lib/supabase";
+import { persistRestaurantImage } from "../lib/storage";
+import { localizeProvince, useLanguage } from "../lib/i18n";
+
+const aiLogEnglish: Record<string, string> = {
+  'تم توثيق الاتصال بنجاح لبوابة المطعم المشترك.': 'Restaurant portal connection verified.',
+  'تم معالجة استعلام الذكاء الاصطناعي بنجاح (زمن الاستجابة: 0.12ms).': 'AI query processed (response time: 0.12 ms).',
+  'تمت المزامنة وحفظ التحديثات والتبديلات الحية تلقائياً بنجاح.': 'Live updates synchronized and saved.',
+  'تم استدعاء تفضيلات الطهي والأطباق المقترحة من الذاكرة اللحظية بكفاءة 99%.': 'Menu preferences loaded from cache.',
+  'تم إرسال إشارة تشخيصية (Cortex System Ping Test) - الاستجابة مثالية.': 'Cortex test signal sent successfully.',
+};
 
 const safeFormatDate = (dateVal: any, formatStr: string, fallback: string = "---") => {
   if (!dateVal) return fallback;
@@ -70,6 +84,7 @@ export default function AdminDashboard({
 }: {
   activeTab?: "overview" | "restaurants" | "ai" | "alerts";
 }) {
+  const { dir, language, tr } = useLanguage();
   const [internalTab, setInternalTab] = useState<
     "overview" | "restaurants" | "ai" | "alerts"
   >("overview");
@@ -100,7 +115,6 @@ export default function AdminDashboard({
   );
   const [aiModel, setAiModel] = useState("gemini-3.5-flash");
   const [aiTemperature, setAiTemperature] = useState(0.3);
-  const [aiApiKey, setAiApiKey] = useState("");
   const [isSavingAI, setIsSavingAI] = useState(false);
   const [aiSaveSuccess, setAiSaveSuccess] = useState(false);
   const [aiLogs, setAiLogs] = useState<Array<{ time: string; msg: string; type: string }>>([
@@ -179,12 +193,14 @@ export default function AdminDashboard({
     setIsSavingSupport(true);
     setSaveSuccess(false);
     try {
+      const logoUrl = await persistRestaurantImage("00000000-0000-0000-0000-000000000000", systemLogo, "system-logo");
       await setDoc(doc(db, "settings", "support"), { 
         phone: supportPhone,
-        logoUrl: systemLogo
+        logoUrl
       }, { merge: true });
+      setSystemLogo(logoUrl);
       localStorage.setItem("novix_support_phone", supportPhone);
-      localStorage.setItem("novix_system_logo", systemLogo);
+      localStorage.setItem("novix_system_logo", logoUrl);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (e) {
@@ -219,7 +235,6 @@ export default function AdminDashboard({
         if (data.prompt) setAiPrompt(data.prompt);
         if (data.model) setAiModel(data.model);
         if (data.temperature !== undefined) setAiTemperature(data.temperature);
-        if (data.apiKey) setAiApiKey(data.apiKey);
         localStorage.setItem("novix_ai_settings", JSON.stringify(data));
       }
     } catch (e) {
@@ -231,7 +246,6 @@ export default function AdminDashboard({
           if (data.prompt) setAiPrompt(data.prompt);
           if (data.model) setAiModel(data.model);
           if (data.temperature !== undefined) setAiTemperature(data.temperature);
-          if (data.apiKey) setAiApiKey(data.apiKey);
         } catch (_) {}
       }
     }
@@ -244,7 +258,6 @@ export default function AdminDashboard({
       prompt: aiPrompt,
       model: aiModel,
       temperature: aiTemperature,
-      apiKey: aiApiKey,
     };
     try {
       await setDoc(doc(db, "settings", "ai"), {
@@ -310,7 +323,7 @@ export default function AdminDashboard({
     } catch (e) {
       console.error("Error sending announcement:", e);
       // Simulate locally if we want, or alert the user
-      alert("تعذر الاتصال بمركز البث. يرجى التأكد من اتصال الإنترنت الخاص بالسيرفر وإعادة المحاولة.");
+      alert(tr('تعذر الاتصال بمركز البث. يرجى التأكد من اتصال الإنترنت الخاص بالسيرفر وإعادة المحاولة.', 'Could not send the announcement. Check the server connection and retry.'));
     } finally {
       setIsSendingAnn(false);
     }
@@ -351,7 +364,7 @@ export default function AdminDashboard({
         dailySubscriptions: 1, // Placeholder
       });
     } catch (err) {
-      console.warn("Could not load restaurants from Firebase (using local cache):", err);
+      console.warn("Could not load restaurants from Supabase (using local cache):", err);
       const cached = localStorage.getItem("novix_restaurants");
       if (cached) {
         try {
@@ -414,11 +427,11 @@ export default function AdminDashboard({
   });
 
   return (
-    <div className="space-y-12" dir="rtl">
+    <div className="space-y-12" dir={dir}>
       {isOffline && (
         <div className="p-4 bg-amber-50/80 border-r-4 border-brand-gold text-brand-primary text-xs font-sans font-bold flex items-center gap-3 animate-pulse">
           <span className="w-2.5 h-2.5 bg-brand-gold rounded-full shrink-0" />
-          <span>الوضع المحلي نشط: النظام يعمل بكفاءة عبر الذاكرة المحلية المؤقتة (Offline Cache). سيتم التزامن تلقائياً فور استقرار اتصال المزود.</span>
+          <span>{tr('الوضع المحلي نشط: النظام يعمل بكفاءة عبر الذاكرة المحلية المؤقتة (Offline Cache). سيتم التزامن تلقائياً فور استقرار اتصال المزود.', 'Offline mode is active. Cached data will synchronize when the connection returns.')}</span>
         </div>
       )}
       <AnimatePresence mode="wait">
@@ -432,28 +445,28 @@ export default function AdminDashboard({
           >
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
               <StatCard
-                title="إجمالي المطاعم"
+                title={tr('إجمالي المطاعم', 'Total restaurants')}
                 value={stats.totalRestaurants}
                 icon={<Building2 className="w-6 h-6 text-brand-primary" />}
-                trend="+12% النمو"
+                trend={tr('+12% النمو', '+12% growth')}
               />
               <StatCard
-                title="الأرباح المتوقعة"
-                value={`${stats.monthlyProfit.toLocaleString()} د.ع`}
+                title={tr('الأرباح المتوقعة', 'Expected revenue')}
+                value={`${stats.monthlyProfit.toLocaleString()} ${tr('د.ع', 'IQD')}`}
                 icon={<CreditCard className="w-6 h-6 text-emerald-500" />}
-                trend="+5% زيادة"
+                trend={tr('+5% زيادة', '+5% increase')}
               />
               <StatCard
-                title="الاشتراكات النشطة"
+                title={tr('الاشتراكات النشطة', 'Active subscriptions')}
                 value={stats.activeSubscriptions}
                 icon={<CheckCircle2 className="w-6 h-6 text-purple-500" />}
-                trend="95% استقرار"
+                trend={tr('95% استقرار', '95% stable')}
               />
               <StatCard
-                title="طلبات اليوم"
+                title={tr('طلبات اليوم', 'Today’s requests')}
                 value={stats.dailySubscriptions}
                 icon={<Users className="w-6 h-6 text-amber-500" />}
-                trend="+8% اليوم"
+                trend={tr('+8% اليوم', '+8% today')}
               />
             </div>
 
@@ -466,11 +479,11 @@ export default function AdminDashboard({
                   <div className="flex items-center gap-4">
                     <Phone className="w-6 h-6 text-brand-gold" />
                     <h3 className="text-2xl font-display text-brand-primary italic font-bold">
-                      خط طوارئ الدعم الفني العام
+                      {tr('خط طوارئ الدعم الفني العام', 'Technical support number')}
                     </h3>
                   </div>
                   <p className="text-xs text-text-muted leading-relaxed font-sans max-w-2xl">
-                    هذا الرقم يظهر لجميع شركائك من المطاعم والمطابخ والويترز في صفحة "المساعدة" الخاصة بهم وعند التحذير من قرب انتهاء الاشتراك لتسهيل تجديد اشتراكاتهم وتواصلهم المباشر معك.
+                    {tr('هذا الرقم يظهر لجميع شركائك من المطاعم والمطابخ والويترز في صفحة "المساعدة" الخاصة بهم وعند التحذير من قرب انتهاء الاشتراك لتسهيل تجديد اشتراكاتهم وتواصلهم المباشر معك.', 'This number appears in partner help pages and subscription notices so staff can contact you.')}
                   </p>
                 </div>
 
@@ -495,7 +508,7 @@ export default function AdminDashboard({
                     ) : (
                       <Save className="w-4 h-4" />
                     )}
-                    <span>حفظ وتعميم الرقم الجديد</span>
+                    <span>{tr('حفظ وتعميم الرقم الجديد', 'Save support number')}</span>
                   </button>
                 </div>
               </div>
@@ -506,11 +519,11 @@ export default function AdminDashboard({
                   <div className="flex items-center gap-4">
                     <Image className="w-6 h-6 text-brand-gold" />
                     <h3 className="text-2xl font-display text-brand-primary italic font-bold">
-                      شعار النظام العام الموحد (رفع اللوغو)
+                      {tr('شعار النظام العام الموحد (رفع اللوغو)', 'System logo')}
                     </h3>
                   </div>
                   <p className="text-xs text-text-muted leading-relaxed font-sans max-w-2xl">
-                    يمكنك رفع لوغو الاستوديو ليعرض فوراً وعمومياً في واجهة مالك المطعم، لوحة الويتر، وقسم المطبخ.
+                    {tr('يمكنك رفع لوغو الاستوديو ليعرض فوراً وعمومياً في واجهة مالك المطعم، لوحة الويتر، وقسم المطبخ.', 'Upload a logo to display in owner, waiter, and kitchen workspaces.')}
                   </p>
                 </div>
 
@@ -530,13 +543,13 @@ export default function AdminDashboard({
                         }}
                         className="absolute inset-0 bg-red-950/80 text-white text-[10px] font-bold uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
                       >
-                        إزالة اللوغو
+                        {tr('إزالة اللوغو', 'Remove logo')}
                       </button>
                     </div>
                   )}
                   <div className="flex-1 sm:flex-initial">
                     <label className="px-8 py-4 bg-bg-paper border border-dashed border-brand-gold/60 text-brand-primary hover:border-brand-primary cursor-pointer text-xs font-bold uppercase tracking-widest transition-all inline-block text-center w-full">
-                      <span>📤 رفع لوغو من الاستوديو</span>
+                      <span>📤 {tr('رفع لوغو من الاستوديو', 'Upload logo')}</span>
                       <input
                         type="file"
                         accept="image/*"
@@ -554,7 +567,7 @@ export default function AdminDashboard({
                   animate={{ opacity: 1, y: 0 }}
                   className="mt-4 p-4 bg-emerald-50 border border-emerald-100 text-emerald-800 text-xs font-sans text-center"
                 >
-                  تم حفظ وتحديث رقم الدعم ولوغو الاستوديو بنجاح!
+                  {tr('تم حفظ وتحديث رقم الدعم ولوغو الاستوديو بنجاح!', 'Support details and logo saved.')}
                 </motion.div>
               )}
             </div>
@@ -575,7 +588,7 @@ export default function AdminDashboard({
                   <Search className="absolute right-0 top-1/2 -translate-y-1/2 text-text-muted/40 w-5 h-5 group-focus-within:text-brand-primary" />
                   <input
                     type="text"
-                    placeholder="البحث عن اسم المطعم أو المدير..."
+                    placeholder={tr('البحث عن اسم المطعم أو المدير...', 'Search restaurant or manager...')}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="w-full pr-10 py-3 sm:py-4 bg-transparent border-b border-border-delicate text-base sm:text-lg font-display focus:outline-none focus:border-brand-primary transition-all text-right"
@@ -586,10 +599,10 @@ export default function AdminDashboard({
                   onChange={(e) => setFilterProvince(e.target.value)}
                   className="px-4 sm:px-6 py-3 sm:py-4 bg-bg-paper border border-border-delicate rounded-none text-[10px] font-bold uppercase tracking-[0.2em] focus:outline-none cursor-pointer hover:bg-white transition-colors"
                 >
-                  <option value="">كل المحافظات</option>
+                  <option value="">{tr('كل المحافظات', 'All provinces')}</option>
                   {IRAQI_PROVINCES.map((p) => (
                     <option key={p} value={p}>
-                      {p}
+                      {localizeProvince(p, language)}
                     </option>
                   ))}
                 </select>
@@ -598,10 +611,10 @@ export default function AdminDashboard({
                   onChange={(e) => setFilterType(e.target.value)}
                   className="px-4 sm:px-6 py-3 sm:py-4 bg-bg-paper border border-border-delicate rounded-none text-[10px] font-bold uppercase tracking-[0.2em] focus:outline-none cursor-pointer hover:bg-white transition-colors text-right"
                 >
-                  <option value="">كل الباقات/الفئات</option>
+                  <option value="">{tr('كل الباقات/الفئات', 'All plans')}</option>
                   {SUBSCRIPTION_TYPES.map((t) => (
                     <option key={t.id} value={t.id}>
-                      {t.label}
+                      {tr(t.label, t.id === 'trial' ? 'Trial' : t.id === 'pro' ? 'Pro' : 'Standard')}
                     </option>
                   ))}
                 </select>
@@ -610,9 +623,9 @@ export default function AdminDashboard({
                   onChange={(e) => setFilterExpiry(e.target.value as any)}
                   className="px-4 sm:px-6 py-3 sm:py-4 bg-bg-paper border border-border-delicate rounded-none text-[10px] font-bold uppercase tracking-[0.2em] focus:outline-none cursor-pointer hover:bg-white transition-colors text-right"
                 >
-                  <option value="all">كل حالات الاشتراك</option>
-                  <option value="expired">مطاعم منتهية الاشتراك 🔴</option>
-                  <option value="soon">مطاعم ستنتهي خلال 3 أيام 🟡</option>
+                  <option value="all">{tr('كل حالات الاشتراك', 'All subscription statuses')}</option>
+                  <option value="expired">{tr('مطاعم منتهية الاشتراك 🔴', 'Expired restaurants 🔴')}</option>
+                  <option value="soon">{tr('مطاعم ستنتهي خلال 3 أيام 🟡', 'Expiring in 3 days 🟡')}</option>
                 </select>
               </div>
               <button
@@ -621,36 +634,36 @@ export default function AdminDashboard({
               >
                 <Plus className="w-5 h-5" />
                 <span className="text-[10px] uppercase tracking-widest font-bold">
-                  تسجيل وإضافة شريك جديد
+                  {tr('تسجيل وإضافة شريك جديد', 'Add restaurant')}
                 </span>
               </button>
             </div>
 
             <div className="bg-white border border-border-delicate overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full text-right" dir="rtl">
+                <table className="w-full text-right" dir={dir}>
                   <thead>
                     <tr className="bg-bg-paper">
                       <th className="px-10 py-8 text-[10px] font-bold text-brand-gold uppercase tracking-widest border-b border-border-delicate whitespace-nowrap">
-                        المطعم / المؤسسة
+                        {tr('المطعم / المؤسسة', 'Restaurant')}
                       </th>
                       <th className="px-10 py-8 text-[10px] font-bold text-brand-gold uppercase tracking-widest border-b border-border-delicate whitespace-nowrap">
-                        المدير المسؤول
+                        {tr('المدير المسؤول', 'Manager')}
                       </th>
                       <th className="px-10 py-8 text-[10px] font-bold text-brand-gold uppercase tracking-widest border-b border-border-delicate whitespace-nowrap">
-                        المحافظة والعنوان
+                        {tr('المحافظة والعنوان', 'Location')}
                       </th>
                       <th className="px-10 py-8 text-[10px] font-bold text-brand-gold uppercase tracking-widest border-b border-border-delicate whitespace-nowrap">
-                        الفئة / الباقة
+                        {tr('الفئة / الباقة', 'Plan')}
                       </th>
                       <th className="px-10 py-8 text-[10px] font-bold text-brand-gold uppercase tracking-widest border-b border-border-delicate whitespace-nowrap">
-                        حالة الاشتراك
+                        {tr('حالة الاشتراك', 'Subscription')}
                       </th>
                       <th className="px-10 py-8 text-[10px] font-bold text-brand-gold uppercase tracking-widest border-b border-border-delicate text-center whitespace-nowrap">
-                        كود الـ QR المباشر
+                        {tr('كود الـ QR المباشر', 'Menu QR code')}
                       </th>
                       <th className="px-10 py-8 text-[10px] font-bold text-brand-gold uppercase tracking-widest border-b border-border-delicate whitespace-nowrap">
-                        الإجراءات والتحكم
+                        {tr('الإجراءات والتحكم', 'Actions')}
                       </th>
                     </tr>
                   </thead>
@@ -698,7 +711,7 @@ export default function AdminDashboard({
                           <div className="space-y-1">
                             <p className="flex items-center gap-2 text-brand-primary font-display text-lg italic">
                               <MapPin className="w-4 h-4 text-brand-gold opacity-40" />{" "}
-                              {res.province}
+                              {localizeProvince(res.province, language)}
                             </p>
                             <p className="text-[10px] text-text-muted font-bold uppercase tracking-widest leading-none mr-6 opacity-60">
                               {res.area}
@@ -717,7 +730,7 @@ export default function AdminDashboard({
                               {res.subscriptionType}
                             </span>
                             <p className="text-[9px] text-brand-gold font-bold uppercase tracking-widest opacity-60 pt-2 block">
-                              صلاحية: {safeFormatDate(res.endDate, "MMM yyyy")}
+                              {tr('صلاحية:', 'Expires:')} {safeFormatDate(res.endDate, "MMM yyyy")}
                             </p>
                           </div>
                         </td>
@@ -733,8 +746,8 @@ export default function AdminDashboard({
                               className={`w-1.5 h-1.5 rounded-full ${res.status === "active" ? "bg-emerald-600 animate-pulse" : "bg-red-800"}`}
                             />
                             {res.status === "active"
-                              ? "نشط ومفعّل"
-                              : "موقوف مؤقتاً"}
+                              ? tr('نشط ومفعّل', 'Active')
+                              : tr('موقوف مؤقتاً', 'Paused')}
                           </span>
                         </td>
                         <td className="px-10 py-10 text-center">
@@ -754,7 +767,7 @@ export default function AdminDashboard({
                                 rel="noreferrer"
                                 className="text-[9px] font-bold text-brand-gold uppercase tracking-[0.3em] hover:text-brand-primary transition-all flex items-center gap-2 italic font-sans"
                               >
-                                <ExternalLink className="w-3 h-3" /> المنيو الرقمي
+                                <ExternalLink className="w-3 h-3" /> {tr('المنيو الرقمي', 'Digital menu')}
                               </a>
                               <button
                                 onClick={() => {
@@ -764,7 +777,7 @@ export default function AdminDashboard({
                                 }}
                                 className="text-[8px] font-bold text-brand-primary hover:text-brand-gold transition-all flex items-center gap-1 bg-bg-paper px-2 py-1 border border-border-delicate cursor-pointer"
                               >
-                                {copiedId === res.id ? "✓ تم النسخ" : "📋 نسخ رابط الموظفين والمالك"}
+                                {copiedId === res.id ? tr('✓ تم النسخ', '✓ Copied') : tr('📋 نسخ رابط الموظفين والمالك', '📋 Copy staff/owner login link')}
                               </button>
                             </div>
                           </div>
@@ -776,8 +789,8 @@ export default function AdminDashboard({
                               className="w-12 h-12 bg-bg-paper border border-border-delicate rounded-full text-text-muted flex items-center justify-center hover:bg-brand-primary hover:text-white transition-all shadow-sm"
                               title={
                                 res.status === "active"
-                                  ? "إيقاف مؤقت"
-                                  : "إعادة تفعيل"
+                                  ? tr('إيقاف مؤقت', 'Pause')
+                                  : tr('إعادة تفعيل', 'Reactivate')
                               }
                             >
                               {res.status === "active" ? (
@@ -789,7 +802,7 @@ export default function AdminDashboard({
                             <button
                               onClick={() => setEditingRestaurant(res)}
                               className="w-12 h-12 bg-bg-paper border border-border-delicate rounded-full text-text-muted flex items-center justify-center hover:bg-brand-primary hover:text-white transition-all shadow-sm"
-                              title="تعديل الإعدادات"
+                              title={tr('تعديل الإعدادات', 'Edit settings')}
                             >
                               <Settings className="w-6 h-6" />
                             </button>
@@ -827,18 +840,18 @@ export default function AdminDashboard({
                   <div className="text-center md:text-right flex-grow">
                     <div className="flex items-center justify-center md:justify-start flex-wrap gap-3 sm:gap-6 mb-4 md:mb-8">
                       <span className="px-3 py-1 sm:px-4 sm:py-2 border border-emerald-200 bg-emerald-50 text-emerald-800 text-[9px] font-bold uppercase tracking-widest italic">
-                        الذكاء الاصطناعي متصل
+                        {tr('الذكاء الاصطناعي متصل', 'AI connected')}
                       </span>
                       <span className="text-[10px] text-brand-gold font-bold uppercase tracking-widest opacity-60 italic">
-                        v2.4 LTS إصدار مستقر
+                        v2.4 LTS {tr('إصدار مستقر', 'stable release')}
                       </span>
                     </div>
                     <h2 className="text-3xl sm:text-5xl md:text-6xl font-display text-brand-primary italic tracking-tighter leading-none mb-4 md:mb-6">
-                      نوفكس الموجه <br className="hidden sm:inline" />{" "}
-                      <span className="text-brand-gold">الذكي المتكامل</span>
+                      {tr('نوفكس الموجه', 'NovX AI')} <br className="hidden sm:inline" />{" "}
+                      <span className="text-brand-gold">{tr('الذكي المتكامل', 'assistant')}</span>
                     </h2>
                     <p className="text-text-muted max-w-lg font-light italic text-sm sm:text-base md:text-lg leading-relaxed">
-                      الشبكة المركزية الذكية تعمل بكفاءة عالية. تحسين جودة المنيو الرقمي، الاستجابة السريعة، وتحليلات تفضيلات الزبائن والخدمة الرقمية التلقائية لجميع الشركاء.
+                      {tr('الشبكة المركزية الذكية تعمل بكفاءة عالية. تحسين جودة المنيو الرقمي، الاستجابة السريعة، وتحليلات تفضيلات الزبائن والخدمة الرقمية التلقائية لجميع الشركاء.', 'Manage the AI assistant and its settings for all partner restaurants.')}
                     </p>
                   </div>
                 </div>
@@ -847,12 +860,12 @@ export default function AdminDashboard({
               <div className="xl:col-span-2 bg-bg-paper p-6 sm:p-12 lg:p-16 border border-border-delicate flex flex-col justify-between">
                 <div className="space-y-6 sm:space-y-8">
                   <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest">
-                    مواصفات هيكل النظام العصبي
+                    {tr('مواصفات هيكل النظام العصبي', 'AI configuration')}
                   </p>
                   <div className="space-y-4 sm:space-y-6">
                     <div className="flex justify-between items-center py-3 sm:py-4 border-b border-border-delicate">
                       <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
-                        أفق التفكير اللحظي
+                        {tr('أفق التفكير اللحظي', 'Response window')}
                       </span>
                       <span className="text-lg sm:text-xl font-display text-brand-primary italic">
                         128k Tokens
@@ -860,15 +873,15 @@ export default function AdminDashboard({
                     </div>
                     <div className="flex justify-between items-center py-3 sm:py-4 border-b border-border-delicate">
                       <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
-                        درجة استجابة Cortex
+                        {tr('درجة استجابة Cortex', 'Cortex response')}
                       </span>
                       <span className="text-lg sm:text-xl font-display text-brand-primary italic">
-                        0.7 (متزن ذكي)
+                        0.7 ({tr('متزن ذكي', 'Balanced')})
                       </span>
                     </div>
                     <div className="flex justify-between items-center py-3 sm:py-4">
                       <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
-                        معيار الاحتمالية Top P
+                        {tr('معيار الاحتمالية Top P', 'Top P probability')}
                       </span>
                       <span className="text-lg sm:text-xl font-display text-brand-primary italic">
                         0.95
@@ -878,7 +891,7 @@ export default function AdminDashboard({
                 </div>
                 <div className="mt-8 sm:mt-16">
                   <button className="w-full py-4 sm:py-6 border border-border-delicate text-[10px] font-bold uppercase tracking-widest text-text-muted hover:bg-brand-primary hover:text-white hover:border-brand-primary transition-all italic">
-                    إعادة تصفية وتحسين ومعايرة cortex
+                    {tr('إعادة تصفية وتحسين ومعايرة cortex', 'Adjust Cortex settings')}
                   </button>
                 </div>
               </div>
@@ -892,7 +905,7 @@ export default function AdminDashboard({
                   <div className="flex items-center gap-3 sm:gap-5">
                     <BarChart3 className="w-6 h-6 sm:w-8 sm:h-8 text-brand-gold opacity-40 italic" />
                     <h3 className="text-2xl sm:text-3xl font-display text-brand-primary italic tracking-tight">
-                      توزيع استهلاك النظام
+                      {tr('توزيع استهلاك النظام', 'System usage')}
                     </h3>
                   </div>
                 </div>
@@ -913,7 +926,7 @@ export default function AdminDashboard({
                               {r.restaurantName}
                             </p>
                             <p className="text-[9px] text-brand-gold uppercase font-bold tracking-widest mt-1 opacity-60 italic">
-                              ولوج آمن وموثق
+                              {tr('ولوج آمن وموثق', 'Secure access')}
                             </p>
                           </div>
                         </div>
@@ -922,13 +935,13 @@ export default function AdminDashboard({
                             {(1200 + i * 45).toLocaleString()}
                           </p>
                           <p className="text-[9px] text-text-muted font-bold uppercase tracking-widest leading-none italic">
-                            عمليات ذكية مدرجة
+                            {tr('عمليات ذكية مدرجة', 'AI operations')}
                           </p>
                         </div>
                       </div>
                       <div className="space-y-2 sm:space-y-3 relative z-10">
                         <div className="flex justify-between text-[9px] font-bold uppercase tracking-widest mb-1 opacity-60">
-                          <span className="text-text-muted">العبء والتحمل</span>
+                          <span className="text-text-muted">{tr('العبء والتحمل', 'Capacity')}</span>
                           <span className="text-brand-gold">{40 + i * 5}%</span>
                         </div>
                         <div className="h-[2px] w-full bg-border-delicate overflow-hidden">
@@ -951,13 +964,13 @@ export default function AdminDashboard({
                   <div className="flex items-center gap-3 sm:gap-5">
                     <Settings className="w-6 h-6 sm:w-8 sm:h-8 text-brand-gold opacity-40 italic" />
                     <h3 className="text-2xl sm:text-3xl font-display text-brand-primary italic tracking-tight">
-                      إدارة التحكم الذكي بقواعد المنيو
+                      {tr('إدارة التحكم الذكي بقواعد المنيو', 'Menu AI settings')}
                     </h3>
                   </div>
                   <div className="flex items-center gap-2 sm:gap-3">
                     <div className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
                     <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-widest">
-                      مستقر وآمن
+                      {tr('مستقر وآمن', 'Stable and secure')}
                     </span>
                   </div>
                 </div>
@@ -967,36 +980,36 @@ export default function AdminDashboard({
                     <div className="space-y-4 sm:space-y-6">
                       <div className="space-y-3">
                         <label className="text-[10px] font-bold text-brand-gold uppercase tracking-widest block">
-                          توجيهات النظام والتعليمات الفوقية لنوفكس الذكي (System Instruction)
+                          {tr('توجيهات النظام والتعليمات الفوقية لنوفكس الذكي (System Instruction)', 'AI system instructions')}
                         </label>
                         <textarea
                           value={aiPrompt}
                           onChange={(e) => setAiPrompt(e.target.value)}
                           className="w-full h-36 sm:h-48 bg-white border border-border-delicate p-4 sm:p-8 text-xs sm:text-sm text-brand-primary font-sans focus:outline-none focus:border-brand-primary transition-all resize-none leading-relaxed shadow-inner"
-                          placeholder="أدخل توجيهات الذكاء الاصطناعي الجديدة للتحكم بالخدمات والمنيو تلقائياً..."
+                          placeholder={tr('أدخل توجيهات الذكاء الاصطناعي الجديدة للتحكم بالخدمات والمنيو تلقائياً...', 'Enter instructions for the AI assistant...')}
                         />
                       </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-8">
                         <div className="space-y-3">
                           <label className="text-[10px] font-bold text-brand-gold uppercase tracking-widest block">
-                            نموذج معالجة اللغة المحدد
+                            {tr('نموذج معالجة اللغة المحدد', 'Selected language model')}
                           </label>
                           <select
                             value={aiModel}
                             onChange={(e) => setAiModel(e.target.value)}
                             className="w-full px-4 py-3 bg-white border border-border-delicate text-xs font-display focus:outline-none text-right"
                           >
-                            <option value="gemini-3.5-flash">Gemini 3.5 Flash (سرعة البرق والاستدلال الأحدث)</option>
-                            <option value="gemini-2.5-flash">Gemini 2.5 Flash (سرعة فائقة)</option>
-                            <option value="gemini-2.5-pro">Gemini 2.5 Pro (تفوق استدلالي)</option>
-                            <option value="gemini-2.0-flash">Gemini 2.0 Flash (النموذج السابق)</option>
+                            <option value="gemini-3.5-flash">Gemini 3.5 Flash {tr('(سرعة البرق والاستدلال الأحدث)', '(latest fast model)')}</option>
+                            <option value="gemini-2.5-flash">Gemini 2.5 Flash {tr('(سرعة فائقة)', '(fast)')}</option>
+                            <option value="gemini-2.5-pro">Gemini 2.5 Pro {tr('(تفوق استدلالي)', '(advanced reasoning)')}</option>
+                            <option value="gemini-2.0-flash">Gemini 2.0 Flash {tr('(النموذج السابق)', '(previous model)')}</option>
                           </select>
                         </div>
 
                         <div className="space-y-3">
                           <label className="text-[10px] font-bold text-brand-gold uppercase tracking-widest block">
-                            درجة الإبداع العشوائي (Temperature): {aiTemperature}
+                            {tr('درجة الإبداع العشوائي (Temperature):', 'Temperature:')} {aiTemperature}
                           </label>
                           <input
                             type="range"
@@ -1009,21 +1022,8 @@ export default function AdminDashboard({
                           />
                         </div>
 
-                        <div className="space-y-3 sm:col-span-2">
-                          <label className="text-[10px] font-bold text-brand-gold uppercase tracking-widest block">
-                            مفتاح خادم Gemini (Gemini API Key) - يعمل كاحتياطي ممتاز في السيرفر والمتصفح
-                          </label>
-                          <input
-                            type="password"
-                            value={aiApiKey}
-                            onChange={(e) => setAiApiKey(e.target.value)}
-                            placeholder="...أدخل مفتاح الـ Gemini API الخاص بك هنا"
-                            className="w-full px-4 py-3 bg-white border border-border-delicate text-xs font-sans font-medium outline-none focus:border-brand-primary transition-all text-left"
-                            style={{ direction: "ltr" }}
-                          />
-                          <p className="text-[9px] text-text-muted mt-1 text-right">
-                            * في حال قمت برفع المنيو على سيرفر مستقل أو استضافة ساكنة، كتابة هذا المفتاح سيضمن عمل الذكاء الاصطناعي مباشرة من متصفح الزبون في حال وجود أي مشاكل اتصال بالسيرفر الخاص بك.
-                          </p>
+                        <div className="space-y-3 sm:col-span-2 bg-amber-50 border border-amber-100 p-4 text-xs text-amber-900">
+                          {tr('مفتاح Gemini يُضبط الآن كسر خادمي عبر GEMINI_API_KEY ولا يُخزن في قاعدة البيانات أو المتصفح.', 'The Gemini key is configured server-side via GEMINI_API_KEY and is not stored in the browser.')}
                         </div>
                       </div>
                     </div>
@@ -1031,11 +1031,11 @@ export default function AdminDashboard({
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 pt-4 border-t border-border-delicate">
                       {aiSaveSuccess ? (
                         <span className="text-xs text-emerald-800 font-sans font-bold text-center sm:text-right">
-                          ✓ تم حفظ قواعد الذكاء ومزامنتها بنجاح مع سيرفر المعالجة!
+                          ✓ {tr('تم حفظ قواعد الذكاء ومزامنتها بنجاح مع سيرفر المعالجة!', 'AI settings saved and synchronized.')}
                         </span>
                       ) : (
                         <span className="text-[10px] text-text-muted font-sans font-medium text-center sm:text-right leading-relaxed">
-                          * أي تعديل يتم تطبيقه حياً ومباشرةً لجميع المطاعم المشتركة لزبائنهم
+                          * {tr('أي تعديل يتم تطبيقه حياً ومباشرةً لجميع المطاعم المشتركة لزبائنهم', 'Changes apply to all partner restaurants.')}
                         </span>
                       )}
 
@@ -1049,7 +1049,7 @@ export default function AdminDashboard({
                         ) : (
                           <Save className="w-4 h-4" />
                         )}
-                        <span>حفظ وتطبيق التعليمات الذكية</span>
+                        <span>{tr('حفظ وتطبيق التعليمات الذكية', 'Save AI instructions')}</span>
                       </button>
                     </div>
                   </div>
@@ -1057,7 +1057,7 @@ export default function AdminDashboard({
                   <div className="space-y-4 sm:space-y-6">
                     <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
                       <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest italic">
-                        سلسلة السجلات والعمليات الحية الحالية لنوفكس Cortex
+                        {tr('سلسلة السجلات والعمليات الحية الحالية لنوفكس Cortex', 'Cortex activity log')}
                       </p>
                       <div className="flex gap-4">
                         <button
@@ -1074,19 +1074,19 @@ export default function AdminDashboard({
                           }}
                           className="text-[9px] hover:text-brand-primary text-text-muted font-bold tracking-widest uppercase underline"
                         >
-                          إرسال إشارة فحص
+                          {tr('إرسال إشارة فحص', 'Send test signal')}
                         </button>
                         <button
                           onClick={() => setAiLogs([])}
                           className="text-[9px] hover:text-red-600 text-text-muted font-bold tracking-widest uppercase underline"
                         >
-                          مسح السجلات
+                          {tr('مسح السجلات', 'Clear logs')}
                         </button>
                       </div>
                     </div>
                     <div className="h-64 bg-white border border-border-delicate p-4 sm:p-8 font-sans text-xs text-text-muted/60 overflow-y-auto space-y-4 no-scrollbar italic shadow-inner">
                       {aiLogs.length === 0 ? (
-                        <p className="text-center py-10 opacity-40">لا توجد سجلات حالياً. انقر على إرسال إشارة فحص لتوليد سجل.</p>
+                        <p className="text-center py-10 opacity-40">{tr('لا توجد سجلات حالياً. انقر على إرسال إشارة فحص لتوليد سجل.', 'No activity yet. Send a test signal to create a log entry.')}</p>
                       ) : (
                         aiLogs.map((log, index) => (
                           <p
@@ -1100,7 +1100,7 @@ export default function AdminDashboard({
                             }`}
                           >
                             <span className="text-brand-gold opacity-40 ml-2">{log.time}</span>
-                            {log.msg}
+                            {tr(log.msg, aiLogEnglish[log.msg] || log.msg)}
                           </p>
                         ))
                       )}
@@ -1120,20 +1120,20 @@ export default function AdminDashboard({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
             className="space-y-16 text-right"
-            dir="rtl"
+            dir={dir}
           >
             {/* Alerts Page Header */}
             <div className="bg-white border border-border-delicate p-10 relative overflow-hidden">
               <div className="absolute top-0 right-0 w-[4px] h-full bg-brand-primary" />
               <div className="space-y-2">
                 <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest">
-                  نظام التنبيهات والإشعارات الفوري العام
+                  {tr('نظام التنبيهات والإشعارات الفوري العام', 'Announcements and alerts')}
                 </p>
                 <h2 className="text-3xl font-display text-brand-primary italic font-bold">
-                  إدارة الإعلانات وتوجيهات الشركاء
+                  {tr('إدارة الإعلانات وتوجيهات الشركاء', 'Partner announcements')}
                 </h2>
                 <p className="text-xs text-text-muted font-sans leading-relaxed">
-                  من هنا يمكنك كتابة رسالة توجيهية أو إعلان طارئ أو تنبيه فني وبثه حياً لجميع المطاعم المرتبطة بالنظام أو توجيهه لمطعم شريك مخصص.
+                  {tr('من هنا يمكنك كتابة رسالة توجيهية أو إعلان طارئ أو تنبيه فني وبثه حياً لجميع المطاعم المرتبطة بالنظام أو توجيهه لمطعم شريك مخصص.', 'Send an announcement to all restaurants or to one selected partner.')}
                 </p>
               </div>
             </div>
@@ -1144,35 +1144,35 @@ export default function AdminDashboard({
                 <div className="border-b border-border-delicate pb-6 flex items-center gap-4">
                   <Bell className="w-6 h-6 text-brand-gold shrink-0" />
                   <h3 className="text-xl font-display text-brand-primary italic font-bold">
-                    إنشاء إعلان وبث فوري
+                    {tr('إنشاء إعلان وبث فوري', 'Create announcement')}
                   </h3>
                 </div>
 
                 <form onSubmit={sendAnnouncement} className="space-y-6">
                   <div className="space-y-2">
                     <label className="text-[10px] font-bold text-brand-gold uppercase tracking-widest block">
-                      عنوان الإشعار
+                      {tr('عنوان الإشعار', 'Title')}
                     </label>
                     <input
                       type="text"
                       required
                       value={annTitle}
                       onChange={(e) => setAnnTitle(e.target.value)}
-                      placeholder="مثال: صيانة مبرمجة لقواعد البيانات"
+                      placeholder={tr('مثال: صيانة مبرمجة لقواعد البيانات', 'Example: scheduled maintenance')}
                       className="w-full bg-bg-paper border border-border-delicate p-4 text-sm focus:outline-none focus:border-brand-primary transition-colors text-right"
                     />
                   </div>
 
                   <div className="space-y-2">
                     <label className="text-[10px] font-bold text-brand-gold uppercase tracking-widest block">
-                      نص وتفاصيل الرسالة
+                      {tr('نص وتفاصيل الرسالة', 'Message')}
                     </label>
                     <textarea
                       required
                       rows={5}
                       value={annMessage}
                       onChange={(e) => setAnnMessage(e.target.value)}
-                      placeholder="اكتب هنا تفاصيل التنبيه أو الإعلان بدقة..."
+                      placeholder={tr('اكتب هنا تفاصيل التنبيه أو الإعلان بدقة...', 'Write the announcement details...')}
                       className="w-full bg-bg-paper border border-border-delicate p-4 text-sm focus:outline-none focus:border-brand-primary transition-colors resize-none leading-relaxed text-right"
                     />
                   </div>
@@ -1180,14 +1180,14 @@ export default function AdminDashboard({
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                     <div className="space-y-2">
                       <label className="text-[10px] font-bold text-brand-gold uppercase tracking-widest block">
-                        المستهدف الإداري
+                        {tr('المستهدف الإداري', 'Audience')}
                       </label>
                       <select
                         value={annTarget}
                         onChange={(e) => setAnnTarget(e.target.value)}
                         className="w-full bg-bg-paper border border-border-delicate p-4 text-xs focus:outline-none focus:border-brand-primary text-right"
                       >
-                        <option value="all">كل المطاعم (عام)</option>
+                        <option value="all">{tr('كل المطاعم (عام)', 'All restaurants')}</option>
                         {restaurants.map((r) => (
                           <option key={r.id} value={r.id}>
                             {r.restaurantName}
@@ -1198,16 +1198,16 @@ export default function AdminDashboard({
 
                     <div className="space-y-2">
                       <label className="text-[10px] font-bold text-brand-gold uppercase tracking-widest block">
-                        مستوى الخطورة / اللون
+                        {tr('مستوى الخطورة / اللون', 'Severity')}
                       </label>
                       <select
                         value={annSeverity}
                         onChange={(e) => setAnnSeverity(e.target.value as any)}
                         className="w-full bg-bg-paper border border-border-delicate p-4 text-xs focus:outline-none focus:border-brand-primary text-right"
                       >
-                        <option value="info">إرشادي معلومتاتي (أزرق)</option>
-                        <option value="warning">تحذيري متوسط (أصفر)</option>
-                        <option value="critical">حرج جداً وعاجل (أحمر)</option>
+                        <option value="info">{tr('إرشادي معلومتاتي (أزرق)', 'Information (blue)')}</option>
+                        <option value="warning">{tr('تحذيري متوسط (أصفر)', 'Warning (yellow)')}</option>
+                        <option value="critical">{tr('حرج جداً وعاجل (أحمر)', 'Critical (red)')}</option>
                       </select>
                     </div>
                   </div>
@@ -1222,7 +1222,7 @@ export default function AdminDashboard({
                     ) : (
                       <Plus className="w-4 h-4" />
                     )}
-                    <span>إرسال وتعميم الإعلان الآن</span>
+                    <span>{tr('إرسال وتعميم الإعلان الآن', 'Send announcement')}</span>
                   </button>
                 </form>
 
@@ -1232,7 +1232,7 @@ export default function AdminDashboard({
                     animate={{ opacity: 1, y: 0 }}
                     className="p-4 bg-emerald-50 border border-emerald-100 text-emerald-800 text-xs font-sans text-center"
                   >
-                    تم إرسال ونشر الإعلان بنجاح ومزامنته بجميع لوحات تحكم المطاعم المعنية!
+                    {tr('تم إرسال ونشر الإعلان بنجاح ومزامنته بجميع لوحات تحكم المطاعم المعنية!', 'Announcement sent to the selected restaurants.')}
                   </motion.div>
                 )}
               </div>
@@ -1241,18 +1241,18 @@ export default function AdminDashboard({
               <div className="xl:col-span-3 bg-white p-10 border border-border-delicate space-y-8">
                 <div className="border-b border-border-delicate pb-6">
                   <h3 className="text-xl font-display text-brand-primary italic font-bold">
-                    سجل وبث الإعلانات المنشورة
+                    {tr('سجل وبث الإعلانات المنشورة', 'Published announcements')}
                   </h3>
                 </div>
 
                 {annLoading ? (
                   <div className="flex flex-col items-center justify-center py-24 text-text-muted gap-4">
                     <span className="w-8 h-8 border-4 border-brand-primary border-t-transparent rounded-full animate-spin" />
-                    <span className="text-xs font-sans font-bold">جاري تحميل سجل البث الحقيقي...</span>
+                    <span className="text-xs font-sans font-bold">{tr('جاري تحميل سجل البث الحقيقي...', 'Loading announcements...')}</span>
                   </div>
                 ) : announcementsList.length === 0 ? (
                   <div className="border border-dashed border-border-delicate p-16 text-center text-text-muted italic text-xs font-sans">
-                    لا تتوفر إعلانات أو تبليغات مرسلة حالياً في السيرفر.
+                    {tr('لا تتوفر إعلانات أو تبليغات مرسلة حالياً في السيرفر.', 'No announcements have been sent yet.')}
                   </div>
                 ) : (
                   <div className="space-y-6 max-h-[600px] overflow-y-auto pr-2 gap-4">
@@ -1285,29 +1285,29 @@ export default function AdminDashboard({
                                     ? "bg-amber-100 text-amber-800"
                                     : "bg-blue-50 text-blue-800"
                                 }`}>
-                                  {isCritical ? "طارئ" : isWarning ? "تحذير" : "إرشاد"}
+                                  {isCritical ? tr('طارئ', 'Critical') : isWarning ? tr('تحذير', 'Warning') : tr('إرشاد', 'Info')}
                                 </span>
                                 <span className="text-[9px] text-text-muted font-sans mr-auto">
-                                  تاريخ البث: {safeFormatDate(ann.createdAt?.toDate ? ann.createdAt.toDate() : ann.createdAt, "yyyy/MM/dd HH:mm")}
+                                  {tr('تاريخ البث:', 'Sent:')} {safeFormatDate(ann.createdAt?.toDate ? ann.createdAt.toDate() : ann.createdAt, "yyyy/MM/dd HH:mm")}
                                 </span>
                               </div>
                               <p className="text-xs text-brand-primary font-sans leading-relaxed whitespace-pre-wrap">
                                 {ann.message}
                               </p>
                               <div className="flex items-center gap-2 pt-2 text-[10px] text-text-muted font-bold font-sans">
-                                <span>المستهدف:</span>
-                                <span className="text-brand-gold">{ann.targetRestaurantName || "جميع المطاعم"}</span>
+                                <span>{tr('المستهدف:', 'Audience:')}</span>
+                                <span className="text-brand-gold">{ann.targetRestaurantName === 'جميع المطاعم' ? tr('جميع المطاعم', 'All restaurants') : ann.targetRestaurantName || tr('جميع المطاعم', 'All restaurants')}</span>
                               </div>
                             </div>
 
                             <button
                               onClick={() => {
-                                if (confirm("هل أنت متأكد من حذف هذا التبليغ؟")) {
+                                if (confirm(tr('هل أنت متأكد من حذف هذا التبليغ؟', 'Delete this announcement?'))) {
                                   deleteAnnouncement(ann.id);
                                 }
                               }}
                               className="p-2 border border-border-delicate text-text-muted hover:text-red-600 hover:border-red-200 transition-colors shrink-0"
-                              title="حذف وإلغاء التبليغ"
+                              title={tr('حذف وإلغاء التبليغ', 'Delete announcement')}
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -1390,6 +1390,7 @@ function RestaurantModal({
   onSuccess: () => void;
   restaurant?: Restaurant;
 }) {
+  const { dir, language, tr } = useLanguage();
   const [formData, setFormData] = useState({
     managerName: restaurant?.managerName || "",
     managerPhone: restaurant?.managerPhone || "",
@@ -1417,6 +1418,9 @@ function RestaurantModal({
       : ""
   );
   const [isEndDateOverridden, setIsEndDateOverridden] = useState(!!restaurant?.endDate);
+  const [showPassword, setShowPassword] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     // Only auto-generate credentials if we are NOT editing
@@ -1432,7 +1436,7 @@ function RestaurantModal({
       if (!formData.password) {
         setFormData((prev) => ({
           ...prev,
-          password: Math.random().toString(36).substring(2, 8).toUpperCase(),
+          password: `Nx${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}9!`,
         }));
       }
     }
@@ -1442,7 +1446,7 @@ function RestaurantModal({
     let multiplier = 1;
 
     if (formData.subscriptionType === "trial") {
-      end = addWeeks(start, 1);
+      end = calculateSubscriptionEnd(start, "week");
       if (!restaurant) {
         setFormData((prev) => ({
           ...prev,
@@ -1453,13 +1457,13 @@ function RestaurantModal({
       setFinalCost(0);
     } else {
       if (formData.subscriptionDuration === "month") {
-        end = addMonths(start, 1);
+        end = calculateSubscriptionEnd(start, "month");
         multiplier = 1;
       } else if (formData.subscriptionDuration === "six-months") {
-        end = addMonths(start, 6);
+        end = calculateSubscriptionEnd(start, "six-months");
         multiplier = 6;
       } else if (formData.subscriptionDuration === "year") {
-        end = addYears(start, 1);
+        end = calculateSubscriptionEnd(start, "year");
         multiplier = 12;
       }
       setFinalCost(formData.monthlyCost * multiplier);
@@ -1481,7 +1485,13 @@ function RestaurantModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const collectionPath = "restaurants";
+    setFormError(null);
+    if ((!restaurant || formData.password) && (formData.password.length < 8 || !/[A-Za-z]/.test(formData.password) || !/\d/.test(formData.password))) {
+      setFormError(tr('كلمة المرور يجب أن تكون 8 أحرف على الأقل وتحتوي على حرف ورقم. تجنب كلمات المرور الشائعة مثل 123456.', 'Password must have at least 8 characters, including a letter and number. Avoid common passwords.'));
+      return;
+    }
     try {
+      setSaving(true);
       const payload = {
         ...formData,
         endDate: new Date(endDate).toISOString(),
@@ -1491,26 +1501,25 @@ function RestaurantModal({
         updatedAt: Timestamp.now(),
       };
 
-      if (restaurant?.id) {
-        await updateDoc(doc(db, "restaurants", restaurant.id), payload);
-      } else {
-        await addDoc(collection(db, collectionPath), {
-          ...payload,
-          createdAt: Timestamp.now(),
-        });
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) throw new Error("authentication_required");
+      const response = await fetch('/api/admin/restaurants', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session.access_token}` }, body: JSON.stringify({ ...payload, id: restaurant?.id }) });
+      if (!response.ok) {
+        const result = await response.json();
+        if (["password_too_weak", "password_rejected", "password_or_account_rejected"].includes(result.error)) throw new Error(result.details || tr('كلمة المرور ضعيفة أو مرفوضة. استخدم كلمة أقوى وغير شائعة.', 'Password rejected. Use a stronger, uncommon password.'));
+        throw new Error(result.error || 'restaurant_save_failed');
       }
       onSuccess();
     } catch (err) {
-      handleFirestoreError(
-        err,
-        restaurant ? OperationType.UPDATE : OperationType.CREATE,
-        restaurant ? `restaurants/${restaurant.id}` : collectionPath,
-      );
+      console.error("Restaurant save failed", err, collectionPath);
+      setFormError(err instanceof Error ? err.message : tr('تعذر حفظ حساب المطعم.', 'Could not save the restaurant account.'));
+    } finally {
+      setSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[60] flex items-center justify-center p-6" dir="rtl">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[60] flex items-center justify-center p-6" dir={dir}>
       <motion.div
         initial={{ opacity: 0, y: 50 }}
         animate={{ opacity: 1, y: 0 }}
@@ -1521,11 +1530,11 @@ function RestaurantModal({
         <div className="flex justify-between items-center mb-20 text-right">
           <div className="space-y-2">
             <p className="text-[10px] font-bold text-brand-gold uppercase tracking-[0.4em] italic leading-none">
-              تسجيل وتوثيق المنشأة الشريكة
+              {tr('تسجيل وتوثيق المنشأة الشريكة', 'Restaurant registration')}
             </p>
             <h2 className="text-4xl font-display text-brand-primary italic font-bold">
-              {restaurant ? "تعديل بنود" : "تأسيس اتفاقية"}{" "}
-              <span className="text-brand-gold">شراكة جديدة</span>
+              {restaurant ? tr('تعديل بنود', 'Edit') : tr('تأسيس اتفاقية', 'Create')}{" "}
+              <span className="text-brand-gold">{tr('شراكة جديدة', 'restaurant account')}</span>
             </h2>
           </div>
           <button
@@ -1543,19 +1552,19 @@ function RestaurantModal({
               <div className="flex items-center gap-4 mb-8">
                 <div className="h-0.5 w-12 bg-brand-gold opacity-30" />
                 <p className="text-[10px] font-bold text-brand-primary uppercase tracking-[0.4em]">
-                  بيانات وتفاصيل المنشأة
+                  {tr('بيانات وتفاصيل المنشأة', 'Restaurant details')}
                 </p>
               </div>
 
               <div className="space-y-8">
                 <div className="relative group">
                   <label className="text-[9px] font-bold text-brand-gold uppercase tracking-[0.3em] mb-2 block opacity-60 group-focus-within:opacity-100 transition-opacity">
-                    اسم المطعم / المنشأة
+                    {tr('اسم المطعم / المنشأة', 'Restaurant name')}
                   </label>
                   <input
                     type="text"
                     className="w-full bg-transparent border-b border-border-delicate py-4 font-sans text-xl text-brand-primary focus:outline-none focus:border-brand-primary transition-all placeholder:text-text-muted/20 text-right"
-                    placeholder="مثال: مطعم السرايا الملكي في بغداد"
+                    placeholder={tr('مثال: مطعم السرايا الملكي في بغداد', 'Example: The Royal Restaurant')}
                     required
                     value={formData.restaurantName}
                     onChange={(e) =>
@@ -1570,7 +1579,7 @@ function RestaurantModal({
                 <div className="grid grid-cols-2 gap-8">
                   <div className="relative group">
                     <label className="text-[9px] font-bold text-brand-gold uppercase tracking-[0.3em] mb-2 block opacity-60">
-                      المحافظة
+                      {tr('المحافظة', 'Province')}
                     </label>
                     <select
                       className="w-full bg-transparent border-b border-border-delicate py-4 font-sans text-base text-brand-primary focus:outline-none focus:border-brand-primary transition-all cursor-pointer text-right"
@@ -1580,22 +1589,22 @@ function RestaurantModal({
                         setFormData({ ...formData, province: e.target.value })
                       }
                     >
-                      <option value="">اختر المحافظة</option>
+                      <option value="">{tr('اختر المحافظة', 'Select province')}</option>
                       {IRAQI_PROVINCES.map((p) => (
                         <option key={p} value={p}>
-                          {p}
+                          {localizeProvince(p, language)}
                         </option>
                       ))}
                     </select>
                   </div>
                   <div className="relative group">
                     <label className="text-[9px] font-bold text-brand-gold uppercase tracking-[0.3em] mb-2 block opacity-60">
-                      المنطقة / الحي والشارع
+                      {tr('المنطقة / الحي والشارع', 'Area / street')}
                     </label>
                     <input
                       type="text"
                       className="w-full bg-transparent border-b border-border-delicate py-4 font-sans text-base text-brand-primary focus:outline-none focus:border-brand-primary transition-all placeholder:text-text-muted/20 text-right"
-                      placeholder="شارع الأميرات، المنصور"
+                      placeholder={tr('شارع الأميرات، المنصور', 'Street and neighborhood')}
                       required
                       value={formData.area}
                       onChange={(e) =>
@@ -1607,7 +1616,7 @@ function RestaurantModal({
 
                 <div className="relative group">
                   <label className="text-[9px] font-bold text-brand-gold uppercase tracking-[0.3em] mb-2 block opacity-60">
-                    رابط الهوية البصرية وشعار المطعم (Logo URL)
+                    {tr('رابط الهوية البصرية وشعار المطعم (Logo URL)', 'Restaurant logo URL')}
                   </label>
                   <input
                     type="url"
@@ -1627,7 +1636,7 @@ function RestaurantModal({
               <div className="flex items-center gap-4 mb-8">
                 <div className="h-0.5 w-12 bg-brand-gold opacity-30" />
                 <p className="text-[10px] font-bold text-brand-primary uppercase tracking-[0.4em]">
-                  إدارة الحساب والمشرف المسؤول
+                  {tr('إدارة الحساب والمشرف المسؤول', 'Owner account')}
                 </p>
               </div>
 
@@ -1635,14 +1644,14 @@ function RestaurantModal({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                   <div className="relative">
                     <label className="text-[9px] font-bold text-brand-gold uppercase tracking-[0.3em] mb-3 block opacity-60">
-                      اسم المدير المسؤول
+                      {tr('اسم المدير المسؤول', 'Manager name')}
                     </label>
                     <div className="relative underline-animation">
                       <Users className="absolute right-0 top-1/2 -translate-y-1/2 w-4 h-4 text-brand-gold/40" />
                       <input
                         type="text"
                         className="w-full bg-transparent pr-8 pl-4 py-3 text-sm text-brand-primary font-bold tracking-widest focus:outline-none text-right"
-                        placeholder="الاسم الثلاثي الكامل"
+                        placeholder={tr('الاسم الثلاثي الكامل', 'Full name')}
                         required
                         value={formData.managerName}
                         onChange={(e) =>
@@ -1656,7 +1665,7 @@ function RestaurantModal({
                   </div>
                   <div className="relative">
                     <label className="text-[9px] font-bold text-brand-gold uppercase tracking-[0.3em] mb-3 block opacity-60">
-                      رقم الهاتف المباشر للمدير
+                      {tr('رقم الهاتف المباشر للمدير', 'Manager phone number')}
                     </label>
                     <div className="relative underline-animation">
                       <Phone className="absolute right-0 top-1/2 -translate-y-1/2 w-4 h-4 text-brand-gold/40" />
@@ -1681,7 +1690,7 @@ function RestaurantModal({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-6">
                   <div className="relative">
                     <label className="text-[9px] font-bold text-brand-gold uppercase tracking-[0.3em] mb-3 block opacity-60">
-                      اسم مستخدم بوابة لوحة التحكم
+                      {tr('اسم مستخدم بوابة لوحة التحكم', 'Dashboard username')}
                     </label>
                     <input
                       type="text"
@@ -1695,16 +1704,26 @@ function RestaurantModal({
                   </div>
                   <div className="relative">
                     <label className="text-[9px] font-bold text-brand-gold uppercase tracking-[0.3em] mb-3 block opacity-60">
-                      كلمة المرور الإدارية (رمز الدخول السري)
+                      {tr('كلمة المرور الإدارية (رمز الدخول السري)', 'Owner password')}
                     </label>
+                    <div className="relative">
                     <input
-                      type="text"
-                      className="w-full bg-white border border-border-delicate px-6 py-4 text-xs font-bold tracking-widest text-brand-primary focus:border-brand-primary outline-none text-left"
+                      type={showPassword ? "text" : "password"}
+                      className="w-full bg-white border border-border-delicate px-12 py-4 text-xs font-bold tracking-widest text-brand-primary focus:border-brand-primary outline-none text-left"
+                      required={!restaurant}
+                      minLength={8}
+                      autoComplete="new-password"
+                      placeholder={restaurant ? tr('اتركها فارغة للإبقاء على كلمة المرور الحالية', 'Leave blank to keep the current password') : tr('8 أحرف على الأقل، تتضمن حرفاً ورقماً', 'At least 8 characters, with a letter and number')}
                       value={formData.password}
                       onChange={(e) =>
                         setFormData({ ...formData, password: e.target.value })
                       }
                     />
+                    <button type="button" onClick={() => setShowPassword((value) => !value)} className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-gold" aria-label={showPassword ? tr('إخفاء كلمة المرور', 'Hide password') : tr('إظهار كلمة المرور', 'Show password')}>
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                    </div>
+                    <p className="mt-2 text-[9px] text-text-muted">{restaurant ? tr('أدخل كلمة جديدة لتغييرها، أو اترك الحقل فارغاً دون تغيير.', 'Enter a new password to change it, or leave this blank.') : tr('استخدم كلمة قوية وغير شائعة.', 'Use a strong, uncommon password.')}</p>
                   </div>
                 </div>
               </div>
@@ -1717,7 +1736,7 @@ function RestaurantModal({
               <div className="flex items-center gap-4">
                 <div className="h-0.5 w-12 bg-brand-gold opacity-30" />
                 <p className="text-[10px] font-bold text-brand-primary uppercase tracking-[0.4em]">
-                  باقات خطة الاستثمار والاشتراك
+                  {tr('باقات خطة الاستثمار والاشتراك', 'Subscription plan')}
                 </p>
               </div>
             </div>
@@ -1725,7 +1744,7 @@ function RestaurantModal({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
               <div className="space-y-4">
                 <label className="text-[10px] font-bold text-brand-gold uppercase tracking-[0.4em] block">
-                  باقة الاشتراك الفنية المحددة
+                  {tr('باقة الاشتراك الفنية المحددة', 'Selected plan')}
                 </label>
                 <select
                   className="w-full bg-white border border-border-delicate px-8 py-5 text-sm font-sans text-brand-primary focus:border-brand-primary outline-none cursor-pointer text-right"
@@ -1747,7 +1766,7 @@ function RestaurantModal({
 
               <div className="space-y-4">
                 <label className="text-[10px] font-bold text-brand-gold uppercase tracking-[0.4em] block">
-                  دورة تجديد الاشتراك التعاقدية
+                  {tr('دورة تجديد الاشتراك التعاقدية', 'Renewal cycle')}
                 </label>
                 <select
                   className="w-full bg-white border border-border-delicate px-8 py-5 text-sm font-sans text-brand-primary focus:border-brand-primary outline-none cursor-pointer text-right"
@@ -1761,9 +1780,9 @@ function RestaurantModal({
                     })
                   }
                 >
-                  <option value="month">تجديد شهري دوري</option>
-                  <option value="six-months">دورة نصف سنوية (6 أشهر)</option>
-                  <option value="year">تجديد سنوي مسبق (12 شهر)</option>
+                  <option value="month">{tr('تجديد شهري دوري', 'Monthly')}</option>
+                  <option value="six-months">{tr('دورة نصف سنوية (6 أشهر)', 'Every 6 months')}</option>
+                  <option value="year">{tr('تجديد سنوي مسبق (12 شهر)', 'Annual')}</option>
                 </select>
               </div>
 
@@ -1797,7 +1816,7 @@ function RestaurantModal({
               <div className="p-8 border border-border-delicate bg-white flex flex-col justify-between space-y-4">
                 <div className="space-y-1">
                   <p className="text-[10px] font-bold text-brand-gold uppercase tracking-wider opacity-60 block">
-                    تاريخ بدء الاشتراك
+                    {tr('تاريخ بدء الاشتراك', 'Start date')}
                   </p>
                   <p className="text-sm font-sans text-brand-primary font-bold">
                     {safeFormatDate(formData.startDate, "yyyy/MM/dd")}
@@ -1816,7 +1835,7 @@ function RestaurantModal({
               <div className="p-8 border border-border-delicate bg-white flex flex-col justify-between space-y-4">
                 <div className="space-y-1">
                   <p className="text-[10px] font-bold text-brand-gold uppercase tracking-wider opacity-60 block">
-                    تاريخ انتهاء الصلاحية
+                    {tr('تاريخ انتهاء الصلاحية', 'Expiration date')}
                   </p>
                   <p className="text-sm font-sans text-brand-primary font-bold">
                     {safeFormatDate(endDate, "yyyy/MM/dd")}
@@ -1844,21 +1863,23 @@ function RestaurantModal({
 
               <div className="p-8 border border-border-delicate bg-white flex flex-col justify-center">
                 <p className="text-[10px] font-bold text-brand-gold uppercase tracking-wider opacity-60 mb-2">
-                  كود الشريك التعريفي
+                  {tr('كود الشريك التعريفي', 'Restaurant ID')}
                 </p>
                 <p className="text-sm font-mono text-brand-primary uppercase tracking-widest font-bold">
-                  {restaurant?.id?.slice(-8).toUpperCase() || "جديد تلقائي"}
+                  {restaurant?.id?.slice(-8).toUpperCase() || tr('جديد تلقائي', 'Auto-generated')}
                 </p>
               </div>
             </div>
           </div>
 
+          {formError && <div className="p-4 border border-red-200 bg-red-50 text-red-700 text-sm font-bold">{formError}</div>}
           <div className="flex justify-end pt-12 pb-20">
             <button
               type="submit"
-              className="px-24 py-6 bg-brand-primary text-white font-bold text-xs uppercase tracking-widest shadow-2xl hover:bg-brand-secondary transition-all"
+              disabled={saving}
+              className="px-24 py-6 bg-brand-primary text-white font-bold text-xs uppercase tracking-widest shadow-2xl hover:bg-brand-secondary transition-all disabled:opacity-50"
             >
-              اعتماد وتوثيق اتفاقية الشراكة في النظام
+              {saving ? tr('جاري الحفظ...', 'Saving...') : tr('اعتماد وتوثيق اتفاقية الشراكة في النظام', 'Save restaurant account')}
             </button>
           </div>
         </form>

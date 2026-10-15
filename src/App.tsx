@@ -31,33 +31,35 @@ import {
   ChefHat,
   ShieldAlert,
   History,
-  Bell
+  Bell,
+  Palette,
+  Languages,
 } from 'lucide-react';
 import { UserSession } from './types';
-import { auth } from './lib/firebase';
-import { signInAnonymously } from 'firebase/auth';
+import { supabase } from './lib/supabase';
 import AdminDashboard from './components/AdminDashboard';
 import RestaurantDashboard from './components/RestaurantDashboard';
 import WaiterDashboard from './components/WaiterDashboard';
 import KitchenDashboard from './components/KitchenDashboard';
 import CustomerMenu from './components/CustomerMenu';
 import LoginPage from './components/LoginPage';
+import { db, doc, onSnapshot } from './lib/supabase-db';
+import { DEFAULT_THEME, resolveTheme, themeStyle } from './lib/themes';
+import type { MenuTheme } from './lib/themes';
+import { useLanguage } from './lib/i18n';
 
 export default function App() {
+  const { dir, isEnglish, toggleLanguage, tr } = useLanguage();
   const [session, setSession] = useState<UserSession | null>(null);
   const [customerRestaurantId, setCustomerRestaurantId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>('overview');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [workspaceTheme, setWorkspaceTheme] = useState<MenuTheme>(DEFAULT_THEME);
 
   useEffect(() => {
     // Set initial sidebar state based on screen size
     setIsSidebarOpen(window.innerWidth >= 1024);
     
-    // Ensure Firebase identity for security rules
-    signInAnonymously(auth).catch((err) => {
-      console.warn("Firebase Anonymous Auth is disabled. Please enable it in the Firebase Console to ensure full security.", err);
-    });
-
     // Check for QR code in URL (e.g., ?restaurantId=...)
     const params = new URLSearchParams(window.location.search);
     const rid = params.get('restaurantId');
@@ -65,11 +67,16 @@ export default function App() {
       setCustomerRestaurantId(rid);
     }
     
-    // Check local storage for persistent session
-    const savedSession = localStorage.getItem('novx_session');
-    if (savedSession) {
-      setSession(JSON.parse(savedSession));
-    }
+    // Rebuild UI authorization from the authenticated server identity. Never
+    // trust the role or restaurant stored by the browser.
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (!data.session) { localStorage.removeItem('novx_session'); return; }
+      const response = await fetch('/api/auth/session', { headers: { Authorization: `Bearer ${data.session.access_token}` } });
+      if (!response.ok) { await supabase.auth.signOut(); localStorage.removeItem('novx_session'); return; }
+      const verifiedSession = await response.json() as UserSession;
+      setSession(verifiedSession);
+      localStorage.setItem('novx_session', JSON.stringify(verifiedSession));
+    });
   }, []);
 
   useEffect(() => {
@@ -83,12 +90,32 @@ export default function App() {
     }
   }, [session?.role]);
 
+  useEffect(() => {
+    if (!session?.restaurantId || session.role === 'admin') {
+      setWorkspaceTheme(DEFAULT_THEME);
+      return;
+    }
+
+    return onSnapshot(
+      doc(db, 'restaurants', session.restaurantId),
+      (snapshot) => {
+        const restaurant = snapshot.data();
+        setWorkspaceTheme(resolveTheme(restaurant?.themeId, restaurant?.themeColors));
+      },
+      (error) => {
+        console.error('Unable to load restaurant workspace theme:', error);
+        setWorkspaceTheme(DEFAULT_THEME);
+      },
+    );
+  }, [session?.restaurantId, session?.role]);
+
   const handleLogin = (user: UserSession) => {
     setSession(user);
     localStorage.setItem('novx_session', JSON.stringify(user));
   };
 
   const handleLogout = () => {
+    supabase.auth.signOut().then(({ error }) => error && console.error(error));
     setSession(null);
     localStorage.removeItem('novx_session');
     // Clear URL if in customer mode
@@ -100,42 +127,48 @@ export default function App() {
 
   // If URL has restaurantId, show Customer Menu directly
   if (customerRestaurantId) {
-    return <CustomerMenu restaurantId={customerRestaurantId} />;
+    return <div dir={dir}><CustomerMenu restaurantId={customerRestaurantId} /></div>;
   }
 
   if (!session) {
-    return <LoginPage onLogin={handleLogin} />;
+    return <div dir={dir}><PublicLanguageToggle isEnglish={isEnglish} toggleLanguage={toggleLanguage} label={tr('تغيير اللغة', 'Change language')} /><LoginPage onLogin={handleLogin} /></div>;
   }
 
   const menuItems = {
     admin: [
-      { id: 'overview', label: 'الرئيسية', icon: <LayoutDashboard className="w-5 h-5" /> },
-      { id: 'restaurants', label: 'المطاعم', icon: <Building2 className="w-5 h-5" /> },
-      { id: 'ai', label: 'إدارة AI', icon: <Cpu className="w-5 h-5" /> },
-      { id: 'alerts', label: 'التنبيهات', icon: <Bell className="w-5 h-5" /> },
+      { id: 'overview', label: tr('الرئيسية', 'Home'), icon: <LayoutDashboard className="w-5 h-5" /> },
+      { id: 'restaurants', label: tr('المطاعم', 'Restaurants'), icon: <Building2 className="w-5 h-5" /> },
+      { id: 'ai', label: tr('إدارة AI', 'AI'), icon: <Cpu className="w-5 h-5" /> },
+      { id: 'alerts', label: tr('التنبيهات', 'Alerts'), icon: <Bell className="w-5 h-5" /> },
     ],
     restaurant: [
-      { id: 'overview', label: 'الرئيسية', icon: <BarChart3 className="w-5 h-5" /> },
-      { id: 'waiters', label: 'الموظفين', icon: <Users className="w-5 h-5" /> },
-      { id: 'orders', label: 'الطلبات', icon: <ClipboardList className="w-5 h-5" /> },
-      { id: 'archive', label: 'أرشيف الوردية والطلبات', icon: <History className="w-5 h-5" /> },
-      { id: 'alerts', label: 'التنبيهات', icon: <ShieldAlert className="w-5 h-5" /> },
-      { id: 'menu', label: 'المنيو', icon: <Utensils className="w-5 h-5" /> },
-      { id: 'qr', label: 'الباركود', icon: <QrCode className="w-5 h-5" /> },
-      { id: 'help', label: 'المساعدة', icon: <HelpingHand className="w-5 h-5" /> },
+      { id: 'overview', label: tr('الرئيسية', 'Home'), icon: <BarChart3 className="w-5 h-5" /> },
+      { id: 'waiters', label: tr('الموظفين', 'Staff'), icon: <Users className="w-5 h-5" /> },
+      { id: 'orders', label: tr('الطلبات', 'Orders'), icon: <ClipboardList className="w-5 h-5" /> },
+      { id: 'archive', label: tr('الأرشيف', 'Archive'), icon: <History className="w-5 h-5" /> },
+      { id: 'alerts', label: tr('التنبيهات', 'Alerts'), icon: <ShieldAlert className="w-5 h-5" /> },
+      { id: 'menu', label: tr('المنيو', 'Menu'), icon: <Utensils className="w-5 h-5" /> },
+      { id: 'theme', label: tr('هوية المطعم', 'Branding'), icon: <Palette className="w-5 h-5" /> },
+      { id: 'qr', label: tr('الباركود', 'QR'), icon: <QrCode className="w-5 h-5" /> },
+      { id: 'help', label: tr('المساعدة', 'Help'), icon: <HelpingHand className="w-5 h-5" /> },
     ],
     waiter: [
-       { id: 'orders', label: 'طلباتي', icon: <ClipboardList className="w-5 h-5" /> },
+       { id: 'orders', label: tr('طلباتي', 'My orders'), icon: <ClipboardList className="w-5 h-5" /> },
     ],
     kitchen: [
-       { id: 'orders', label: 'طلبات المطبخ', icon: <ChefHat className="w-5 h-5" /> },
+       { id: 'orders', label: tr('طلبات المطبخ', 'Kitchen orders'), icon: <ChefHat className="w-5 h-5" /> },
     ]
   };
 
   const currentMenuItems = menuItems[session.role] || [];
 
   return (
-    <div className="min-h-screen bg-bg-paper font-sans text-text-main selection:bg-brand-primary/10 flex overflow-hidden lg:rtl" dir="rtl">
+    <div
+      className="workspace-theme min-h-screen bg-bg-paper font-sans text-text-main selection:bg-brand-primary/10 flex overflow-hidden"
+      data-workspace-theme={workspaceTheme.id}
+      style={themeStyle(workspaceTheme)}
+      dir={dir}
+    >
       {/* Texture Overlay */}
       <div className="fixed inset-0 pointer-events-none opacity-[0.02] z-[100] bg-[url('https://www.transparenttextures.com/patterns/natural-paper.png')]" />
 
@@ -156,7 +189,7 @@ export default function App() {
       <motion.aside 
         initial={false}
         animate={{ width: isSidebarOpen ? '320px' : '0px', opacity: isSidebarOpen ? 1 : 0 }}
-        className="fixed inset-y-0 right-0 z-50 lg:relative bg-white border-l border-border-delicate shadow-2xl flex flex-col overflow-hidden whitespace-nowrap"
+        className="workspace-sidebar workspace-shell-panel fixed inset-y-0 right-0 z-50 lg:relative border-l border-border-delicate shadow-2xl hidden lg:flex flex-col overflow-hidden whitespace-nowrap"
       >
         {/* Sidebar Banner */}
         <div className="p-12 pb-20 flex flex-col items-center relative overflow-hidden">
@@ -178,7 +211,7 @@ export default function App() {
           </motion.div>
           <div className="text-center">
             <h1 className="text-4xl font-display text-brand-primary italic leading-none mb-4">نوفكس AI</h1>
-            <p className="text-[9px] text-brand-gold font-bold uppercase tracking-[0.5em] opacity-80 italic">لوحة إدارة المطعم</p>
+            <p className="text-[9px] text-brand-gold font-bold uppercase tracking-[0.5em] opacity-80 italic">{tr('لوحة إدارة المطعم', 'Restaurant workspace')}</p>
           </div>
         </div>
 
@@ -187,7 +220,7 @@ export default function App() {
           <div className="mb-10">
              <div className="flex items-center gap-3 mb-8">
                 <span className="w-8 h-[1px] bg-brand-gold" />
-                <p className="text-[10px] font-bold text-brand-gold uppercase tracking-[0.3em]">أقسام النظام</p>
+                <p className="text-[10px] font-bold text-brand-gold uppercase tracking-[0.3em]">{tr('أقسام النظام', 'Workspace')}</p>
              </div>
              {currentMenuItems.map((item) => (
                <button
@@ -219,7 +252,14 @@ export default function App() {
                className="w-full flex items-center gap-6 px-8 py-6 text-text-muted hover:text-red-800 transition-all group font-display text-lg italic"
              >
                <LogOut className="w-5 h-5 opacity-40 group-hover:opacity-100 transition-opacity" />
-               <span>تسجيل الخروج</span>
+               <span>{tr('تسجيل الخروج', 'Sign out')}</span>
+             </button>
+             <button
+               onClick={toggleLanguage}
+               className="w-full flex items-center gap-6 px-8 py-4 text-text-muted hover:text-brand-primary transition-all font-display text-base"
+             >
+               <Languages className="w-5 h-5 opacity-60" />
+               <span>{isEnglish ? 'العربية' : 'English'}</span>
              </button>
           </div>
         </nav>
@@ -232,7 +272,7 @@ export default function App() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-lg font-display text-brand-primary italic truncate">{session.name || session.role}</p>
-                <p className="text-[9px] text-brand-gold uppercase tracking-[0.3em] font-bold truncate opacity-80">{session.restaurantName || 'بوابة المسؤول'}</p>
+                <p className="text-[9px] text-brand-gold uppercase tracking-[0.3em] font-bold truncate opacity-80">{session.restaurantName || tr('بوابة المسؤول', 'Staff portal')}</p>
               </div>
            </div>
         </div>
@@ -241,27 +281,32 @@ export default function App() {
       {/* Main Content Wrapper */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden relative">
         {/* Mobile Header */}
-        <header className="lg:hidden flex items-center justify-between p-8 bg-white border-b border-border-delicate relative z-40">
+        <header className="workspace-shell-panel lg:hidden flex items-center justify-between px-5 py-3 border-b border-border-delicate relative z-40">
            <div className="flex items-center gap-4">
               <Utensils className="text-brand-primary w-6 h-6" />
               <span className="text-2xl font-display text-brand-primary italic">نوفكس</span>
            </div>
-           <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-3 text-brand-primary">
-              {isSidebarOpen ? <X className="w-7 h-7" /> : <MenuIcon className="w-7 h-7" />}
-           </button>
+           <div className="flex items-center gap-1">
+             <button onClick={toggleLanguage} className="min-w-12 h-11 px-3 flex items-center justify-center gap-1 text-brand-primary border border-border-delicate" aria-label={tr('تغيير اللغة', 'Change language')}>
+               <Languages className="w-5 h-5" /><span className="text-[10px] font-bold">{isEnglish ? 'AR' : 'EN'}</span>
+             </button>
+             <button onClick={handleLogout} className="w-11 h-11 flex items-center justify-center text-red-700 border border-border-delicate" aria-label={tr('تسجيل الخروج', 'Sign out')}>
+               <LogOut className="w-5 h-5" />
+             </button>
+           </div>
         </header>
 
         {/* Desktop Header */}
-        <header className="hidden lg:flex items-center justify-between px-16 py-10 bg-white/50 backdrop-blur-sm border-b border-border-delicate">
+        <header className="workspace-shell-panel hidden lg:flex items-center justify-between px-16 py-10 backdrop-blur-sm border-b border-border-delicate">
            <div className="flex items-center gap-6">
               <h2 className="text-5xl font-display text-brand-primary tracking-tight italic">
-                {currentMenuItems.find(m => m.id === activeTab)?.label || 'الرئيسية'}
+                {currentMenuItems.find(m => m.id === activeTab)?.label || tr('الرئيسية', 'Home')}
               </h2>
               <div className="w-[1px] h-10 bg-brand-gold/20" />
               <span className="text-[10px] text-brand-gold font-bold uppercase tracking-[0.5em]">{
-                session.role === 'admin' ? 'الإدارة العامة' : 
-                session.role === 'restaurant' ? 'إدارة المطعم' : 
-                session.role === 'waiter' ? 'قسم الخدمة' : 'لوحة المطبخ'
+                session.role === 'admin' ? tr('الإدارة العامة', 'Administration') :
+                session.role === 'restaurant' ? tr('إدارة المطعم', 'Restaurant management') :
+                session.role === 'waiter' ? tr('قسم الخدمة', 'Service') : tr('لوحة المطبخ', 'Kitchen')
               }</span>
            </div>
            
@@ -270,20 +315,20 @@ export default function App() {
                  <Search className="absolute right-0 top-1/2 -translate-y-1/2 w-5 h-5 text-text-muted/30 group-focus-within:text-brand-primary transition-colors" />
                  <input 
                   type="text" 
-                  placeholder="البحث الشامل..." 
-                  className="bg-transparent border-b border-border-delicate px-8 py-3 text-sm focus:outline-none focus:border-brand-primary transition-all w-80 font-light italic text-right"
+                  placeholder={tr('البحث الشامل...', 'Search...')}
+                  className="bg-transparent border-b border-border-delicate px-8 py-3 text-sm focus:outline-none focus:border-brand-primary transition-all w-80 font-light italic"
                  />
               </div>
               <div className="flex items-center gap-4">
                  <div className="w-1.5 h-1.5 bg-emerald-600 rounded-full animate-pulse" />
-                 <span className="text-[9px] font-bold text-emerald-700 uppercase tracking-[0.3em]">نشط ومستمر</span>
+                 <span className="text-[9px] font-bold text-emerald-700 uppercase tracking-[0.3em]">{tr('نشط ومستمر', 'Live')}</span>
               </div>
            </div>
          </header>
 
 
         {/* Viewport for Dashboard Pages */}
-        <main className="flex-1 overflow-y-auto p-8 lg:p-20 no-scrollbar bg-bg-paper">
+        <main className="flex-1 overflow-y-auto px-4 pt-5 pb-28 sm:p-8 lg:p-20 no-scrollbar bg-bg-paper">
           <AnimatePresence mode="wait">
             {session.role === 'admin' && (
               <motion.div
@@ -329,10 +374,38 @@ export default function App() {
         </main>
       </div>
 
+      {session.role !== 'waiter' && session.role !== 'kitchen' && (
+        <nav className="mobile-bottom-nav lg:hidden fixed bottom-0 inset-x-0 z-50 flex items-stretch gap-1 overflow-x-auto border-t border-border-delicate workspace-shell-panel px-2 pt-2 pb-[calc(.5rem+env(safe-area-inset-bottom))] shadow-[0_-10px_30px_rgba(0,0,0,.10)]" aria-label={tr('التنقل الرئيسي', 'Main navigation')}>
+          {currentMenuItems.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`min-w-[72px] flex-1 h-16 px-2 flex flex-col items-center justify-center gap-1 transition-colors ${activeTab === item.id ? 'bg-brand-primary text-white' : 'text-text-muted'}`}
+            >
+              {item.icon}
+              <span className="text-[10px] font-bold whitespace-nowrap">{item.label}</span>
+            </button>
+          ))}
+        </nav>
+      )}
+
       {/* Decorative Accents */}
       <div className="fixed top-12 left-12 w-24 h-24 border-t border-l border-brand-gold/20 pointer-events-none opacity-40 z-0" />
       <div className="fixed bottom-12 left-12 w-24 h-24 border-b border-l border-brand-gold/20 pointer-events-none opacity-40 z-0" />
     </div>
+  );
+}
+
+function PublicLanguageToggle({ isEnglish, toggleLanguage, label }: { isEnglish: boolean; toggleLanguage: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={toggleLanguage}
+      className="fixed top-20 end-4 z-[200] h-11 px-4 bg-white/95 text-brand-primary border border-border-delicate shadow-lg flex items-center gap-2 font-bold text-xs"
+      aria-label={label}
+    >
+      <Languages className="w-4 h-4" /> {isEnglish ? 'AR' : 'EN'}
+    </button>
   );
 }
 

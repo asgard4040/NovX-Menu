@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   ClipboardList,
@@ -25,16 +25,17 @@ import {
   doc,
   getDoc,
   updateDoc,
-  runTransaction,
   orderBy,
   addDoc,
   getDocs,
   deleteDoc,
-} from "firebase/firestore";
-import { db } from "../lib/firebase";
-import { handleFirestoreError, OperationType } from "../lib/firestore-utils";
+} from "../lib/supabase-db";
+import { db } from "../lib/supabase-db";
 import { Order, OrderStatus, WaiterRequest } from "../types";
 import { format } from "date-fns";
+import { enableStaffNotifications } from "../lib/notifications";
+import { supabase } from "../lib/supabase";
+import { localizeDeviceType, useLanguage } from "../lib/i18n";
 
 const safeFormatDate = (dateVal: any, formatStr: string, fallback: string = "---") => {
   if (!dateVal) return fallback;
@@ -54,9 +55,11 @@ interface WaiterDashboardProps {
 export default function WaiterDashboard({
   restaurantId,
 }: WaiterDashboardProps) {
+  const { dir, language, tr } = useLanguage();
   const [restaurant, setRestaurant] = useState<any | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [notificationState, setNotificationState] = useState<"idle" | "loading" | "enabled" | "error">("idle");
   const [rejectingOrder, setRejectingOrder] = useState<Order | null>(null);
   const [banningOrder, setBanningOrder] = useState<Order | null>(null);
 
@@ -88,9 +91,19 @@ export default function WaiterDashboard({
 
   // States for table-side ordering menu (Requirement 3)
   const [view, setView] = useState<"dashboard" | "menu" | "bans" | "requests">("dashboard");
+  useEffect(() => {
+    const requestId = new URLSearchParams(window.location.search).get("requestId");
+    if (!requestId) return;
+    setView("requests");
+    const timer = window.setTimeout(() => {
+      document.getElementById(`waiter-request-${requestId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [waiterRequests.length]);
   const [menuItems, setMenuItems] = useState<any[]>([]);
   const [menuLoading, setMenuLoading] = useState(false);
   const [cart, setCart] = useState<{ [id: string]: { name: string; price: number; quantity: number } }>({});
+  const staffOrderIdempotencyKeyRef = useRef<string | null>(null);
   const [customerName, setCustomerName] = useState("");
   const [tableNumber, setTableNumber] = useState("");
   const [notes, setNotes] = useState("");
@@ -135,7 +148,7 @@ export default function WaiterDashboard({
         setLoading(false);
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, "orders");
+        console.error("Unable to load orders", err);
         setLoading(false);
       },
     );
@@ -157,7 +170,7 @@ export default function WaiterDashboard({
         );
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, "banned_devices");
+        console.error("Unable to load banned devices", err);
       }
     );
 
@@ -179,7 +192,7 @@ export default function WaiterDashboard({
         setWaiterRequests(sorted);
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, "waiter_requests");
+        console.error("Unable to load waiter requests", err);
       }
     );
 
@@ -187,7 +200,7 @@ export default function WaiterDashboard({
   }, [restaurantId]);
 
   const handleAcceptRequest = async (requestId: string) => {
-    const staffName = getStaffName() || "ويتر الصالة";
+    const staffName = getStaffName() || tr('ويتر الصالة', 'Waiter');
     try {
       await updateDoc(doc(db, "waiter_requests", requestId), {
         status: "accepted",
@@ -195,7 +208,8 @@ export default function WaiterDashboard({
         acceptedAt: Date.now()
       });
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `waiter_requests/${requestId}`);
+      console.error("Unable to accept waiter request", err);
+      alert(tr('تعذر قبول طلب الويتر. تحقق من اتصالك وحاول مجدداً.', 'Could not accept the waiter request. Check your connection and retry.'));
     }
   };
 
@@ -206,7 +220,8 @@ export default function WaiterDashboard({
         completedAt: Date.now()
       });
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `waiter_requests/${requestId}`);
+      console.error("Unable to complete waiter request", err);
+      alert(tr('تعذر إكمال طلب الويتر. حاول مجدداً.', 'Could not complete the waiter request. Please retry.'));
     }
   };
 
@@ -214,13 +229,14 @@ export default function WaiterDashboard({
     try {
       const updateFields: any = { status: newStatus };
       if (newStatus === "preparing") {
-        updateFields.approvedAt = Date.now();
+        updateFields.approvedAt = new Date().toISOString();
       } else if (newStatus === "ready") {
-        updateFields.readyAt = Date.now();
+        updateFields.readyAt = new Date().toISOString();
       }
       await updateDoc(doc(db, "orders", orderId), updateFields);
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
+      console.error("Unable to update order status", err);
+      alert(tr('تعذر تحديث حالة الطلب. حاول مجدداً.', 'Could not update the order status. Please retry.'));
     }
   };
 
@@ -237,7 +253,7 @@ export default function WaiterDashboard({
           setMenuLoading(false);
         },
         (err) => {
-          handleFirestoreError(err, OperationType.LIST, "menuItems");
+          console.error("Unable to load menu items", err);
           setMenuLoading(false);
         }
       );
@@ -260,63 +276,30 @@ export default function WaiterDashboard({
       });
 
     if (cartItems.length === 0) {
-      alert("⚠️ يرجى أولاً إضافة أطباق إلى سلة الطلب.");
+      alert(tr('⚠️ يرجى أولاً إضافة أطباق إلى سلة الطلب.', 'Please add items to the order first.'));
       return;
     }
     if (!tableNumber.trim() || !customerName.trim()) {
-      alert("⚠️ يرجى تعبئة رقم الطاولة واسم الزبون.");
+      alert(tr('⚠️ يرجى تعبئة رقم الطاولة واسم الزبون.', 'Enter the table number and guest name.'));
       return;
     }
 
     try {
-      const resDocRef = doc(db, "restaurants", restaurantId);
-      let orderNumber = 1;
-
-      await runTransaction(db, async (transaction) => {
-        const resSnap = await transaction.get(resDocRef);
-        if (resSnap.exists()) {
-          const curOrderNum = Number(resSnap.data().currentOrderNumber) || 0;
-          orderNumber = curOrderNum + 1;
-          transaction.update(resDocRef, { currentOrderNumber: orderNumber });
-        }
-      });
-
-      const total = cartItems.reduce((acc, current) => acc + current.price * current.quantity, 0);
       const staffName = getStaffName();
-      
-      const orderData = {
-        restaurantId,
-        customerName: customerName.trim(),
-        tableNumber: tableNumber.trim(),
-        items: cartItems,
-        totalAmount: total,
-        status: "preparing", // straight to cooking
-        notes: notes.trim(),
-        createdAt: new Date().getTime(),
-        approvedAt: new Date().getTime(),
-        placedByWaiter: true,
-        waiterName: staffName || "كابتن الصالة",
-        orderNumber,
-        clearedForStaff: false,
-        deviceMetadata: {
-          userAgent: navigator.userAgent,
-          deviceType: "كابتن الصالة (جهاز ويتر)",
-          screenSize: `${window.innerWidth}x${window.innerHeight}`,
-          language: navigator.language || "ar",
-          fingerprint: "waiter-action"
-        }
-      };
-
-      await addDoc(collection(db, "orders"), orderData);
+      staffOrderIdempotencyKeyRef.current ||= crypto.randomUUID();
+      const { error } = await supabase.rpc('create_staff_order', { p_restaurant_id: restaurantId, p_customer_name: customerName.trim(), p_table_number: tableNumber.trim(), p_notes: notes.trim(), p_items: cartItems.map((item) => ({ id: item.id, quantity: item.quantity })), p_waiter_name: staffName || tr('كابتن الصالة', 'Waiter'), p_idempotency_key: staffOrderIdempotencyKeyRef.current });
+      if (error) throw error;
+      staffOrderIdempotencyKeyRef.current = null;
       
       setCart({});
       setCustomerName("");
       setTableNumber("");
       setNotes("");
-      alert("✅ تم إرسال الطلب المباشر للمطبخ للتحضير الفوري!");
+      alert(tr('✅ تم إرسال الطلب المباشر للمطبخ للتحضير الفوري!', 'Order sent to the kitchen.'));
       setView("dashboard");
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, "orders");
+      console.error("Unable to place staff order", err);
+      alert(tr('تعذر إرسال الطلب للمطبخ. تحقق من اتصالك وحاول مجدداً.', 'Could not send the order to the kitchen. Check your connection and retry.'));
     }
   };
 
@@ -343,13 +326,14 @@ export default function WaiterDashboard({
         status: "rejected",
         rejectedBy: staffName,
         rejectedRole: "waiter",
-        rejectionReason: `تم حظر هذا الزبون بسبب: ${reason}`,
-        updatedAt: new Date().getTime(),
+        rejectionReason: tr(`تم حظر هذا الزبون بسبب: ${reason}`, `Customer blocked: ${reason}`),
+        updatedAt: new Date().toISOString(),
       });
 
-      alert(`✅ تم حظر الزبون "${order.customerName}" وبصمته الرقمية بنجاح!`);
+      alert(tr(`✅ تم حظر الزبون "${order.customerName}" وبصمته الرقمية بنجاح!`, `Customer "${order.customerName}" was blocked.`));
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, "banned_devices");
+      console.error("Unable to ban customer", err);
+      alert(tr('تعذر حظر الزبون. حاول مجدداً.', 'Could not block the customer. Please retry.'));
     }
   };
 
@@ -360,10 +344,11 @@ export default function WaiterDashboard({
         rejectedBy: staffName,
         rejectedRole: "waiter",
         rejectionReason: reason,
-        updatedAt: new Date().getTime(),
+        updatedAt: new Date().toISOString(),
       });
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
+      console.error("Unable to reject order", err);
+      alert(tr('تعذر رفض الطلب. حاول مجدداً.', 'Could not reject the order. Please retry.'));
     }
   };
 
@@ -389,17 +374,17 @@ export default function WaiterDashboard({
 
   if (isExpiredAndLocked || isSuspended) {
     return (
-      <div className="flex flex-col items-center justify-center p-12 min-h-[60vh] text-center space-y-8 bg-white border border-red-200" dir="rtl">
+      <div className="flex flex-col items-center justify-center p-12 min-h-[60vh] text-center space-y-8 bg-white border border-red-200" dir={dir}>
         <div className="w-20 h-20 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto border border-red-100">
           <ShieldAlert className="w-10 h-10" />
         </div>
         <div className="space-y-4 max-w-lg">
-          <h2 className="text-3xl font-display text-red-700 font-bold">تنبيه: انتهت صلاحية الاشتراك بالنظام!</h2>
+          <h2 className="text-3xl font-display text-red-700 font-bold">{tr('تنبيه: انتهت صلاحية الاشتراك بالنظام!', 'Subscription expired')}</h2>
           <p className="text-sm text-text-muted leading-relaxed font-sans">
-            لقد تم إيقاف الخدمة مؤقتًا بسبب انتهاء فترة الاشتراك والمهلة الإضافية المحددة للمطعم. يرجى التواصل مع الإدارة من أجل تجديد الخدمة.
+            {tr('لقد تم إيقاف الخدمة مؤقتًا بسبب انتهاء فترة الاشتراك والمهلة الإضافية المحددة للمطعم. يرجى التواصل مع الإدارة من أجل تجديد الخدمة.', 'Service is temporarily unavailable. Please contact management to renew the restaurant subscription.')}
           </p>
           <div className="bg-red-50 p-6 rounded-xl border border-red-100 text-center font-display space-y-2">
-            <p className="text-xs text-red-800 font-bold">يرجى من الإدارة الاتصال بالدعم الفني للتجديد الفوري وتفعيل اللوحة:</p>
+            <p className="text-xs text-red-800 font-bold">{tr('يرجى من الإدارة الاتصال بالدعم الفني للتجديد الفوري وتفعيل اللوحة:', 'Technical support:')}</p>
             <p className="text-2xl font-bold text-red-900 tracking-wider">{supportPhone}</p>
           </div>
         </div>
@@ -408,7 +393,7 @@ export default function WaiterDashboard({
   }
 
   return (
-    <div className="space-y-12" dir="rtl">
+    <div className="space-y-8 lg:space-y-12 pb-24 lg:pb-0" dir={dir}>
       {/* Header */}
       <div className="bg-white border border-border-delicate p-6 sm:p-12 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-1.5 h-full bg-brand-primary" />
@@ -423,47 +408,61 @@ export default function WaiterDashboard({
             </div>
             <div className="space-y-1">
               <p className="text-[10px] font-bold text-brand-gold uppercase tracking-[0.5em] italic">
-                إدارة وتنسيق الردهة
+                {tr('إدارة وتنسيق الردهة', 'Dining room operations')}
               </p>
               <h1 className="text-3xl sm:text-4xl font-display text-brand-primary italic tracking-tighter">
-                لوحة تحكم الخدمة (الموظفين)
+                {tr('لوحة تحكم الخدمة (الموظفين)', 'Waiter workspace')}
               </h1>
               <p className="text-xs font-bold text-text-muted/60 uppercase tracking-widest">
-                متابعة وخدمة الطاولات في الوقت الفعلي
+                {tr('متابعة وخدمة الطاولات في الوقت الفعلي', 'Live table service and order tracking')}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center justify-center gap-4 px-6 py-3 bg-bg-paper border border-border-delicate w-full lg:w-auto shrink-0">
-            <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shrink-0" />
-            <span className="text-[10px] font-bold text-brand-primary uppercase tracking-widest">
-              تحديث ومزامنة فورية حية
-            </span>
+          <div className="flex flex-col gap-2 w-full lg:w-auto shrink-0">
+            <div className="flex items-center justify-center gap-4 px-6 py-3 bg-bg-paper border border-border-delicate">
+              <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shrink-0" />
+              <span className="text-[10px] font-bold text-brand-primary uppercase tracking-widest">{tr('تحديث ومزامنة فورية حية', 'Live sync')}</span>
+            </div>
+            <button
+              onClick={async () => {
+                setNotificationState("loading");
+                try { await enableStaffNotifications(restaurantId); setNotificationState("enabled"); }
+                catch (error) { console.error(error); setNotificationState("error"); }
+              }}
+              disabled={notificationState === "loading" || notificationState === "enabled"}
+              className="flex items-center justify-center gap-2 px-5 py-3 border border-brand-gold text-brand-primary text-[10px] font-bold disabled:opacity-60"
+            >
+              <Bell className="w-4 h-4" />
+              {notificationState === "enabled" ? tr('تم تفعيل الإشعارات', 'Notifications enabled') : notificationState === "loading" ? tr('جاري التفعيل...', 'Enabling...') : notificationState === "error" ? tr('تعذر التفعيل — أعد المحاولة', 'Try again') : tr('تفعيل إشعارات النداء', 'Enable call alerts')}
+            </button>
           </div>
         </div>
       </div>
 
       {/* View Switcher for Waiter */}
-      <div className="flex border border-border-delicate bg-bg-paper p-1 shadow-sm">
+      <div className="fixed lg:static bottom-0 inset-x-0 z-50 flex border-t lg:border border-border-delicate workspace-shell-panel lg:bg-bg-paper px-2 pt-2 pb-[calc(.5rem+env(safe-area-inset-bottom))] lg:p-1 shadow-[0_-10px_30px_rgba(0,0,0,.10)] lg:shadow-sm">
         <button
           onClick={() => setView("dashboard")}
-          className={`flex-1 py-4 text-center text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+          className={`flex-1 min-w-0 h-16 lg:h-auto lg:py-4 text-center text-[10px] lg:text-xs font-bold transition-all flex flex-col lg:flex-row items-center justify-center gap-1 lg:gap-2 ${
             view === "dashboard"
               ? "bg-brand-primary text-white shadow-md font-bold"
               : "text-brand-primary hover:bg-white"
           }`}
         >
-          📋 لوحة طلبات صالة المطعم الحية
+          <ClipboardList className="w-5 h-5 lg:hidden" />
+          <span>{tr('الطلبات', 'Orders')}</span>
         </button>
         <button
           onClick={() => setView("requests")}
-          className={`flex-1 py-4 text-center text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 relative ${
+          className={`flex-1 min-w-0 h-16 lg:h-auto lg:py-4 text-center text-[10px] lg:text-xs font-bold transition-all flex flex-col lg:flex-row items-center justify-center gap-1 lg:gap-2 relative ${
             view === "requests"
               ? "bg-brand-primary text-white shadow-md font-bold"
               : "text-brand-primary hover:bg-white"
           }`}
         >
-          🔔 نداءات طاولة الزبائن
+          <Bell className="w-5 h-5 lg:hidden" />
+          <span>{tr('النداءات', 'Calls')}</span>
           {pendingRequestsCount > 0 && (
             <span className="bg-red-500 text-white font-sans text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center animate-pulse shrink-0">
               {pendingRequestsCount}
@@ -472,23 +471,25 @@ export default function WaiterDashboard({
         </button>
         <button
           onClick={() => setView("menu")}
-          className={`flex-1 py-4 text-center text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+          className={`flex-1 min-w-0 h-16 lg:h-auto lg:py-4 text-center text-[10px] lg:text-xs font-bold transition-all flex flex-col lg:flex-row items-center justify-center gap-1 lg:gap-2 ${
             view === "menu"
               ? "bg-brand-primary text-white shadow-md font-bold"
               : "text-brand-primary hover:bg-white"
           }`}
         >
-          🛒 تسجيل طلب طاولات مباشر (المنيو)
+          <ShoppingBag className="w-5 h-5 lg:hidden" />
+          <span>{tr('طلب جديد', 'New order')}</span>
         </button>
         <button
           onClick={() => setView("bans")}
-          className={`flex-1 py-4 text-center text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+          className={`flex-1 min-w-0 h-16 lg:h-auto lg:py-4 text-center text-[10px] lg:text-xs font-bold transition-all flex flex-col lg:flex-row items-center justify-center gap-1 lg:gap-2 ${
             view === "bans"
               ? "bg-brand-primary text-white shadow-md font-bold"
               : "text-brand-primary hover:bg-white"
           }`}
         >
-          🚫 إدارة الزبائن المحظورين
+          <ShieldAlert className="w-5 h-5 lg:hidden" />
+          <span>{tr('المحظورون', 'Blocked')}</span>
         </button>
       </div>
 
@@ -496,28 +497,28 @@ export default function WaiterDashboard({
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-12 items-start font-sans">
           {/* Main Menu items & filter column */}
           <div className="lg:col-span-2 space-y-8">
-            <div className="bg-white border border-border-delicate p-6 space-y-4 text-right">
-              <h3 className="text-xl font-display text-brand-primary font-bold">بوابة تسجيل الطلبات الفورية</h3>
-              <p className="text-xs text-text-muted">اختر الأغذية والمشروبات من المنيو أدناه وسجل الطلب باسم الزبون ورقم الطاولة لإمضائه مباشرة للمطبخ.</p>
+            <div className="bg-white border border-border-delicate p-6 space-y-4">
+              <h3 className="text-xl font-display text-brand-primary font-bold">{tr('بوابة تسجيل الطلبات الفورية', 'Create table order')}</h3>
+              <p className="text-xs text-text-muted">{tr('اختر الأغذية والمشروبات من المنيو أدناه وسجل الطلب باسم الزبون ورقم الطاولة لإمضائه مباشرة للمطبخ.', 'Choose menu items, enter the guest and table, then send the order directly to the kitchen.')}</p>
               
               <div className="relative">
                 <Search className="w-4 h-4 text-brand-gold absolute right-4 top-3.5" />
                 <input
                   type="text"
-                  placeholder="ابحث عن وجبة أو مشروب باسمه..."
+                  placeholder={tr('ابحث عن وجبة أو مشروب باسمه...', 'Search food or drinks...')}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-slate-50 border border-border-delicate py-3 pr-12 pl-4 text-sm font-medium text-brand-primary focus:outline-none focus:border-brand-primary focus:bg-white text-right"
+                  className="w-full bg-slate-50 border border-border-delicate py-3 px-12 text-sm font-medium text-brand-primary focus:outline-none focus:border-brand-primary focus:bg-white"
                 />
               </div>
 
               {/* Category selector */}
-              <div className="flex flex-wrap gap-2 pt-2 justify-start md:justify-start" dir="rtl">
+              <div className="flex flex-wrap gap-2 pt-2 justify-start md:justify-start" dir={dir}>
                 <button
                   onClick={() => setSelectedCategory("all")}
                   className={`px-4 py-2 text-xs font-bold border transition-all ${selectedCategory === "all" ? "bg-brand-gold text-white border-brand-gold" : "border-border-delicate text-text-muted hover:border-brand-primary"}`}
                 >
-                  جميع الوجبات 🍽️
+                  {tr('جميع الوجبات', 'All items')} 🍽️
                 </button>
                 {Array.from(new Set(menuItems.map(item => item.category).filter(Boolean))).map((cat: any) => (
                   <button
@@ -550,16 +551,16 @@ export default function WaiterDashboard({
                         {item.isAvailable === false && (
                           <div className="absolute inset-0 bg-white/90 backdrop-blur-[1px] z-10 flex flex-col items-center justify-center p-4 text-center">
                             <span className="text-[10px] bg-red-50 text-red-800 border border-red-200 px-3 py-1 font-bold rounded-full mb-1">
-                              غير متاح حالياً 🚫
+                              {tr('غير متاح حالياً', 'Unavailable')} 🚫
                             </span>
-                            <p className="text-[10px] text-text-muted">نحن نمنع الزبائن من طلبه، لكن يحق للويترز إمضاءه إن توفر</p>
+                            <p className="text-[10px] text-text-muted">{tr('غير متاح للزبائن؛ يمكن للويتر إضافته عند توفره.', 'Unavailable to customers; staff may add it when available.')}</p>
                           </div>
                         )}
                         <div className="flex items-start gap-4 justify-between text-right">
                           <div className="space-y-1 text-right flex-1">
                             <h4 className="text-base font-bold text-brand-primary leading-tight">{item.name}</h4>
-                            <p className="text-xs text-text-muted line-clamp-2 leading-relaxed">{item.ingredients || "مكونات الشيف الطازجة"}</p>
-                            <p className="text-sm font-bold text-brand-gold font-sans">{item.price.toLocaleString()} د.ع</p>
+                            <p className="text-xs text-text-muted line-clamp-2 leading-relaxed">{item.ingredients || tr('مكونات الشيف الطازجة', 'Fresh chef ingredients')}</p>
+                            <p className="text-sm font-bold text-brand-gold font-sans">{item.price.toLocaleString()} {tr('د.ع', 'IQD')}</p>
                           </div>
                           {item.imageUrl && (
                             <img
@@ -622,7 +623,7 @@ export default function WaiterDashboard({
                               }}
                               className="px-4 py-1.5 border border-brand-primary text-brand-primary text-xs font-bold hover:bg-brand-primary hover:text-white transition-all uppercase tracking-wider"
                             >
-                              إضافة للطلب +
+                              {tr('إضافة للطلب', 'Add')} +
                             </button>
                           )}
                         </div>
@@ -638,15 +639,15 @@ export default function WaiterDashboard({
             <div className="space-y-1 pb-4 border-b border-border-delicate">
               <h3 className="text-lg font-display text-brand-primary font-bold flex items-center gap-2 justify-end">
                 <ShoppingBag className="w-5 h-5 text-brand-gold shrink-0" />
-                ملخص سلة وجبات الطاولة
+                {tr('ملخص سلة وجبات الطاولة', 'Table order summary')}
               </h3>
-              <p className="text-[10px] text-text-muted">مجموع الوجبات المحددة حالياً لتسجيلها للطاولة</p>
+              <p className="text-[10px] text-text-muted">{tr('مجموع الوجبات المحددة حالياً لتسجيلها للطاولة', 'Items selected for this table')}</p>
             </div>
 
             {/* Selected items list */}
             <div className="space-y-4 max-h-56 overflow-y-auto pr-1">
               {Object.entries(cart).filter(([_, v]) => (v as any).quantity > 0).length === 0 ? (
-                <p className="text-center text-xs text-text-muted py-8 italic">سلة وجبات الطاولة فارغة</p>
+                <p className="text-center text-xs text-text-muted py-8 italic">{tr('سلة وجبات الطاولة فارغة', 'No items selected')}</p>
               ) : (
                 Object.entries(cart)
                   .filter(([_, v]) => (v as any).quantity > 0)
@@ -656,10 +657,10 @@ export default function WaiterDashboard({
                       <div key={itemId} className="flex justify-between items-center text-xs border-b border-border-delicate/40 pb-2">
                         <div className="space-y-1 text-right">
                           <p className="font-bold text-brand-secondary">{itemValue.name}</p>
-                          <p className="text-[10px] text-text-muted font-sans font-sans">{itemValue.price.toLocaleString()} د.ع × {itemValue.quantity}</p>
+                          <p className="text-[10px] text-text-muted font-sans font-sans">{itemValue.price.toLocaleString()} {tr('د.ع', 'IQD')} × {itemValue.quantity}</p>
                         </div>
                         <div className="flex items-center gap-3">
-                          <span className="font-sans font-bold text-brand-primary">{(itemValue.price * itemValue.quantity).toLocaleString()} د.ع</span>
+                          <span className="font-sans font-bold text-brand-primary">{(itemValue.price * itemValue.quantity).toLocaleString()} {tr('د.ع', 'IQD')}</span>
                           <button
                             type="button"
                             onClick={() => {
@@ -684,12 +685,12 @@ export default function WaiterDashboard({
             <form onSubmit={handlePlaceWaiterOrder} className="space-y-4 pt-4 border-t border-border-delicate">
               <div className="space-y-1">
                 <label className="text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
-                  رقم الطاولة (إجباري)
+                  {tr('رقم الطاولة (إجباري)', 'Table number (required)')}
                 </label>
                 <input
                   required
                   type="text"
-                  placeholder="مثال: 12، 4، VIP..."
+                  placeholder={tr('مثال: 12، 4، VIP...', 'Example: 12, 4, VIP...')}
                   value={tableNumber}
                   onChange={(e) => setTableNumber(e.target.value)}
                   className="w-full bg-slate-50 border border-border-delicate px-4 py-2.5 text-xs font-bold text-brand-primary focus:outline-none focus:border-brand-primary focus:bg-white text-right font-sans"
@@ -698,12 +699,12 @@ export default function WaiterDashboard({
 
               <div className="space-y-1">
                 <label className="text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
-                  اسم الزبون (إجباري)
+                  {tr('اسم الزبون (إجباري)', 'Guest name (required)')}
                 </label>
                 <input
                   required
                   type="text"
-                  placeholder="مثال: ضيف عابر، عائلة أحمد..."
+                  placeholder={tr('مثال: ضيف عابر، عائلة أحمد...', 'Example: Guest, Smith family...')}
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
                   className="w-full bg-slate-50 border border-border-delicate px-4 py-2.5 text-xs font-bold text-brand-primary focus:outline-none focus:border-brand-primary focus:bg-white text-right"
@@ -712,10 +713,10 @@ export default function WaiterDashboard({
 
               <div className="space-y-1">
                 <label className="text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
-                  ملاحظات أو توجيهات إضافية للمطبخ
+                  {tr('ملاحظات أو توجيهات إضافية للمطبخ', 'Kitchen notes')}
                 </label>
                 <textarea
-                  placeholder="مثال: بدون بصل، صوص إضافي، اللحم مستوي جيداً..."
+                  placeholder={tr('مثال: بدون بصل، صوص إضافي، اللحم مستوي جيداً...', 'Example: No onion, extra sauce...')}
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   className="w-full bg-slate-50 border border-border-delicate px-4 py-2.5 text-xs text-brand-primary focus:outline-none focus:border-brand-primary focus:bg-white h-16 resize-none text-right"
@@ -724,7 +725,7 @@ export default function WaiterDashboard({
 
               {/* Total display */}
               <div className="bg-slate-50 border border-border-delicate p-4 flex justify-between items-center text-sm">
-                <span className="font-bold text-brand-primary">إجمالي الحساب:</span>
+                <span className="font-bold text-brand-primary">{tr('إجمالي الحساب:', 'Total:')}</span>
                 <span className="text-xl font-display text-brand-primary font-bold font-sans">
                   {Object.values(cart)
                     .reduce((sum: number, val) => {
@@ -732,7 +733,7 @@ export default function WaiterDashboard({
                       return sum + current.price * current.quantity;
                     }, 0)
                     .toLocaleString()}{" "}
-                  د.ع
+                  {tr('د.ع', 'IQD')}
                 </span>
               </div>
 
@@ -740,7 +741,7 @@ export default function WaiterDashboard({
                 type="submit"
                 className="w-full py-4 bg-emerald-600 text-white text-xs font-bold uppercase tracking-widest hover:bg-emerald-700 shadow-lg flex items-center justify-center gap-2 transition-all font-sans"
               >
-                تثبيت وإرسال الطلب للمطبخ 🍳
+                {tr('تثبيت وإرسال الطلب للمطبخ', 'Send order to kitchen')} 🍳
               </button>
             </form>
           </div>
@@ -754,7 +755,7 @@ export default function WaiterDashboard({
           <div className="flex items-center gap-4 border-b border-border-delicate pb-4">
             <div className="h-0.5 w-12 bg-emerald-500" />
             <h2 className="text-sm font-bold text-brand-primary uppercase tracking-widest">
-              طلبات جاهزة للتوصيل للزبائن فوراً
+              {tr('طلبات جاهزة للتوصيل للزبائن فوراً', 'Ready for table service')}
             </h2>
           </div>
 
@@ -775,7 +776,7 @@ export default function WaiterDashboard({
           {readyOrders.length === 0 && (
             <div className="py-20 text-center bg-bg-paper border border-dashed border-border-delicate">
               <p className="font-display italic text-2xl text-brand-gold opacity-30">
-                لا توجد طلبات جاهزة بانتظار تقديمها للطاولات حالياً.
+                {tr('لا توجد طلبات جاهزة بانتظار تقديمها للطاولات حالياً.', 'No orders are ready for service.')}
               </p>
             </div>
           )}
@@ -786,7 +787,7 @@ export default function WaiterDashboard({
           <div className="flex items-center gap-4 border-b border-border-delicate pb-4">
             <div className="h-0.5 w-12 bg-brand-primary" />
             <h2 className="text-sm font-bold text-brand-primary uppercase tracking-widest">
-              الطلبات الجديدة المعلقة من الطاولات
+              {tr('الطلبات الجديدة المعلقة من الطاولات', 'New table orders')}
             </h2>
           </div>
 
@@ -806,7 +807,7 @@ export default function WaiterDashboard({
             {pendingOrders.length === 0 && (
               <div className="py-20 text-center bg-bg-paper border border-dashed border-border-delicate">
                 <p className="font-display italic text-xl text-brand-gold opacity-30 text-center px-10 leading-relaxed">
-                  قائمة الطلبات الجديدة فارغة الآن.
+                  {tr('قائمة الطلبات الجديدة فارغة الآن.', 'No new orders.')}
                 </p>
               </div>
             )}
@@ -818,7 +819,7 @@ export default function WaiterDashboard({
           <div className="flex items-center gap-4 border-b border-border-delicate pb-4">
             <div className="h-0.5 w-12 bg-brand-gold" />
             <h2 className="text-sm font-bold text-brand-primary uppercase tracking-widest">
-              طلبات قيد التحضير والطهي في المطبخ
+              {tr('طلبات قيد التحضير والطهي في المطبخ', 'Orders being prepared')}
             </h2>
           </div>
 
@@ -838,7 +839,7 @@ export default function WaiterDashboard({
             {preparingOrders.length === 0 && (
               <div className="py-20 text-center bg-bg-paper border border-dashed border-border-delicate">
                 <p className="font-display italic text-xl text-brand-gold opacity-30 text-center px-10 leading-relaxed">
-                   لا توجد طلبات قيد التحضير حالياً.
+                   {tr('لا توجد طلبات قيد التحضير حالياً.', 'No orders are being prepared.')}
                 </p>
               </div>
             )}
@@ -855,15 +856,15 @@ export default function WaiterDashboard({
               <div>
                 <h3 className="text-xl font-display text-brand-primary font-bold flex items-center gap-3">
                   <Bell className="text-brand-gold w-5 h-5 animate-pulse" />
-                  نداءات وطلبات الطاولة من الزبائن
+                  {tr('نداءات وطلبات الطاولة من الزبائن', 'Table calls')}
                 </h3>
                 <p className="text-xs text-text-muted mt-2">
-                  هنا تصل نداءات الزبائن مباشرة من الطاولات (طلب حساب، نادل، استفسارات، إضافات). يرجى قبوله وتلبية الطلب فوراً.
+                  {tr('هنا تصل نداءات الزبائن مباشرة من الطاولات (طلب حساب، نادل، استفسارات، إضافات). يرجى قبوله وتلبية الطلب فوراً.', 'Customer calls arrive here for bills, assistance, questions, and extras.')}
                 </p>
               </div>
               <div className="flex gap-4 bg-bg-paper border border-border-delicate p-1 text-xs font-bold leading-none">
-                <span className="px-4 py-2.5 bg-brand-primary text-white">النشطة: {waiterRequests.filter(r => r.status !== "completed").length}</span>
-                <span className="px-4 py-2.5 text-text-muted">المكتملة اليوم: {waiterRequests.filter(r => r.status === "completed").length}</span>
+                <span className="px-4 py-2.5 bg-brand-primary text-white">{tr('النشطة:', 'Active:')} {waiterRequests.filter(r => r.status !== "completed").length}</span>
+                <span className="px-4 py-2.5 text-text-muted">{tr('المكتملة اليوم:', 'Completed:')} {waiterRequests.filter(r => r.status === "completed").length}</span>
               </div>
             </div>
           </div>
@@ -873,20 +874,21 @@ export default function WaiterDashboard({
               <div className="w-16 h-16 rounded-full bg-slate-50 text-slate-400 flex items-center justify-center mx-auto">
                 <Bell className="w-8 h-8" />
               </div>
-              <h4 className="text-lg font-display text-brand-primary font-bold">لا توجد طلبات نداء حالياً</h4>
+              <h4 className="text-lg font-display text-brand-primary font-bold">{tr('لا توجد طلبات نداء حالياً', 'No table calls')}</h4>
               <p className="text-text-muted max-w-sm mx-auto text-xs leading-relaxed">
-                لا توجد طاولات تطلب الويتر في الوقت الحالي. الخدمة مستقرة!
+                {tr('لا توجد طاولات تطلب الويتر في الوقت الحالي. الخدمة مستقرة!', 'No tables currently need assistance.')}
               </p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {waiterRequests.map((req) => {
                 const minutesAgo = Math.floor((Date.now() - req.createdAt) / 60000);
-                const timeStr = minutesAgo <= 0 ? "الآن" : `منذ ${minutesAgo} د`;
+                const timeStr = minutesAgo <= 0 ? tr('الآن', 'Now') : tr(`منذ ${minutesAgo} د`, `${minutesAgo}m ago`);
                 
                 return (
                   <div
                     key={req.id}
+                    id={`waiter-request-${req.id}`}
                     className={`bg-white border p-6 sm:p-8 flex flex-col justify-between gap-6 transition-all relative ${
                       req.status === "pending"
                         ? "border-brand-gold border-r-4 border-r-brand-gold shadow shadow-brand-gold/10"
@@ -905,17 +907,17 @@ export default function WaiterDashboard({
                         <div className="flex items-center gap-2">
                           {req.status === "pending" && (
                             <span className="bg-red-50 text-red-800 border border-red-200 text-[10px] font-bold px-2.5 py-1 rounded-full animate-pulse">
-                              بانتظار الاستجابة 🔔
+                              {tr('بانتظار الاستجابة', 'Waiting')} 🔔
                             </span>
                           )}
                           {req.status === "accepted" && (
                             <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold px-2.5 py-1 rounded-full">
-                              تحت تلبية: {req.waiterName} 🏃‍♂️
+                              {tr('تحت تلبية:', 'Accepted by:')} {req.waiterName} 🏃‍♂️
                             </span>
                           )}
                           {req.status === "completed" && (
                             <span className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-bold px-2.5 py-1 rounded-full">
-                              اكتملت الخدمة ✓
+                              {tr('اكتملت الخدمة', 'Completed')} ✓
                             </span>
                           )}
                         </div>
@@ -923,12 +925,12 @@ export default function WaiterDashboard({
 
                       <div className="space-y-2 text-right">
                         <h4 className="text-lg font-bold text-brand-primary">
-                          طاولة <span className="font-mono text-xl text-brand-primary">{req.tableNumber}</span>
+                          {tr('طاولة', 'Table')} <span className="font-mono text-xl text-brand-primary">{req.tableNumber}</span>
                           <span className="text-xs text-text-muted font-normal mr-2">({req.customerName})</span>
                         </h4>
                         
                         <div className="bg-bg-paper border border-border-delicate p-4 rounded-xl">
-                          <p className="text-xs text-text-muted italic">الاحتياج المطلوب:</p>
+                          <p className="text-xs text-text-muted italic">{tr('الاحتياج المطلوب:', 'Request:')}</p>
                           <p className="text-sm font-bold text-brand-primary mt-1 leading-relaxed">
                             {req.reason}
                           </p>
@@ -936,12 +938,12 @@ export default function WaiterDashboard({
 
                         {req.distanceMeters !== undefined && (
                           <div className="mt-3 text-[10px] font-sans font-bold text-amber-700 bg-amber-500/5 px-3 py-2 border border-amber-500/10 flex items-center justify-between rounded">
-                            <span>📍 موقع الزبون الجغرافي:</span>
+                            <span>📍 {tr('موقع الزبون الجغرافي:', 'Customer location:')}</span>
                             <span>
                               {req.distanceMeters > 150 ? (
-                                <span className="text-red-700 bg-red-500/5 border border-red-500/10 px-1.5 py-0.5 animate-pulse ml-1.5 rounded">بعيد خارج المطعم ({Math.round(req.distanceMeters)} متر)</span>
+                                <span className="text-red-700 bg-red-500/5 border border-red-500/10 px-1.5 py-0.5 animate-pulse ml-1.5 rounded">{tr('بعيد خارج المطعم', 'Outside restaurant')} ({Math.round(req.distanceMeters)} {tr('متر', 'm')})</span>
                               ) : (
-                                <span className="text-emerald-700 bg-emerald-500/5 border border-emerald-500/10 px-1.5 py-0.5 rounded ml-1.5">داخل الصالة ({Math.round(req.distanceMeters)} متر)</span>
+                                <span className="text-emerald-700 bg-emerald-500/5 border border-emerald-500/10 px-1.5 py-0.5 rounded ml-1.5">{tr('داخل الصالة', 'Inside')} ({Math.round(req.distanceMeters)} {tr('متر', 'm')})</span>
                               )}
                               {req.coordinates && `[${req.coordinates.lat.toFixed(4)}, ${req.coordinates.lng.toFixed(4)}]`}
                             </span>
@@ -957,14 +959,14 @@ export default function WaiterDashboard({
                             onClick={() => handleAcceptRequest(req.id)}
                             className="flex-1 py-3 bg-brand-gold text-white text-xs font-bold hover:bg-brand-primary transition-all shadow-md font-sans"
                           >
-                            تأكيد تلبية النداء والذهاب للطاولة 🏃‍♂️
+                            {tr('تأكيد تلبية النداء والذهاب للطاولة', 'Accept and go to table')} 🏃‍♂️
                           </button>
                         ) : (
                           <button
                             onClick={() => handleCompleteRequest(req.id)}
                             className="flex-1 py-3 bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition-all shadow-md font-sans"
                           >
-                            تأكيد اكتمال الخدمة وحل الطلب ✅
+                            {tr('تأكيد اكتمال الخدمة وحل الطلب', 'Complete request')} ✅
                           </button>
                         )}
                       </div>
@@ -983,9 +985,9 @@ export default function WaiterDashboard({
             <div className="absolute top-0 right-0 w-1.5 h-full bg-brand-primary" />
             <h3 className="text-xl font-display text-brand-primary font-bold flex items-center gap-3">
               <ShieldAlert className="text-red-600 w-5 h-5 shrink-0" />
-              قائمة الأجهزة والزبائن المحظورين من الدخول للمنيو الرقمي
+              {tr('قائمة الأجهزة والزبائن المحظورين من الدخول للمنيو الرقمي', 'Blocked customers and devices')}
             </h3>
-            <p className="text-xs text-text-muted mt-2">بصفتك كابتن خدمة صالة، يمكنك فك حظر أي جهاز زبون لتمكينه من إعادة تصفح المنيو والطلب مجدداً.</p>
+            <p className="text-xs text-text-muted mt-2">{tr('بصفتك كابتن خدمة صالة، يمكنك فك حظر أي جهاز زبون لتمكينه من إعادة تصفح المنيو والطلب مجدداً.', 'Unblock a customer device to restore menu and ordering access.')}</p>
           </div>
 
           {bannedDevices.length === 0 ? (
@@ -993,9 +995,9 @@ export default function WaiterDashboard({
               <div className="w-16 h-16 rounded-full bg-slate-50 text-slate-400 flex items-center justify-center mx-auto">
                 <Users className="w-8 h-8" />
               </div>
-              <h4 className="text-lg font-display text-brand-primary font-bold">لا يوجد زبائن محظورون حالياً</h4>
+              <h4 className="text-lg font-display text-brand-primary font-bold">{tr('لا يوجد زبائن محظورون حالياً', 'No blocked customers')}</h4>
               <p className="text-text-muted max-w-sm mx-auto text-xs leading-relaxed">
-                قائمة الحظر فارغة تماماً. جميع زبائن صالة المطعم بإمكانهم الطلب بنجاح!
+                {tr('قائمة الحظر فارغة تماماً. جميع زبائن صالة المطعم بإمكانهم الطلب بنجاح!', 'All customers can currently place orders.')}
               </p>
             </div>
           ) : (
@@ -1008,47 +1010,47 @@ export default function WaiterDashboard({
                   <div className="space-y-4 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="bg-red-50 text-red-800 border border-red-200 text-[10px] font-bold px-2.5 py-1 rounded-full">
-                        محظور من الخدمة الرقمية 🚫
+                        {tr('محظور من الخدمة الرقمية', 'Blocked')} 🚫
                       </span>
                       <span className="text-[10px] font-mono text-text-muted">
-                        تاريخ الحظر: {banned.bannedAt ? safeFormatDate(banned.bannedAt, "yyyy/MM/dd | hh:mm a") : "غير محدد"}
+                        {tr('تاريخ الحظر:', 'Blocked:')} {banned.bannedAt ? safeFormatDate(banned.bannedAt, "yyyy/MM/dd | hh:mm a") : tr('غير محدد', 'Unknown')}
                       </span>
                     </div>
 
                     <div className="space-y-2">
                       <h5 className="text-base sm:text-lg font-bold text-brand-primary">
-                        الزبون: <span className="text-red-700 font-bold">{banned.customerName}</span> (طاولة {banned.tableNumber || "غير محددة"})
+                        {tr('الزبون:', 'Customer:')} <span className="text-red-700 font-bold">{banned.customerName}</span> ({tr('طاولة', 'Table')} {banned.tableNumber || tr('غير محددة', 'Unknown')})
                       </h5>
                       <p className="text-xs text-text-main leading-relaxed">
-                        سبب الحظر: <strong className="text-red-950 bg-red-50 px-2.5 py-1.5 rounded font-bold">{banned.reason}</strong>
+                        {tr('سبب الحظر:', 'Reason:')} <strong className="text-red-950 bg-red-50 px-2.5 py-1.5 rounded font-bold">{banned.reason}</strong>
                       </p>
                       <p className="text-[11px] text-text-muted">
-                        الموظف المسؤول: <span className="text-brand-primary font-bold bg-slate-100 px-2 py-0.5 rounded">{banned.bannedBy || "إدارة المطعم"}</span>
+                        {tr('الموظف المسؤول:', 'Staff:')} <span className="text-brand-primary font-bold bg-slate-100 px-2 py-0.5 rounded">{banned.bannedBy || tr('إدارة المطعم', 'Management')}</span>
                       </p>
                     </div>
 
                     <div className="bg-bg-paper border border-border-delicate p-4 rounded-xl space-y-2 text-xs font-mono">
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-text-muted">
-                        <div>الجهاز: <span className="font-sans font-bold text-brand-primary">{banned.deviceMetadata?.deviceType || "غير معلوم"}</span></div>
-                        <div>البصمة: <span className="text-red-600 font-bold font-mono text-xs">{banned.fingerprint}</span></div>
+                        <div>{tr('الجهاز:', 'Device:')} <span className="font-sans font-bold text-brand-primary">{banned.deviceMetadata?.deviceType ? localizeDeviceType(banned.deviceMetadata.deviceType, language) : tr('غير معلوم', 'Unknown')}</span></div>
+                        <div>{tr('البصمة:', 'Fingerprint:')} <span className="text-red-600 font-bold font-mono text-xs">{banned.fingerprint}</span></div>
                       </div>
                     </div>
                   </div>
 
                   <button
                     onClick={async () => {
-                      if (confirm(`هل أنت متأكد من إلغاء حظر الزبون "${banned.customerName}" وتمكينه من الطلب مجدداً؟`)) {
+                      if (confirm(tr(`هل أنت متأكد من إلغاء حظر الزبون "${banned.customerName}" وتمكينه من الطلب مجدداً؟`, `Unblock "${banned.customerName}"?`))) {
                         try {
                           await deleteDoc(doc(db, "banned_devices", banned.id));
-                          alert(`تم إلغاء حظر الزبون "${banned.customerName}" بنجاح!`);
+                          alert(tr(`تم إلغاء حظر الزبون "${banned.customerName}" بنجاح!`, `Customer "${banned.customerName}" was unblocked.`));
                         } catch (err) {
-                          alert("فشل في إلغاء الحظر. يرجى المحاولة لاحقاً.");
+                          alert(tr('فشل في إلغاء الحظر. يرجى المحاولة لاحقاً.', 'Could not unblock this customer. Try again.'));
                         }
                       }
                     }}
                     className="px-5 py-3 border border-border-delicate hover:border-emerald-600 text-text-muted hover:text-emerald-700 hover:bg-emerald-50 text-[11px] font-bold rounded transition-all shrink-0 w-full md:w-auto text-center font-sans shadow-sm"
                   >
-                    فك الحظر والترخيص بالطلب 🔓
+                    {tr('فك الحظر والترخيص بالطلب', 'Unblock customer')} 🔓
                   </button>
                 </div>
               ))}
@@ -1099,6 +1101,7 @@ function WaiterOrderCard({
   type: "pending" | "preparing" | "ready";
   key?: string;
 }) {
+  const { language, tr } = useLanguage();
   const isPreparing = type === "preparing";
   return (
     <motion.div
@@ -1115,7 +1118,7 @@ function WaiterOrderCard({
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="space-y-1">
           <h3 className="font-display text-xl sm:text-2xl italic text-brand-primary tracking-tight">
-            طاولة <span className="not-italic inline-block font-sans font-bold">{order.tableNumber}</span>{" "}
+            {tr('طاولة', 'Table')} <span className="not-italic inline-block font-sans font-bold">{order.tableNumber}</span>{" "}
             <span className="text-text-muted opacity-40 font-bold ml-2">
               / {order.customerName}
             </span>
@@ -1127,7 +1130,7 @@ function WaiterOrderCard({
             </span>
             <span className="text-text-muted/40 hidden sm:inline">|</span>
             <span className="text-text-muted/40 flex items-center gap-1.5">
-              رقم الطلب: <span className="text-brand-gold font-sans font-bold text-xs bg-brand-gold/10 px-2 py-0.5 rounded">{order.orderNumber || `#${order.id.slice(-6).toUpperCase()}`}</span>
+              {tr('رقم الطلب:', 'Order:')} <span className="text-brand-gold font-sans font-bold text-xs bg-brand-gold/10 px-2 py-0.5 rounded">{order.orderNumber || `#${order.id.slice(-6).toUpperCase()}`}</span>
             </span>
           </div>
         </div>
@@ -1135,7 +1138,7 @@ function WaiterOrderCard({
           <p className="text-xl font-display not-italic text-brand-primary">
             <span className="font-sans font-bold">{order.totalAmount.toLocaleString()}</span>{" "}
             <span className="text-[10px] font-bold opacity-40 uppercase">
-              د.ع
+              {tr('د.ع', 'IQD')}
             </span>
           </p>
         </div>
@@ -1152,11 +1155,11 @@ function WaiterOrderCard({
                 <span className="text-brand-gold italic"><span className="not-italic font-sans font-bold">{item.quantity}</span>×</span>
                 <span className="text-brand-primary">{item.name}</span>
               </div>
-              <span className="font-sans text-brand-gold">{(item.price * item.quantity).toLocaleString()} د.ع</span>
+              <span className="font-sans text-brand-gold">{(item.price * item.quantity).toLocaleString()} {tr('د.ع', 'IQD')}</span>
             </div>
             {item.customizationText && (
               <span className="text-[9px] text-brand-gold font-bold mt-1 block">
-                ✨ الخيارات: {item.customizationText}
+                ✨ {tr('الخيارات:', 'Options:')} {item.customizationText}
               </span>
             )}
           </div>
@@ -1166,24 +1169,24 @@ function WaiterOrderCard({
       {/* Customer Distance details (Requirement 2) */}
       <div className="bg-slate-50 border border-slate-100 p-3.5 flex flex-col gap-1 text-right text-xs">
         <div className="flex items-center justify-between text-[10px]">
-          <span className="font-bold text-brand-gold uppercase tracking-wider">📍 معلومات جهاز ومسافة الزبون</span>
-          <span className="font-bold text-brand-primary">البصمة: <span className="font-mono select-all">{order.deviceMetadata?.fingerprint?.slice(0, 10) || "لا توجد (ويتر)"}</span></span>
+          <span className="font-bold text-brand-gold uppercase tracking-wider">📍 {tr('معلومات جهاز ومسافة الزبون', 'Customer location')}</span>
+          <span className="font-bold text-brand-primary">{tr('البصمة:', 'Fingerprint:')} <span className="font-mono select-all">{order.deviceMetadata?.fingerprint?.slice(0, 10) || tr('لا توجد (ويتر)', 'Staff order')}</span></span>
         </div>
         <p className="mt-2 text-xs text-text-muted">
-          <span className="font-bold text-brand-primary">المسافة المقدرة:</span>{" "}
+          <span className="font-bold text-brand-primary">{tr('المسافة المقدرة:', 'Estimated distance:')}</span>{" "}
           {order.deviceMetadata?.distanceMeters !== undefined ? (
             <span className="font-bold text-red-600 font-sans">
               {order.deviceMetadata.distanceMeters >= 1000
-                ? `${(order.deviceMetadata.distanceMeters / 1000).toFixed(2)} كم`
-                : `${Math.round(order.deviceMetadata.distanceMeters)} متر`}
+                ? `${(order.deviceMetadata.distanceMeters / 1000).toFixed(2)} ${tr('كم', 'km')}`
+                : `${Math.round(order.deviceMetadata.distanceMeters)} ${tr('متر', 'm')}`}
             </span>
           ) : (
-            <span className="text-amber-600 font-bold">غير متوفرة (طلب مباشر من كابتن الصالة)</span>
+            <span className="text-amber-600 font-bold">{tr('غير متوفرة (طلب مباشر من كابتن الصالة)', 'Unavailable (staff order)')}</span>
           )}
         </p>
         {order.deviceMetadata?.deviceType && (
           <p className="text-[9px] text-text-muted/70 font-sans">
-            الجهاز: {order.deviceMetadata.deviceType} | {order.deviceMetadata.language}
+            {tr('الجهاز:', 'Device:')} {localizeDeviceType(order.deviceMetadata.deviceType, language)} | {order.deviceMetadata.language}
           </p>
         )}
       </div>
@@ -1193,7 +1196,7 @@ function WaiterOrderCard({
           <Bell className="w-5 h-5 text-red-400 shrink-0" />
           <div className="space-y-1">
             <p className="text-[9px] font-bold text-red-600 uppercase tracking-widest">
-              توجيه خاص من الزبون
+              {tr('توجيه خاص من الزبون', 'Customer note')}
             </p>
             <p className="text-xs text-red-900/80 leading-relaxed font-bold">
               {order.notes}
@@ -1207,14 +1210,14 @@ function WaiterOrderCard({
           <div className="space-y-3">
             <div className="w-full py-5 sm:py-6 border border-border-delicate bg-bg-paper text-brand-gold/40 text-[9px] font-bold uppercase tracking-[0.5em] flex items-center justify-center gap-4">
               <Clock className="w-4 h-4 animate-spin" />
-              جاري تحضير وطهي الطلب بالمطبخ...
+              {tr('جاري تحضير وطهي الطلب بالمطبخ...', 'The kitchen is preparing this order...')}
             </div>
             <button
               type="button"
               onClick={onReject}
               className="w-full py-3 border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-colors text-xs font-bold flex items-center justify-center gap-2"
             >
-              رفض وإلغاء هذا الطلب
+              {tr('رفض وإلغاء هذا الطلب', 'Reject order')}
             </button>
           </div>
         ) : (
@@ -1228,8 +1231,8 @@ function WaiterOrderCard({
               }`}
             >
               {type === "pending"
-                ? "إرسال وتحضير الطلب في المطبخ"
-                : "تأكيد تقديم الطلب للطاولة وتوصيله"}
+                ? tr('إرسال وتحضير الطلب في المطبخ', 'Send to kitchen')
+                : tr('تأكيد تقديم الطلب للطاولة وتوصيله', 'Mark served')}
               <ChevronLeft className="w-4 h-4" />
             </button>
             <button
@@ -1237,7 +1240,7 @@ function WaiterOrderCard({
               onClick={onReject}
               className="py-4 sm:py-5 px-6 border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-colors text-xs font-bold flex items-center justify-center gap-2"
             >
-              رفض الطلب
+              {tr('رفض الطلب', 'Reject')}
             </button>
           </div>
         )}
@@ -1248,7 +1251,7 @@ function WaiterOrderCard({
             onClick={onBan}
             className="w-full py-3 bg-red-600 text-white font-bold text-[10px] tracking-widest uppercase hover:bg-red-700 transition-all flex items-center justify-center gap-2"
           >
-            🚫 حظر جهاز هذا الزبون ومنعه من الخدمة الرقمية
+            🚫 {tr('حظر جهاز هذا الزبون ومنعه من الخدمة الرقمية', 'Block this customer device')}
           </button>
         )}
       </div>
@@ -1269,6 +1272,7 @@ export function RejectOrderModal({
   onConfirm,
   defaultStaffName,
 }: RejectOrderModalProps) {
+  const { dir, tr } = useLanguage();
   const [reason, setReason] = useState("");
   const [staffName, setStaffName] = useState(defaultStaffName || "");
   const [error, setError] = useState("");
@@ -1276,15 +1280,15 @@ export function RejectOrderModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!reason.trim()) {
-      setError("يرجى كتابة سبب الرفض بالتفصيل.");
+      setError(tr('يرجى كتابة سبب الرفض بالتفصيل.', 'Enter a rejection reason.'));
       return;
     }
     if (reason.trim().length < 4) {
-      setError("يرجى كتابة سبب حقيقي للرفض (4 أحرف على الأقل).");
+      setError(tr('يرجى كتابة سبب حقيقي للرفض (4 أحرف على الأقل).', 'The reason must be at least 4 characters.'));
       return;
     }
     if (!staffName.trim()) {
-      setError("يرجى إدخال اسم الموظف المسؤول المسجل للرفض.");
+      setError(tr('يرجى إدخال اسم الموظف المسؤول المسجل للرفض.', 'Enter the responsible staff member.'));
       return;
     }
     setError("");
@@ -1292,7 +1296,7 @@ export function RejectOrderModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" dir="rtl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" dir={dir}>
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -1300,10 +1304,10 @@ export function RejectOrderModal({
         className="bg-white border border-border-delicate p-6 sm:p-10 w-full max-w-lg shadow-2xl space-y-6 relative text-right"
       >
         <div className="space-y-2">
-          <p className="text-[10px] font-bold text-red-600 uppercase tracking-widest leading-none">إجراء تراجعي فوري</p>
-          <h3 className="text-xl font-display text-brand-primary font-bold font-black">رفض الطلب الحالي #<span className="font-sans text-sm">{order.id.slice(-6).toUpperCase()}</span></h3>
+          <p className="text-[10px] font-bold text-red-600 uppercase tracking-widest leading-none">{tr('إجراء تراجعي فوري', 'Order action')}</p>
+          <h3 className="text-xl font-display text-brand-primary font-bold font-black">{tr('رفض الطلب الحالي', 'Reject order')} #<span className="font-sans text-sm">{order.id.slice(-6).toUpperCase()}</span></h3>
           <p className="text-xs text-text-muted leading-relaxed">
-            يرجى تعبئة الحقول أدناه لتأكيد رفض الطلب الخاص بالطاولة <span className="font-bold text-brand-primary">({order.tableNumber})</span> للزبون <span className="font-bold text-brand-primary">({order.customerName})</span>. سيتم إرسال هذا الإشعار فوراً لصاحب المطعم.
+            {tr('أكد سبب رفض طلب الطاولة', 'Confirm the reason for rejecting the order for table')} <span className="font-bold text-brand-primary">({order.tableNumber})</span> — <span className="font-bold text-brand-primary">({order.customerName})</span>.
           </p>
         </div>
 
@@ -1317,11 +1321,11 @@ export function RejectOrderModal({
           <div className="space-y-2">
             <div className="flex justify-between items-center">
               <label className="text-[9px] font-bold text-brand-gold uppercase tracking-[0.2em] block leading-none">
-                اسم الموظف المسؤول عن الرفض (من الويترز والخدمة)
+                {tr('اسم الموظف المسؤول عن الرفض', 'Responsible staff member')}
               </label>
               {defaultStaffName && (
                 <span className="text-[9px] text-red-600 font-bold flex items-center gap-1">
-                  🔒 مؤمن ومغلق (جلسة الدخول)
+                  🔒 {tr('مؤمن ومغلق (جلسة الدخول)', 'From signed-in account')}
                 </span>
               )}
             </div>
@@ -1329,7 +1333,7 @@ export function RejectOrderModal({
               type="text"
               required
               readOnly={!!defaultStaffName}
-              placeholder="مثال: أحمد علي، سارة محمد..."
+              placeholder={tr('مثال: أحمد علي، سارة محمد...', 'Example: Ahmed, Sarah...')}
               value={staffName}
               onChange={(e) => !defaultStaffName && setStaffName(e.target.value)}
               className={`w-full border px-4 py-3 text-sm font-bold focus:outline-none ${
@@ -1342,12 +1346,12 @@ export function RejectOrderModal({
 
           <div className="space-y-2">
             <label className="text-[9px] font-bold text-brand-gold uppercase tracking-[0.2em] block leading-none">
-              سبب الرفض والطلب تراجعاً (إجباري)
+              {tr('سبب الرفض (إجباري)', 'Rejection reason (required)')}
             </label>
             <textarea
               required
               rows={3}
-              placeholder="مثال: المواد غير متوفرة حالياً، الزبون غادر الطاولة، تم تكرار الطلب..."
+              placeholder={tr('مثال: المواد غير متوفرة حالياً، الزبون غادر الطاولة، تم تكرار الطلب...', 'Example: Item unavailable or duplicate order...')}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               className="w-full bg-bg-paper border border-border-delicate p-4 text-xs text-brand-primary focus:outline-none focus:border-red-500 resize-none font-bold"
@@ -1359,14 +1363,14 @@ export function RejectOrderModal({
               type="submit"
               className="flex-1 py-3 bg-red-600 text-white text-xs font-bold hover:bg-red-700 transition-all shadow-md uppercase tracking-wider"
             >
-              رفض وإلغاء الطلب نهائياً
+              {tr('رفض وإلغاء الطلب نهائياً', 'Reject order')}
             </button>
             <button
               type="button"
               onClick={onClose}
               className="px-6 py-3 border border-border-delicate text-xs font-bold text-brand-primary hover:bg-bg-paper transition-all"
             >
-              التراجع والإغلاق
+              {tr('التراجع والإغلاق', 'Cancel')}
             </button>
           </div>
         </form>
@@ -1388,6 +1392,7 @@ export function BanCustomerModal({
   onConfirm,
   defaultStaffName,
 }: BanCustomerModalProps) {
+  const { dir, tr } = useLanguage();
   const [reason, setReason] = useState("");
   const [staffName, setStaffName] = useState(defaultStaffName || "");
   const [error, setError] = useState("");
@@ -1395,15 +1400,15 @@ export function BanCustomerModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!reason.trim()) {
-      setError("يرجى كتابة سبب الحظر بالتفصيل.");
+      setError(tr('يرجى كتابة سبب الحظر بالتفصيل.', 'Enter a blocking reason.'));
       return;
     }
     if (reason.trim().length < 4) {
-      setError("يرجى كتابة سبب حقيقي للحظر (4 أحرف على الأقل).");
+      setError(tr('يرجى كتابة سبب حقيقي للحظر (4 أحرف على الأقل).', 'The reason must be at least 4 characters.'));
       return;
     }
     if (!staffName.trim()) {
-      setError("يرجى إدخال اسم الموظف المسؤول الذي اتخذ القرار.");
+      setError(tr('يرجى إدخال اسم الموظف المسؤول الذي اتخذ القرار.', 'Enter the responsible staff member.'));
       return;
     }
     setError("");
@@ -1411,7 +1416,7 @@ export function BanCustomerModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" dir="rtl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" dir={dir}>
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -1419,10 +1424,10 @@ export function BanCustomerModal({
         className="bg-white border border-border-delicate p-6 sm:p-10 w-full max-w-lg shadow-2xl space-y-6 relative text-right"
       >
         <div className="space-y-2">
-          <p className="text-[10px] font-bold text-red-600 uppercase tracking-widest leading-none">إجراء أمني حازم (حظر الزائر والمستعرض)</p>
-          <h3 className="text-xl font-display text-brand-primary font-bold">🚫 حظر الزبون وتجميد البصمة</h3>
+          <p className="text-[10px] font-bold text-red-600 uppercase tracking-widest leading-none">{tr('إجراء أمني حازم', 'Security action')}</p>
+          <h3 className="text-xl font-display text-brand-primary font-bold">🚫 {tr('حظر الزبون وتجميد البصمة', 'Block customer device')}</h3>
           <p className="text-xs text-text-muted leading-relaxed">
-            سيتم حجب بصمة جهاز الزبون <span className="font-bold text-red-600">{order.customerName}</span> (صاحب طاولة {order.tableNumber}) بالكامل من الدخول للمنيو الرقمي للطلب مجدداً.
+            {tr('سيتم حجب جهاز الزبون', 'This will block the device for')} <span className="font-bold text-red-600">{order.customerName}</span> ({tr('طاولة', 'Table')} {order.tableNumber}).
           </p>
         </div>
 
@@ -1436,11 +1441,11 @@ export function BanCustomerModal({
           <div className="space-y-2">
             <div className="flex justify-between items-center">
               <label className="text-[9px] font-bold text-brand-gold uppercase tracking-[0.2em] block leading-none">
-                اسم الموظف المسؤول عن قرار الحظر
+                {tr('اسم الموظف المسؤول عن قرار الحظر', 'Responsible staff member')}
               </label>
               {defaultStaffName && (
                 <span className="text-[9px] text-red-600 font-bold flex items-center gap-1 font-sans">
-                  🔒 مؤمن ومسجل للتقرير ({defaultStaffName})
+                  🔒 {tr('مسجل للتقرير', 'Recorded')} ({defaultStaffName})
                 </span>
               )}
             </div>
@@ -1448,7 +1453,7 @@ export function BanCustomerModal({
               type="text"
               required
               readOnly={!!defaultStaffName}
-              placeholder="مثال: كابتن أحمد، سارة..."
+              placeholder={tr('مثال: كابتن أحمد، سارة...', 'Example: Ahmed, Sarah...')}
               value={staffName}
               onChange={(e) => !defaultStaffName && setStaffName(e.target.value)}
               className={`w-full border px-4 py-3 text-sm font-bold focus:outline-none ${
@@ -1461,12 +1466,12 @@ export function BanCustomerModal({
 
           <div className="space-y-2">
             <label className="text-[9px] font-bold text-brand-gold uppercase tracking-[0.2em] block leading-none">
-              سبب وتبرير الحظر للزبون (إجباري)
+              {tr('سبب وتبرير الحظر للزبون (إجباري)', 'Blocking reason (required)')}
             </label>
             <textarea
               required
               rows={3}
-              placeholder="مثال: يطلب للتسلية، بعيد عن المطعم ولا يجيب على كابتن الصالة، سلوك غير لائق..."
+              placeholder={tr('مثال: يطلب للتسلية، بعيد عن المطعم ولا يجيب على كابتن الصالة، سلوك غير لائق...', 'Example: abusive or fraudulent ordering...')}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               className="w-full bg-bg-paper border border-border-delicate p-4 text-xs text-brand-primary focus:outline-none focus:border-red-500 resize-none font-bold"
@@ -1478,14 +1483,14 @@ export function BanCustomerModal({
               type="submit"
               className="flex-1 py-3 bg-red-700 text-white text-xs font-bold hover:bg-red-850 transition-all shadow-md uppercase tracking-wider font-sans"
             >
-              تأكيد حظر جهاز الزبون فوراً
+              {tr('تأكيد حظر جهاز الزبون فوراً', 'Block customer device')}
             </button>
             <button
               type="button"
               onClick={onClose}
               className="px-6 py-3 border border-border-delicate text-xs font-bold text-brand-primary hover:bg-bg-paper transition-all"
             >
-              إلغاء
+              {tr('إلغاء', 'Cancel')}
             </button>
           </div>
         </form>
