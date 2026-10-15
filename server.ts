@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 import ws from "ws";
@@ -45,9 +44,8 @@ function parseCustomerLocation(value: unknown) {
   return { latitude, longitude, accuracy };
 }
 
-async function startServer() {
-  const app = express();
-  app.use(express.json({ limit: "256kb" }));
+const app = express();
+app.use(express.json({ limit: "256kb" }));
 
   app.get("/api/restaurants/:restaurantId/access", async (req, res) => {
     const restaurantId = await resolveRestaurantId(req.params.restaurantId);
@@ -74,10 +72,18 @@ async function startServer() {
     if (error) return res.status(400).json({ error: error.message }); return res.status(204).end();
   });
   app.post("/api/auth/login", rateLimit, async (req, res) => {
+    if (!supabaseUrl || !supabaseAnonKey) return res.status(503).json({ error: "server_config_missing" });
     const username = String(req.body?.username || "").trim().toLowerCase();
     const email = username.includes("@") ? username : `${username.replace(/[^a-z0-9._-]/g, "")}@accounts.novx.invalid`;
     const authClient = createClient(supabaseUrl, supabaseAnonKey, { auth: { persistSession: false, autoRefreshToken: false } });
-    const { data, error } = await authClient.auth.signInWithPassword({ email, password: String(req.body?.password || "") });
+    let authResult;
+    try {
+      authResult = await authClient.auth.signInWithPassword({ email, password: String(req.body?.password || "") });
+    } catch (error) {
+      console.error("Supabase sign-in service unavailable:", error);
+      return res.status(503).json({ error: "auth_service_unavailable" });
+    }
+    const { data, error } = authResult;
     if (error || !data.session) return res.status(401).json({ error: "invalid_credentials" });
     const metadata = data.user.app_metadata || {};
     const requestedRole = req.body?.role;
@@ -287,14 +293,25 @@ async function startServer() {
       return res.json({ reply: response.text || (language === "en" ? "No answer is available right now." : "لا تتوفر إجابة حالياً.") });
     } catch (error) { console.error(error); return res.status(500).json({ reply: req.body?.language === "en" ? "The service is temporarily unavailable." : "حدثت مشكلة اتصال بالخدمة." }); }
   });
-  app.get("/api/health", (_req, res) => res.json({ status: "ok", database: "supabase" }));
+  app.get("/api/health", (_req, res) => {
+    const missing = [!supabaseUrl && "SUPABASE_URL", !supabaseAnonKey && "SUPABASE_ANON_KEY"].filter(Boolean);
+    return missing.length ? res.status(503).json({ status: "misconfigured", missing }) : res.json({ status: "ok", database: "supabase" });
+  });
 
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" }); app.use(vite.middlewares);
-  } else {
+if (!process.env.VERCEL) {
+  if (process.env.NODE_ENV === "production") {
     const distPath = path.join(process.cwd(), "dist"); app.use(express.static(distPath)); app.get("*", (_req, res) => res.sendFile(path.join(distPath, "index.html")));
   }
-  const port = Number(process.env.PORT) || 3000;
-  app.listen(port, "0.0.0.0", () => console.log(`Server running on http://localhost:${port}`));
+  async function startLocalServer() {
+    if (process.env.NODE_ENV !== "production") {
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
+      app.use(vite.middlewares);
+    }
+    const port = Number(process.env.PORT) || 3000;
+    app.listen(port, "0.0.0.0", () => console.log(`Server running on http://localhost:${port}`));
+  }
+  startLocalServer().catch((error) => { console.error(error); process.exitCode = 1; });
 }
-startServer();
+
+export default app;

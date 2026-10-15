@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Utensils, Lock, User, Eye, EyeOff, AlertCircle, ChevronRight, Building2 } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { supabase, supabaseConfigured } from '../lib/supabase';
 import { UserSession } from '../types';
 import { useLanguage } from '../lib/i18n';
 
@@ -63,12 +63,14 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     setError(null);
 
     try {
+      if (!supabaseConfigured) throw new Error('client_config_missing');
       if (role !== 'admin' && !loginRestaurantId) throw new Error('restaurant_required');
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ role, username, password, restaurantId: loginRestaurantId }),
       });
+      if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('api_unavailable');
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'invalid_credentials');
       const { error: sessionError } = await supabase.auth.setSession({ access_token: result.accessToken, refresh_token: result.refreshToken });
@@ -76,9 +78,15 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       onLogin(result.session as UserSession);
     } catch (err) {
       console.error(err);
-      const code = err instanceof Error ? err.message : 'invalid_credentials';
+      const code = err instanceof TypeError ? 'api_unavailable' : err instanceof Error ? err.message : 'invalid_credentials';
       setError(code === 'invalid_credentials'
         ? tr('اسم المستخدم أو كلمة المرور غير صحيحة.', 'Incorrect username or password.')
+        : code === 'client_config_missing' || code === 'server_config_missing'
+          ? tr('إعدادات Supabase ناقصة في النشر. أضف متغيرات البيئة ثم أعد النشر.', 'Supabase deployment settings are missing. Add the environment variables and redeploy.')
+        : code === 'auth_service_unavailable'
+          ? tr('تعذر الاتصال بخدمة تسجيل الدخول. تحقق من عنوان Supabase وسجلات الخادم.', 'Cannot reach the sign-in service. Check the Supabase URL and server logs.')
+        : code === 'api_unavailable'
+          ? tr('خدمة تسجيل الدخول غير متاحة. تحقق من إعدادات الخادم والنشر.', 'Sign-in service is unavailable. Check the deployment and server configuration.')
         : code === 'role_mismatch'
           ? tr('هذا الحساب لا يطابق القسم المحدد أو المطعم الحالي.', 'This account does not belong to the selected role or restaurant.')
           : code === 'restaurant_required'

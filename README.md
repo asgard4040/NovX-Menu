@@ -13,6 +13,19 @@ Create the first system administrator only from a trusted server shell with a se
 
 The browser receives only `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and the public Web Push key. `SUPABASE_SERVICE_ROLE_KEY`, Firebase migration credentials, Gemini keys, and Web Push private keys are server/worker-only.
 
+## Vercel deployment
+
+Import the repository with **Root Directory** set to the folder containing `package.json`, `server.ts`, `api/index.ts`, and `vercel.json`. Use the Vite framework preset and `npm run build` as the build command. The Vercel function routes `/api/*` to the existing Express API; a frontend-only deployment cannot sign users in or submit orders.
+
+Set these environment variables for Production (and Preview if needed), then redeploy so Vite embeds the public values at build time:
+
+- `VITE_SUPABASE_URL` and `SUPABASE_URL`: your Supabase project URL.
+- `VITE_SUPABASE_ANON_KEY` and `SUPABASE_ANON_KEY`: the project's publishable/anon key.
+- `SUPABASE_SERVICE_ROLE_KEY`: server-only, required for privileged admin, restaurant, and staff operations. Never prefix this variable with `VITE_`.
+- `VITE_WEB_PUSH_PUBLIC_KEY` if staff notifications are enabled; `GEMINI_API_KEY` only if AI chat is enabled.
+
+After deployment, open `https://<your-deployment>/api/health`; it must return JSON with `status: "ok"`, not the application's HTML or a 404. Then sign in with an admin account created in the **same Supabase project** using `npm run create:admin -- <username> <strong-password>` in a trusted local/server shell. Do not put the service-role key or admin password in the browser or a public Vercel variable. The internal username is converted to `<username>@accounts.novx.invalid`; a different Supabase project or an uncreated account will return incorrect credentials. If sign-in still fails, inspect the `/api/auth/login` response and Vercel function logs without sharing the password or secret keys.
+
 ## Migration
 
 See [SUPABASE_MIGRATION.md](SUPABASE_MIGRATION.md). Do not delete Firebase data until count validation, application acceptance tests, and the rollback window are complete.
