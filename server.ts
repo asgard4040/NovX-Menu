@@ -1,5 +1,4 @@
 import express from "express";
-import path from "path";
 import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 import ws from "ws";
@@ -297,21 +296,5 @@ app.use(express.json({ limit: "256kb" }));
     const missing = [!supabaseUrl && "SUPABASE_URL", !supabaseAnonKey && "SUPABASE_ANON_KEY"].filter(Boolean);
     return missing.length ? res.status(503).json({ status: "misconfigured", missing }) : res.json({ status: "ok", database: "supabase" });
   });
-
-if (!process.env.VERCEL) {
-  if (process.env.NODE_ENV === "production") {
-    const distPath = path.join(process.cwd(), "dist"); app.use(express.static(distPath)); app.get("*", (_req, res) => res.sendFile(path.join(distPath, "index.html")));
-  }
-  async function startLocalServer() {
-    if (process.env.NODE_ENV !== "production") {
-      const { createServer: createViteServer } = await import("vite");
-      const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
-      app.use(vite.middlewares);
-    }
-    const port = Number(process.env.PORT) || 3000;
-    app.listen(port, "0.0.0.0", () => console.log(`Server running on http://localhost:${port}`));
-  }
-  startLocalServer().catch((error) => { console.error(error); process.exitCode = 1; });
-}
 
 export default app;
