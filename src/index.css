@@ -61,27 +61,16 @@
 .menu-theme[data-menu-theme="coastal"] .menu-preview-header { clip-path: ellipse(90% 75% at 50% 20%); padding-bottom: 4.5rem; }
 .menu-theme[data-menu-theme="coastal"] .menu-preview-card { border-radius: 2rem; border-width: 0; box-shadow: 0 8px 24px rgb(8 145 178 / .12); }
 
-/* Food-first menu: roomy cards on desktop, quick scanning rows on phones. */
+/* Food-first menu: preserve the whole uploaded photo at every viewport size. */
 .menu-redesign .menu-hero { isolation: isolate; }
 .menu-redesign .menu-dish-card { min-width: 0; }
-.menu-redesign .menu-dish-image img { display: block; }
+.menu-redesign .menu-dish-image img { display: block; object-fit: contain; }
 .menu-redesign .menu-filter-bar { box-shadow: 0 9px 24px rgb(0 0 0 / .04); }
 .menu-redesign[data-menu-theme="coastal"] .menu-hero { clip-path: none; padding-bottom: 0; }
 .menu-redesign[data-menu-theme="fast-bite"] .menu-hero { transform: none; }
 @media (max-width: 639px) {
-  .menu-redesign .menu-dish-card {
-    display: grid;
-    grid-template-columns: 108px minmax(0, 1fr);
-    grid-template-areas: "image copy" "image actions";
-    grid-template-rows: 1fr auto;
-    min-height: 152px;
-  }
-  .menu-redesign .menu-dish-top { display: contents; }
-  .menu-redesign .menu-dish-image { grid-area: image; min-height: 152px; aspect-ratio: auto; }
-  .menu-redesign .menu-dish-copy { grid-area: copy; padding: .875rem .875rem .25rem; }
-  .menu-redesign .menu-dish-actions { grid-area: actions; padding: 0 .875rem .875rem; }
-  .menu-redesign .menu-dish-actions > div { padding-top: 0; border: 0; }
-  .menu-redesign .menu-dish-image img { height: 100%; }
+  .menu-redesign .menu-dish-image { aspect-ratio: 4 / 3; }
+  .menu-redesign .menu-dish-copy { padding-bottom: .5rem; }
 }
 
 /* A calmer, task-oriented system administration surface. */

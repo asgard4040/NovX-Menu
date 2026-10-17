@@ -837,6 +837,13 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
 
     return matchesCategory && matchesSearch;
   });
+  const trackingStages = [
+    { status: 'pending', label: tr('تم استلام الطلب', 'Order received'), detail: tr('بانتظار مراجعة فريق المطعم', 'Waiting for the restaurant to review it'), icon: CheckCircle2 },
+    { status: 'preparing', label: tr('قيد التحضير', 'Preparing'), detail: tr('المطبخ يحضّر طلبك', 'The kitchen is preparing your food'), icon: ChefHat },
+    { status: 'ready', label: tr('جاهز للتقديم', 'Ready to serve'), detail: tr('الطلب جاهز وسيصلك قريباً', 'Your order is ready and on its way'), icon: Bell },
+    { status: 'served', label: tr('تم التقديم', 'Served'), detail: tr('نتمنى لك وجبة شهية', 'Enjoy your meal'), icon: Utensils },
+  ] as const;
+  const trackingStageIndex = trackingStages.findIndex((stage) => stage.status === orderComplete?.status);
 
   return (
     <div
@@ -1089,12 +1096,12 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                 className="menu-preview-card menu-dish-card group flex flex-col justify-between h-full bg-bg-card border border-border-delicate rounded-2xl hover:border-brand-gold transition-colors overflow-hidden shadow-sm"
               >
                 <div className="menu-dish-top">
-                  <div className="menu-dish-image aspect-[16/10] overflow-hidden relative">
+                  <div className="menu-dish-image aspect-[4/3] overflow-hidden relative bg-bg-paper">
                     {item.imageUrl ? (
                       <img
                         src={item.imageUrl}
                         loading="lazy"
-                        className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-105"
+                        className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
                         alt={item.name}
                         referrerPolicy="no-referrer"
                       />
@@ -1321,7 +1328,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                               {item.imageUrl ? (
                                 <img
                                   src={item.imageUrl}
-                                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                                  className="w-full h-full object-contain"
                                   referrerPolicy="no-referrer"
                                   alt={item.name}
                                 />
@@ -1546,176 +1553,71 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 30 }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="bg-white w-full max-w-lg p-6 sm:p-10 rounded-[2rem] shadow-[0_24px_70px_rgba(45,58,39,0.15)] space-y-6 text-center border border-border-delicate relative my-8 overflow-hidden flex flex-col max-h-[90vh]"
+              className="order-tracking-modal bg-bg-card w-full max-w-xl rounded-[1.5rem] shadow-2xl border border-border-delicate relative overflow-hidden flex flex-col max-h-[92dvh]"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="order-tracking-title"
+              dir={dir}
             >
-              <div className="absolute inset-0 pointer-events-none opacity-[0.02] bg-[url('https://www.transparenttextures.com/patterns/natural-paper.png')]" />
-
-              {/* Scrollable Container inside modal */}
-              <div className="overflow-y-auto space-y-6 flex-1 pr-1 pl-1 py-1 no-scrollbar text-right">
-                <div className="text-center space-y-4">
-                  <div className="w-16 h-16 bg-brand-primary/5 text-brand-primary rounded-full flex items-center justify-center mx-auto border border-brand-primary/10">
-                    <CheckCircle2 className="w-8 h-8 animate-bounce" />
-                  </div>
-                  <div>
-                    <h1 className="text-2xl font-display text-brand-primary tracking-tight">
-                      {tr('حالة وتفاصيل طلبك النشط', 'Your active order')} ✨
-                    </h1>
-                    <p className="text-text-muted mt-1 text-sm font-medium">
-                      {tr('رقم الطلب:', 'Order number:')}{" "}
-                      {orderComplete.orderNumber ? (
-                        <span className="font-sans font-bold text-brand-gold italic text-xl">
-                          {orderComplete.orderNumber}
-                        </span>
-                      ) : (
-                        <span className="font-sans font-bold text-brand-gold italic text-lg">
-                          #{orderComplete.id.slice(-6).toUpperCase()}
-                        </span>
-                      )}
-                    </p>
-                  </div>
+              <div className="bg-brand-primary px-5 py-5 sm:px-7 text-white flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs text-white/70 font-semibold">{tr('متابعة الطلب', 'Order tracking')}</p>
+                  <h2 id="order-tracking-title" className="text-xl sm:text-2xl font-display font-bold mt-1">{tr('طلبك في الطريق', 'Your order')}</h2>
+                  <p className="text-sm text-white/80 mt-1">{tr('رقم الطلب', 'Order')} <span className="font-bold text-white">{orderComplete.orderNumber || `#${orderComplete.id.slice(-6).toUpperCase()}`}</span></p>
                 </div>
-
-                <div className="bg-bg-paper/50 p-6 rounded-2xl text-right space-y-4 border border-border-delicate shadow-inner relative overflow-hidden">
-                  <div className="absolute top-0 left-0 w-2 h-full bg-brand-gold opacity-30" />
-                  <p className="text-xs font-bold flex justify-between text-text-muted uppercase tracking-widest">
-                    {tr('الاسم:', 'Name:')}{" "}
-                    <span className="text-text-main">
-                      {orderComplete.customerName || tr('زبون مجهول', 'Guest')}
-                    </span>
-                  </p>
-                  <p className="text-xs font-bold flex justify-between text-text-muted uppercase tracking-widest">
-                    {tr('الطاولة:', 'Table:')}{" "}
-                    <span className="text-text-main">
-                      {orderComplete.tableNumber || tr('غير محددة', 'Not specified')}
-                    </span>
-                  </p>
-                  <div className="pt-4 border-t border-border-delicate space-y-2">
-                    {orderComplete.items && orderComplete.items.length > 0 ? (
-                      orderComplete.items.map((item, i) => (
-                        <p
-                          key={i}
-                          className="text-xs text-text-muted py-0.5 flex justify-between font-medium"
-                        >
-                          <span>
-                            {item.name} x{item.quantity}
-                          </span>
-                          <span className="font-bold text-text-main">
-                            {(item.price * item.quantity).toLocaleString()} IQD
-                          </span>
-                        </p>
-                      ))
-                    ) : (
-                      <p className="text-xs text-text-muted italic text-center">{tr('جاري جلب تفاصيل المواد من السيرفر...', 'Loading order details...')}</p>
-                    )}
-                  </div>
-                  <p className="pt-4 font-display text-brand-primary flex justify-between border-t border-border-delicate text-lg italic">
-                    {tr('المجموع الكلي:', 'Total:')}{" "}
-                    <span>{(orderComplete.totalAmount || 0).toLocaleString()} IQD</span>
-                  </p>
-                </div>
-
-                {/* Real-time Order Status Live Road */}
-                <div className="bg-bg-paper p-5 rounded-2xl border border-border-delicate text-right space-y-3">
-                  <h4 className="text-xs font-bold text-brand-gold uppercase tracking-widest flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
-                    {tr('تتبع حالة طلبك المباشرة', 'Live order status')}
-                  </h4>
-
-                  {orderComplete.status === "rejected" ? (
-                    <div className="p-3 bg-red-50 border border-red-100 rounded text-red-700 text-xs">
-                      <p className="font-bold underline">⚠️ {tr('تم إلغاء / رفض هذا الطلب:', 'This order was cancelled or rejected:')}</p>
-                      <p className="mt-1">{orderComplete.rejectionReason || tr('تواصل مع كابتن الصالة لمعرفة السبب.', 'Ask a waiter for details.')}</p>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-3 gap-1 relative mt-1 pt-1">
-                      {/* Visual Line Background Tracks Wrapper */}
-                      <div className="absolute top-4 left-10 right-10 h-1 -z-0">
-                        {/* Gray Background Track */}
-                        <div className="absolute inset-0 bg-border-delicate" />
-                        {/* Golden Active Track */}
-                        <div 
-                          className="absolute top-0 right-0 h-full bg-brand-gold transition-all duration-500" 
-                          style={{
-                            width: orderComplete.status === "pending" 
-                              ? "0%" 
-                              : orderComplete.status === "preparing" 
-                                ? "50%" 
-                                : "100%"
-                          }}
-                        />
-                      </div>
-
-                      {/* Step 1: Pending */}
-                      <div className="flex flex-col items-center text-center relative z-10">
-                        <div className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
-                          orderComplete.status === "pending" 
-                            ? "bg-brand-primary text-white scale-110 shadow-lg" 
-                            : "bg-brand-gold text-white"
-                        }`}>
-                          <span className="text-[9px] font-bold">1</span>
-                        </div>
-                        <span className={`text-[8px] font-bold mt-1 leading-tight ${orderComplete.status === "pending" ? "text-brand-primary" : "text-text-muted"}`}>
-                          {tr('موافقة الكابتن', 'Confirmed')}
-                        </span>
-                      </div>
-
-                      {/* Step 2: Preparing */}
-                      <div className="flex flex-col items-center text-center relative z-10">
-                        <div className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
-                          orderComplete.status === "preparing" 
-                            ? "bg-brand-primary text-white scale-110 shadow-lg animate-pulse" 
-                            : (orderComplete.status === "ready" || orderComplete.status === "served")
-                              ? "bg-brand-gold text-white" 
-                              : "bg-border-delicate text-text-muted"
-                        }`}>
-                          <span className="text-[9px] font-bold">2</span>
-                        </div>
-                        <span className={`text-[8px] font-bold mt-1 leading-tight ${orderComplete.status === "preparing" ? "text-brand-primary font-bold" : "text-text-muted"}`}>
-                          {tr('قيد التحضير', 'Preparing')}
-                        </span>
-                      </div>
-
-                      {/* Step 3: Ready */}
-                      <div className="flex flex-col items-center text-center relative z-10">
-                        <div className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
-                          (orderComplete.status === "ready" || orderComplete.status === "served")
-                            ? "bg-emerald-500 text-white scale-110 shadow-lg" 
-                            : "bg-border-delicate text-text-muted"
-                        }`}>
-                          <span className="text-[9px] font-bold">3</span>
-                        </div>
-                        <span className={`text-[8px] font-bold mt-1 leading-tight ${
-                          (orderComplete.status === "ready" || orderComplete.status === "served") ? "text-emerald-600 font-bold" : "text-text-muted"
-                        }`}>
-                          {tr('جاهز للتسليم', 'Ready')}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-
-                  {orderComplete.status === "ready" && (
-                    <div className="mt-3 p-2 bg-emerald-50 border border-emerald-100 rounded text-emerald-800 text-[11px] font-bold text-center leading-relaxed">
-                      🎉 {tr('وجبتك جاهزة للتسليم! سيوصلها كابتن الصالة إلى طاولتك الآن!', 'Your order is ready. A waiter will bring it to your table shortly!')}
-                    </div>
-                  )}
-                  {orderComplete.status === "served" && (
-                    <div className="mt-3 p-2 bg-brand-primary/5 border border-brand-primary/10 rounded text-brand-primary text-[11px] font-bold text-center leading-relaxed font-display">
-                      🍽️ {tr('تم تقديم الوجبة لك بنجاح، نتمنى لك وقتاً طيباً ووجبة شهية ممتعة!', 'Your order has been served. Enjoy your meal!')}
-                    </div>
-                  )}
-                </div>
-
-                <p className="text-[10px] text-text-muted uppercase tracking-widest text-center leading-relaxed">
-                  {tr('الضيافة الرفيعة هي رحلة في عوالم النكهات.', 'Great hospitality begins with good food.')} <br /> {tr('جاري تحضير وجبتك بكل حب وعناية.', 'Your order is being prepared with care.')}
-                </p>
+                <button type="button" onClick={() => setShowOrderTrackingModal(false)} className="w-11 h-11 shrink-0 rounded-xl bg-white/15 flex items-center justify-center hover:bg-white/25" aria-label={tr('إغلاق', 'Close')}><X className="w-5 h-5" /></button>
               </div>
 
-              <div className="space-y-2 pt-2 border-t border-border-delicate">
+              <div className="overflow-y-auto flex-1 p-5 sm:p-7 space-y-6 text-start">
+                {orderComplete.status === 'rejected' || orderComplete.status === 'cancelled' ? (
+                  <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-red-800" role="status">
+                    <div className="flex items-center gap-3 font-bold"><AlertTriangle className="w-5 h-5 shrink-0" />{tr('تم إلغاء الطلب', 'Order cancelled')}</div>
+                    <p className="text-sm mt-2">{orderComplete.rejectionReason || tr('يرجى التواصل مع فريق المطعم للمساعدة.', 'Please contact restaurant staff for help.')}</p>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-border-delicate bg-bg-paper p-4 sm:p-5" role="status" aria-live="polite">
+                    <p className="text-xs font-bold text-text-muted mb-4">{tr('حالة الطلب', 'Order status')}</p>
+                    <ol className="space-y-0">
+                      {trackingStages.map((stage, index) => {
+                        const StageIcon = stage.icon;
+                        const reached = index <= trackingStageIndex;
+                        const current = index === trackingStageIndex;
+                        return <li key={stage.status} className="flex gap-3 min-h-16">
+                          <div className="flex flex-col items-center">
+                            <span className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${current ? 'bg-brand-primary text-white ring-4 ring-brand-primary/10' : reached ? 'bg-emerald-600 text-white' : 'bg-bg-card border border-border-delicate text-text-muted'}`}><StageIcon className="w-4 h-4" /></span>
+                            {index < trackingStages.length - 1 && <span className={`w-0.5 flex-1 min-h-5 my-1 ${index < trackingStageIndex ? 'bg-emerald-600' : 'bg-border-delicate'}`} />}
+                          </div>
+                          <div className="pt-1 pb-4">
+                            <p className={`text-sm font-bold ${reached ? 'text-brand-primary' : 'text-text-muted'}`}>{stage.label}{current && <span className="ms-2 text-[10px] rounded-full bg-brand-gold/15 px-2 py-1 text-brand-primary">{tr('الآن', 'Now')}</span>}</p>
+                            {current && <p className="text-xs text-text-muted mt-1">{stage.detail}</p>}
+                          </div>
+                        </li>;
+                      })}
+                    </ol>
+                  </div>
+                )}
+
+                <div className="rounded-2xl border border-border-delicate bg-bg-card p-4 sm:p-5">
+                  <h3 className="font-bold text-brand-primary mb-4">{tr('تفاصيل طلبك', 'Order details')}</h3>
+                  <div className="grid grid-cols-2 gap-3 text-sm pb-4 border-b border-border-delicate">
+                    <div><p className="text-xs text-text-muted">{tr('الاسم', 'Name')}</p><p className="font-semibold text-text-main mt-1">{orderComplete.customerName || tr('ضيف', 'Guest')}</p></div>
+                    <div><p className="text-xs text-text-muted">{tr('الطاولة', 'Table')}</p><p className="font-semibold text-text-main mt-1">{orderComplete.tableNumber || tr('غير محددة', 'Not specified')}</p></div>
+                  </div>
+                  <div className="py-4 space-y-3">
+                    {orderComplete.items?.length ? orderComplete.items.map((item, index) => <div key={`${item.id}-${index}`} className="flex justify-between gap-3 text-sm"><span className="text-text-main"><span className="font-bold text-brand-primary">{item.quantity}×</span> {item.name}</span><span className="whitespace-nowrap font-semibold text-text-main">{(item.price * item.quantity).toLocaleString()} {tr('د.ع', 'IQD')}</span></div>) : <p className="text-xs text-text-muted">{tr('جاري جلب تفاصيل الطلب...', 'Loading order details...')}</p>}
+                  </div>
+                  <div className="flex justify-between gap-3 pt-4 border-t border-border-delicate font-bold text-brand-primary"><span>{tr('المجموع', 'Total')}</span><span>{(orderComplete.totalAmount || 0).toLocaleString()} {tr('د.ع', 'IQD')}</span></div>
+                </div>
+                {orderComplete.status !== 'served' && orderComplete.status !== 'rejected' && orderComplete.status !== 'cancelled' && <p className="text-xs text-text-muted text-center">{tr('تتحدث حالة الطلب تلقائياً.', 'Order status updates automatically.')}</p>}
+              </div>
+
+              <div className="p-4 sm:px-7 border-t border-border-delicate bg-bg-card pb-[max(1rem,env(safe-area-inset-bottom))]">
                 <button
                   onClick={() => {
-                    if (orderComplete.status === 'served' || orderComplete.status === 'rejected') {
+                    if (orderComplete.status === 'served' || orderComplete.status === 'rejected' || orderComplete.status === 'cancelled') {
                       try {
                         localStorage.removeItem("novix_active_order_id");
+                        localStorage.removeItem("novix_active_order_token");
                       } catch (e) {
                         console.error(e);
                       }
@@ -1723,9 +1625,9 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                     }
                     setShowOrderTrackingModal(false);
                   }}
-                  className="w-full py-4 bg-brand-primary text-white rounded-xl font-bold shadow-xl shadow-brand-primary/10 hover:bg-brand-secondary transition-all text-xs"
+                  className="w-full min-h-12 bg-brand-primary text-white rounded-xl font-bold hover:bg-brand-secondary transition-colors text-sm"
                 >
-                  {orderComplete.status === 'served' || orderComplete.status === 'rejected' ? tr('موافق وبدء طلب جديد 🍽️', 'Done — start a new order 🍽️') : tr('متابعة التصفح بالخلفية 🥣', 'Continue browsing 🥣')}
+                  {orderComplete.status === 'served' || orderComplete.status === 'rejected' || orderComplete.status === 'cancelled' ? tr('تم، بدء طلب جديد', 'Done, start a new order') : tr('العودة إلى القائمة', 'Back to menu')}
                 </button>
               </div>
             </motion.div>
@@ -1765,7 +1667,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                     {showCustomizer.item.imageUrl ? (
                       <img
                         src={showCustomizer.item.imageUrl}
-                        className="w-full h-full object-cover"
+                        className="w-full h-full object-contain"
                         referrerPolicy="no-referrer"
                         alt={showCustomizer.item.name}
                       />
