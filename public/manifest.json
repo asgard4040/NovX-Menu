@@ -1,11 +1,11 @@
 {
-  "name": "NovX Admin",
-  "short_name": "NovX Admin",
+  "name": "ORDOVA Admin",
+  "short_name": "ORDOVA",
   "id": "/home/admin",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#000000",
-  "theme_color": "#000000",
-  "icons": [{ "src": "/novx-1.png", "sizes": "512x512", "type": "image/png" }]
+  "background_color": "#081220",
+  "theme_color": "#081220",
+  "icons": [{ "src": "/ordova-mark.png", "sizes": "1254x1254", "type": "image/png", "purpose": "any" }]
 }

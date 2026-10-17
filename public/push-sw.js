@@ -2,7 +2,7 @@ self.addEventListener('push', (event) => {
   let message = {};
   try { message = event.data ? event.data.json() : {}; } catch { /* Always display a visible fallback. */ }
   const notice = message.notification || message;
-  event.waitUntil(self.registration.showNotification(notice.title || 'NovX', {
+  event.waitUntil(self.registration.showNotification(notice.title || 'ORDOVA', {
     body: notice.body || '',
     tag: message.requestId ? `waiter-request-${message.requestId}` : message.orderId ? `order-${message.orderId}` : undefined,
     data: { url: message.url || '/' },

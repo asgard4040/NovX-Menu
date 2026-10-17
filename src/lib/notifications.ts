@@ -38,7 +38,7 @@ export async function enableStaffNotifications(restaurantId: string) {
 export async function showDeviceNotificationTest() {
   if (Notification.permission !== "granted") throw new Error("notification_permission_denied");
   const registration = await navigator.serviceWorker.ready;
-  await registration.showNotification("NovX test", {
+  await registration.showNotification("ORDOVA test", {
     body: "If this is hidden, check iPhone Settings → Notifications and Focus.",
     tag: "novx-device-test",
     data: { url: window.location.pathname + window.location.search },

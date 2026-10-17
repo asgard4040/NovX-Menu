@@ -41,8 +41,9 @@ import { handleFirestoreError, OperationType } from "../lib/firestore-utils";
 import { Restaurant, MenuItem, Order, OrderItem } from "../types";
 import { chatWithAI } from "../lib/gemini";
 import { acceptableGpsAccuracyMeters, verifyGeofence } from "../lib/geofence";
-import { resolveTheme, themeStyle } from "../lib/themes";
+import { DEFAULT_THEME, resolveTheme, themeStyle } from "../lib/themes";
 import { localizeCategory, useLanguage } from "../lib/i18n";
+import { usePublicSystemLogo } from "../lib/use-system-brand";
 
 interface CustomerMenuProps {
   restaurantId: string;
@@ -50,6 +51,7 @@ interface CustomerMenuProps {
 
 export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
   const { dir, language, isEnglish, toggleLanguage, tr } = useLanguage();
+  const systemLogo = usePublicSystemLogo();
   const [restaurant, setRestaurant] = useState<Restaurant | null>(() => {
     try {
       const cached = localStorage.getItem(`novix_customer_restaurant_${restaurantId}`);
@@ -877,7 +879,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
   return (
     <div
       className="menu-theme menu-redesign min-h-screen bg-bg-paper font-sans pb-28 text-text-main selection:bg-brand-primary/10"
-      data-menu-theme={restaurant?.themeId || "italian-luxury"}
+      data-menu-theme={restaurant?.themeId || DEFAULT_THEME.id}
       style={themeStyle(resolveTheme(restaurant?.themeId, restaurant?.themeColors))}
       dir={dir}
     >
@@ -973,11 +975,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                 className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg object-cover"
                 referrerPolicy="no-referrer"
               />
-            ) : (
-              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-brand-primary/5 flex items-center justify-center">
-                <Utensils className="text-brand-primary w-3.5 h-3.5 sm:w-5 sm:h-5" />
-              </div>
-            )}
+            ) : <img src={systemLogo} alt="" className="w-8 h-8 sm:w-10 sm:h-10 object-contain" />}
           </div>
           <div className="min-w-0">
             <h1 className="font-display text-base sm:text-xl font-bold text-brand-primary truncate leading-tight">

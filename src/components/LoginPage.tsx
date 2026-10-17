@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Utensils, Lock, User, Eye, EyeOff, AlertCircle, ChevronRight, Building2 } from 'lucide-react';
+import { Lock, User, Eye, EyeOff, AlertCircle, ChevronRight } from 'lucide-react';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { UserSession } from '../types';
 import { useLanguage } from '../lib/i18n';
 import { selectStaffPortal, updateHomeScreenLink } from '../lib/home-screen';
+import { BRAND_NAME } from '../lib/brand';
+import { usePublicSystemLogo } from '../lib/use-system-brand';
 
 interface LoginPageProps {
   onLogin: (user: UserSession) => void;
@@ -12,6 +14,7 @@ interface LoginPageProps {
 
 export default function LoginPage({ onLogin }: LoginPageProps) {
   const { dir, tr } = useLanguage();
+  const systemLogo = usePublicSystemLogo();
   const [role, setRole] = useState<'admin' | 'restaurant' | 'waiter' | 'kitchen'>('admin');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -224,7 +227,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                     />
                   ) : (
                     <div className="w-24 h-24 bg-bg-paper rounded-full border-2 border-brand-gold flex items-center justify-center text-brand-primary shadow-lg mb-6">
-                      <Building2 className="w-10 h-10" />
+                      <img src={systemLogo} alt="" className="w-14 h-14 object-contain" />
                     </div>
                   )}
                   <p className="text-brand-gold text-[10px] font-bold uppercase tracking-widest leading-none mb-3">{tr('البوابة الأمنية المخصصة', 'Secure staff portal')}</p>
@@ -235,13 +238,9 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                 </>
               ) : (
                 <>
-                  <div className="flex items-center gap-4 mb-6">
-                    <span className="w-12 h-[1px] bg-brand-gold" />
-                    <Utensils className="text-brand-gold w-6 h-6 italic" />
-                    <span className="w-12 h-[1px] bg-brand-gold" />
-                  </div>
-                  <h1 className="text-5xl font-display text-brand-primary italic tracking-tight mb-4">نوفكس AI</h1>
-                  <p className="text-brand-gold text-xs font-bold uppercase tracking-widest text-center">{tr('الفن الرفيع في إدارة المطاعم', 'Restaurant management, refined')}</p>
+                  <img src={systemLogo} alt="" className="w-20 h-20 object-contain mb-4" />
+                  <h1 className="text-4xl sm:text-5xl font-display font-bold text-brand-primary tracking-tight mb-3">{BRAND_NAME}</h1>
+                  <p className="text-brand-gold text-xs font-bold uppercase tracking-widest text-center">{tr('تكنولوجيا المطاعم', 'Restaurant technology')}</p>
                 </>
               )}
             </div>

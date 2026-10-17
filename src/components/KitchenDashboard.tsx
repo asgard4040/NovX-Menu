@@ -190,11 +190,7 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-8">
           <div className="flex flex-col sm:flex-row items-center sm:items-start text-center sm:text-right gap-6 sm:gap-8 w-full">
             <div className="w-16 h-16 sm:w-20 sm:h-20 bg-bg-paper border border-border-delicate flex items-center justify-center overflow-hidden shrink-0">
-               {systemLogo ? (
-                 <img src={systemLogo} className="w-full h-full object-contain" alt="System Logo" referrerPolicy="no-referrer" />
-               ) : (
-                 <ChefHat className="w-8 h-8 sm:w-10 sm:h-10 text-brand-gold/30" />
-               )}
+               <img src={systemLogo || '/ordova-mark.png'} className="w-full h-full object-contain p-1" alt="System Logo" referrerPolicy="no-referrer" />
             </div>
             <div className="space-y-1">
               <p className="text-[10px] font-bold text-brand-gold uppercase tracking-[0.5em] italic">{tr('شاشات المطبخ', 'Kitchen display')}</p>

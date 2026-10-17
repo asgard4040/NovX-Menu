@@ -1,4 +1,4 @@
-# NovX Restaurant SaaS
+# Ordova Restaurant SaaS
 
 The application now uses Supabase PostgreSQL, Auth, Realtime, and Storage. The React/RTL interfaces and Express API remain in place.
 
@@ -7,6 +7,7 @@ The application now uses Supabase PostgreSQL, Auth, Realtime, and Storage. The R
 1. Use Node.js 20.19+.
 2. Copy `.env.example` to `.env.local` and configure the values.
 3. Apply the SQL files in `supabase/migrations` in filename order through the Supabase CLI or SQL editor. Existing installations only need migrations they have not run yet. `202610150001_gps_accuracy_matches_radius.sql` aligns indoor GPS accuracy checks; `202610150002_order_workflow_permissions.sql` fixes order creation after a shift reset and limits menu edits to owners/managers.
+   Apply `202610180001_ordova_default_theme.sql` to make Ordova the database default for future restaurants; it does not alter existing restaurant branding.
 4. Run `npm install` and `npm run dev`.
 
 Create the first system administrator only from a trusted server shell with a service-role key: `npm run create:admin -- <username> <strong-password>`. The script requires at least 12 password characters and never exposes the service-role key to the browser.

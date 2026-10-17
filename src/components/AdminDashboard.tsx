@@ -53,6 +53,7 @@ import { supabase } from "../lib/supabase";
 import { persistRestaurantImage } from "../lib/storage";
 import { localizeProvince, useLanguage } from "../lib/i18n";
 import { AI_MODELS, DEFAULT_AI_MODEL, firstModelForProvider, providerForAIModel, type AIProvider } from "../lib/ai-models";
+import { DEFAULT_SYSTEM_LOGO } from "../lib/brand";
 
 const safeFormatDate = (dateVal: any, formatStr: string, fallback: string = "---") => {
   if (!dateVal) return fallback;
@@ -542,10 +543,9 @@ export default function AdminDashboard({
                 </div>
 
                 <div className="flex items-center gap-6 w-full lg:w-auto">
-                  {systemLogo && (
-                    <div className="w-20 h-20 bg-bg-paper border border-border-delicate rounded-xl flex items-center justify-center p-2 relative overflow-hidden shrink-0 group">
-                      <img src={systemLogo} className="w-full h-full object-contain" alt="Branding Preview" referrerPolicy="no-referrer" />
-                      <button
+                  <div className="w-20 h-20 bg-bg-paper border border-border-delicate rounded-xl flex items-center justify-center p-2 relative overflow-hidden shrink-0 group">
+                    <img src={systemLogo || DEFAULT_SYSTEM_LOGO} className="w-full h-full object-contain" alt="Branding Preview" referrerPolicy="no-referrer" />
+                    {systemLogo && <button
                         onClick={async () => {
                           try {
                             await setDoc(doc(db, "settings", "support"), { logoUrl: "" }, { merge: true });
@@ -559,9 +559,8 @@ export default function AdminDashboard({
                         className="absolute inset-x-0 bottom-0 bg-red-950/85 text-white text-xs font-bold py-1 transition-colors flex items-center justify-center"
                       >
                         {tr('إزالة اللوغو', 'Remove logo')}
-                      </button>
-                    </div>
-                  )}
+                      </button>}
+                  </div>
                   <div className="flex-1 sm:flex-initial">
                     <label className="px-8 py-4 bg-bg-paper border border-dashed border-brand-gold/60 text-brand-primary hover:border-brand-primary cursor-pointer text-xs font-bold uppercase tracking-widest transition-all inline-block text-center w-full">
                       <span>📤 {tr('رفع لوغو من الاستوديو', 'Upload logo')}</span>

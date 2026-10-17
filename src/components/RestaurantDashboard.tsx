@@ -700,15 +700,13 @@ export default function RestaurantDashboard({
                   alt="Logo"
                   referrerPolicy="no-referrer"
                 />
-              ) : systemLogo ? (
+              ) : (
                 <img
-                  src={systemLogo}
+                  src={systemLogo || '/ordova-mark.png'}
                   className="w-full h-full object-contain p-1"
                   alt="System Logo"
                   referrerPolicy="no-referrer"
                 />
-              ) : (
-                <Building2 className="w-8 h-8 sm:w-10 sm:h-10 text-brand-gold/30" />
               )}
             </div>
             <div className="space-y-2 text-right">
@@ -2396,7 +2394,7 @@ function ThemeSettings({ restaurant, onSaved }: { restaurant: Restaurant; onSave
     <motion.section initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
       <div>
         <h2 className="section-title">{tr('هوية المطعم', 'Restaurant branding')}</h2>
-        <p className="text-sm text-text-muted mt-2">{tr('اختر قالباً ثم خصّص ألوانه. تُطبّق الهوية على المنيو ولوحات المالك والويتر والمطبخ، ويبقى القالب الإيطالي الفاخر هو الافتراضي.', 'Choose a theme and customize its colors. It applies to the menu and all restaurant workspaces.')}</p>
+        <p className="text-sm text-text-muted mt-2">{tr('اختر قالباً ثم خصّص ألوانه. تُطبّق الهوية على المنيو ولوحات المالك والويتر والمطبخ، وتبقى هوية أوردوفا هي الافتراضية.', 'Choose a theme and customize its colors. It applies to the menu and all restaurant workspaces; Ordova is the default.')}</p>
       </div>
       <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">
         {MENU_THEMES.map((theme) => (

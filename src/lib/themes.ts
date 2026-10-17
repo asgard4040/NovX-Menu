@@ -1,10 +1,11 @@
 import type { CSSProperties } from "react";
 
-export type ThemeId = "italian-luxury" | "urban-modern" | "pure-minimal" | "fast-bite" | "heritage" | "cafe" | "botanical" | "midnight" | "coastal";
+export type ThemeId = "ordova" | "italian-luxury" | "urban-modern" | "pure-minimal" | "fast-bite" | "heritage" | "cafe" | "botanical" | "midnight" | "coastal";
 export type ThemeColors = { primary: string; secondary: string; accent: string; background: string; text: string };
 export type MenuTheme = { id: ThemeId; name: string; nameEn: string; description: string; descriptionEn: string; colors: ThemeColors };
 
 export const MENU_THEMES: MenuTheme[] = [
+  { id: "ordova", name: "أوردوفا", nameEn: "Ordova", description: "هوية حديثة بكحلي عميق وبرتقالي دافئ", descriptionEn: "Deep navy, warm orange, and clean modern typography", colors: { primary: "#081220", secondary: "#183246", accent: "#C84C29", background: "#F8F8F6", text: "#0B1822" } },
   { id: "italian-luxury", name: "الفخامة الإيطالية", nameEn: "Italian Luxury", description: "تحريرية دافئة، حواف دقيقة وعناوين كلاسيكية", descriptionEn: "Warm editorial styling with refined classical details", colors: { primary: "#2D3A27", secondary: "#4A5D43", accent: "#B19470", background: "#FCFBF7", text: "#1C1C1C" } },
   { id: "urban-modern", name: "مودرن حضري", nameEn: "Urban Modern", description: "شبكة جريئة، زوايا حادة وطباعة هندسية", descriptionEn: "Bold grid, sharp edges, and geometric typography", colors: { primary: "#172554", secondary: "#2563EB", accent: "#22D3EE", background: "#F8FAFC", text: "#0F172A" } },
   { id: "pure-minimal", name: "مينيمال نقي", nameEn: "Pure Minimal", description: "مساحات بيضاء واسعة وبطاقات هادئة", descriptionEn: "Open space and calm, clean cards", colors: { primary: "#18181B", secondary: "#52525B", accent: "#A1A1AA", background: "#FFFFFF", text: "#18181B" } },

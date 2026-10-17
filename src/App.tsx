@@ -48,6 +48,7 @@ import { DEFAULT_THEME, resolveTheme, themeStyle } from './lib/themes';
 import type { MenuTheme } from './lib/themes';
 import { useLanguage } from './lib/i18n';
 import { selectStaffPortal, updateHomeScreenLink } from './lib/home-screen';
+import { BRAND_NAME, DEFAULT_SYSTEM_LOGO } from './lib/brand';
 
 export default function App() {
   const { dir, isEnglish, toggleLanguage, tr } = useLanguage();
@@ -56,6 +57,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>('overview');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [workspaceTheme, setWorkspaceTheme] = useState<MenuTheme>(DEFAULT_THEME);
+  const [systemLogo, setSystemLogo] = useState(() => localStorage.getItem('novix_system_logo') || '');
 
   useEffect(() => {
     // Set initial sidebar state based on screen size
@@ -147,6 +149,16 @@ export default function App() {
       },
     );
   }, [session?.restaurantId, session?.role]);
+
+  useEffect(() => {
+    if (!session) return;
+    return onSnapshot(doc(db, 'settings', 'support'), (snapshot) => {
+      const logoUrl = snapshot.data()?.logoUrl || '';
+      setSystemLogo(logoUrl);
+      if (logoUrl) localStorage.setItem('novix_system_logo', logoUrl);
+      else localStorage.removeItem('novix_system_logo');
+    }, (error) => console.warn('Unable to load system branding:', error));
+  }, [session?.role]);
 
   const handleLogin = (user: UserSession) => {
     setSession(user);
@@ -244,12 +256,12 @@ export default function App() {
 
           <motion.div 
             whileHover={{ scale: 1.05 }}
-            className={session.role === 'admin' ? 'w-14 h-14 bg-brand-primary rounded-2xl flex items-center justify-center mb-4' : 'w-20 h-20 bg-brand-primary rounded-full flex items-center justify-center mb-8 shadow-xl'}
+            className={session.role === 'admin' ? 'w-14 h-14 bg-brand-primary rounded-2xl flex items-center justify-center mb-4 p-2' : 'w-20 h-20 bg-brand-primary rounded-2xl flex items-center justify-center mb-8 shadow-xl p-3'}
           >
-            <Utensils className="text-white w-8 h-8" />
+            <img src={systemLogo || DEFAULT_SYSTEM_LOGO} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
           </motion.div>
           <div className="text-center">
-            <h1 className={session.role === 'admin' ? 'text-2xl font-display font-bold text-brand-primary leading-none mb-2' : 'text-4xl font-display text-brand-primary italic leading-none mb-4'}>{tr('نوفكس', 'NovX')}</h1>
+            <h1 className={session.role === 'admin' ? 'text-2xl font-display font-bold text-brand-primary leading-none mb-2 tracking-tight' : 'text-4xl font-display font-bold text-brand-primary leading-none mb-4 tracking-tight'}>{BRAND_NAME}</h1>
             <p className="text-xs text-text-muted font-bold">{session.role === 'admin' ? tr('لوحة الإدارة', 'Admin dashboard') : tr('لوحة إدارة المطعم', 'Restaurant workspace')}</p>
           </div>
         </div>
@@ -318,8 +330,8 @@ export default function App() {
         {/* Mobile Header */}
         <header className="workspace-shell-panel lg:hidden flex items-center justify-between px-5 py-3 border-b border-border-delicate relative z-40">
            <div className="flex items-center gap-4">
-              <Utensils className="text-brand-primary w-6 h-6" />
-              <span className="text-2xl font-display text-brand-primary italic">نوفكس</span>
+              <img src={systemLogo || DEFAULT_SYSTEM_LOGO} alt="" className="w-8 h-8 object-contain" referrerPolicy="no-referrer" />
+              <span className="text-xl font-display font-bold tracking-tight text-brand-primary">{BRAND_NAME}</span>
            </div>
            <div className="flex items-center gap-1">
              <button onClick={toggleLanguage} className="min-w-12 h-11 px-3 flex items-center justify-center gap-1 text-brand-primary border border-border-delicate" aria-label={tr('تغيير اللغة', 'Change language')}>

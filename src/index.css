@@ -1,19 +1,19 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Prata&family=Tajawal:wght@300;400;500;700;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Prata&family=Sora:wght@300;400;500;600;700;800&family=Tajawal:wght@300;400;500;700;900&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --color-brand-primary: #2D3A27;
-  --color-brand-secondary: #4A5D43;
-  --color-brand-gold: #B19470;
-  --color-bg-paper: #FCFBF7;
+  --color-brand-primary: #081220;
+  --color-brand-secondary: #183246;
+  --color-brand-gold: #C84C29;
+  --color-bg-paper: #F8F8F6;
   --color-bg-card: #FFFFFF;
-  --color-text-main: #1C1C1C;
-  --color-text-muted: #666666;
-  --color-border-delicate: #E5E2D9;
+  --color-text-main: #0B1822;
+  --color-text-muted: #54616B;
+  --color-border-delicate: #DDE2E5;
   
-  --font-sans: "Tajawal", "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Sora", "Tajawal", ui-sans-serif, system-ui, sans-serif;
   --font-serif: "Prata", serif;
-  --font-display: "Tajawal", "Playfair Display", serif;
+  --font-display: "Sora", "Tajawal", ui-sans-serif, system-ui, sans-serif;
 }
 
 @layer base {
@@ -40,6 +40,8 @@
 
 /* Menu themes alter shape, spacing, typography and composition as well as color. */
 .menu-theme { background: var(--color-bg-paper); color: var(--color-text-main); }
+.menu-theme[data-menu-theme="ordova"] .menu-preview-header { border-bottom: 4px solid var(--color-brand-gold); }
+.menu-theme[data-menu-theme="ordova"] .menu-preview-card { border-radius: 1.25rem; box-shadow: 0 10px 28px rgb(8 18 32 / .06); }
 .menu-theme[data-menu-theme="urban-modern"] { --font-display: "Outfit", sans-serif; }
 .menu-theme[data-menu-theme="urban-modern"] .menu-preview-header { text-align: right; border-bottom: 8px solid var(--color-brand-gold); }
 .menu-theme[data-menu-theme="urban-modern"] .menu-preview-card { border-radius: 0; border-width: 0 0 0 5px; }
@@ -95,14 +97,14 @@
 .admin-restaurant-form .underline-animation input { padding-inline-start: 2rem; }
 .admin-restaurant-form .underline-animation svg { inset-inline-start: .75rem; inset-inline-end: auto; }
 .admin-restaurant-form input[type="date"] { width: 100%; }
-.admin-shell .workspace-sidebar.workspace-shell-panel { background: #17281e; color: #f6f8f2; border-color: rgb(255 255 255 / .12); }
-.admin-shell .workspace-sidebar .text-brand-primary { color: #f6f8f2; }
-.admin-shell .workspace-sidebar .text-text-muted { color: #d4dfd4; }
+.admin-shell .workspace-sidebar.workspace-shell-panel { background: #081220; color: #f8f8f6; border-color: rgb(255 255 255 / .12); }
+.admin-shell .workspace-sidebar .text-brand-primary { color: #f8f8f6; }
+.admin-shell .workspace-sidebar .text-text-muted { color: #c0c9cf; }
 .admin-shell .workspace-sidebar .border-border-delicate { border-color: rgb(255 255 255 / .14); }
-.admin-shell .workspace-sidebar .bg-bg-paper { background: #20382a; }
+.admin-shell .workspace-sidebar .bg-bg-paper { background: #132537; }
 .admin-shell .workspace-sidebar nav button:hover { background-color: rgb(255 255 255 / .08); }
-.admin-shell .workspace-sidebar nav button.bg-brand-primary { background-color: #315342; }
-.admin-shell main { background: #f5f7f3; }
+.admin-shell .workspace-sidebar nav button.bg-brand-primary { background-color: #C84C29; }
+.admin-shell main { background: #f8f8f6; }
 @media (prefers-reduced-motion: reduce) {
   .admin-surface .admin-partner-card { transition: none; }
   .admin-surface .admin-partner-card:hover { transform: none; }

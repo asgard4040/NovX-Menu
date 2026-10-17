@@ -9,14 +9,14 @@ export function updateHomeScreenLink() {
   const portal = params.get('portal');
   if (menuId) {
     link.href = `/api/home-screen-manifest?restaurantId=${encodeURIComponent(menuId)}&portal=menu`;
-    document.title = 'NovX Menu';
+    document.title = 'ORDOVA Menu';
   } else if (staffId) {
     const role = portal === 'waiter' || portal === 'kitchen' ? portal : 'restaurant';
     link.href = `/api/home-screen-manifest?restaurantId=${encodeURIComponent(staffId)}&portal=${role}`;
-    document.title = role === 'waiter' ? 'NovX Waiter' : role === 'kitchen' ? 'NovX Kitchen' : 'NovX Restaurant';
+    document.title = role === 'waiter' ? 'ORDOVA Waiter' : role === 'kitchen' ? 'ORDOVA Kitchen' : 'ORDOVA Restaurant';
   } else {
     link.href = '/manifest.json';
-    document.title = 'NovX Admin';
+    document.title = 'ORDOVA Admin';
   }
 }
 
