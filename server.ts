@@ -299,7 +299,7 @@ app.use(express.json({ limit: "256kb" }));
     const userClient = createClient(supabaseUrl, supabaseAnonKey, { global: { headers: { Authorization: `Bearer ${bearer}` } }, auth: { persistSession: false } });
     const { data: identity } = await userClient.auth.getUser(bearer); if (!identity.user) return res.status(401).end();
     const { data: member } = await userClient.from("restaurant_members").select("role").eq("restaurant_id", restaurantId).eq("user_id", identity.user.id).eq("active", true).maybeSingle();
-    if (!member || !["owner", "manager", "waiter"].includes(member.role)) return res.status(403).json({ error: "not_authorized_for_restaurant" });
+    if (!member || !["owner", "manager", "waiter", "kitchen"].includes(member.role)) return res.status(403).json({ error: "not_authorized_for_restaurant" });
     const { error } = await userClient.from("push_subscriptions").upsert({ restaurant_id: restaurantId, user_id: identity.user.id, endpoint: subscription.endpoint, subscription }, { onConflict: "endpoint" });
     if (error) return res.status(403).json({ error: error.code === "23505" ? "subscription_conflict" : "notification_registration_failed" }); return res.status(204).end();
   });

@@ -1,7 +1,9 @@
 self.addEventListener('push', (event) => {
-  const message = event.data ? event.data.json() : {};
-  event.waitUntil(self.registration.showNotification(message.title || 'NovX', {
-    body: message.body || '',
+  let message = {};
+  try { message = event.data ? event.data.json() : {}; } catch { /* Always display a visible fallback. */ }
+  const notice = message.notification || message;
+  event.waitUntil(self.registration.showNotification(notice.title || 'NovX', {
+    body: notice.body || '',
     tag: message.requestId ? `waiter-request-${message.requestId}` : message.orderId ? `order-${message.orderId}` : undefined,
     data: { url: message.url || '/' },
   }));

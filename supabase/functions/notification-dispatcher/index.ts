@@ -32,10 +32,13 @@ Deno.serve(async (request) => {
       : event.event_type === "kitchen_order" ? "طلب للمطبخ #" + orderNumber + " - طاولة " + table
       : event.event_type === "order_ready" ? "طلب جاهز #" + orderNumber + " - طاولة " + table
       : "طلب ويتر - طاولة " + table;
-    const payload = JSON.stringify({ title,
-      body: orderEvent ? (event.event_type === "order_ready" ? "الطلب جاهز للتقديم" : "افتح الطلب لمتابعته") : event.payload.reason || "يوجد طلب خدمة جديد",
+    const body = orderEvent ? (event.event_type === "order_ready" ? "الطلب جاهز للتقديم" : "افتح الطلب لمتابعته") : event.payload.reason || "يوجد طلب خدمة جديد";
+    const url = "/?loginRestaurantId=" + event.restaurant_id + (orderEvent ? "&orderId=" + event.payload.order_id : "&requestId=" + event.payload.request_id);
+    const payload = JSON.stringify({ web_push: 8030,
+      notification: { title, body, navigate: new URL(url, Deno.env.get("WEB_APP_URL") || "https://menu.novx-team.com").href, lang: "ar", dir: "rtl" },
+      title, body,
       requestId: event.payload.request_id, orderId: event.payload.order_id,
-      url: "/?loginRestaurantId=" + event.restaurant_id + (orderEvent ? "&orderId=" + event.payload.order_id : "&requestId=" + event.payload.request_id) });
+      url });
     if (!subscriptions?.length) {
       await supabase.from("notification_outbox").update({ processed_at: new Date().toISOString(), attempts: event.attempts + 1, lease_until: null }).eq("id", event.id);
       continue;

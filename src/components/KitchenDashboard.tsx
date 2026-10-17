@@ -5,7 +5,7 @@ import { collection, query, where, onSnapshot, doc, updateDoc, orderBy, Timestam
 import { Order, OrderStatus } from '../types';
 import { format } from 'date-fns';
 import { useLanguage } from '../lib/i18n';
-import { enableStaffNotifications } from '../lib/notifications';
+import { enableStaffNotifications, showDeviceNotificationTest } from '../lib/notifications';
 
 const safeFormatDate = (dateVal: any, formatStr: string, fallback: string = "---") => {
   if (!dateVal) return fallback;
@@ -33,6 +33,8 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
   const [systemLogo, setSystemLogo] = useState(() => localStorage.getItem("novix_system_logo") || "");
   const [mobileView, setMobileView] = useState<'preparing' | 'ready'>('preparing');
   const [notificationState, setNotificationState] = useState<'idle' | 'loading' | 'enabled' | 'error'>('idle');
+  const [notificationError, setNotificationError] = useState<string | null>(null);
+  const [notificationTestMessage, setNotificationTestMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const orderId = new URLSearchParams(window.location.search).get('orderId');
@@ -202,16 +204,37 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
           </div>
           
           <div className="flex flex-wrap items-center gap-4 sm:gap-8 justify-center lg:justify-end border-t border-border-delicate pt-6 lg:border-t-0 lg:pt-0 w-full lg:w-auto">
+             <div className="flex flex-col gap-2 max-w-xs">
              <button type="button" disabled={notificationState === 'loading' || notificationState === 'enabled'}
                onClick={async () => {
                  setNotificationState('loading');
+                 setNotificationError(null);
                  try { await enableStaffNotifications(restaurantId); setNotificationState('enabled'); }
-                 catch (error) { console.error(error); setNotificationState('error'); }
+                 catch (error) { console.error(error); setNotificationError(error instanceof Error ? error.message : 'notification_registration_failed'); setNotificationState('error'); }
                }}
                className="flex items-center gap-2 px-3 py-2 border border-brand-gold text-brand-primary text-xs font-bold disabled:opacity-60">
                <Bell className="w-4 h-4" />
                {notificationState === 'enabled' ? tr('الإشعارات مفعلة', 'Alerts enabled') : notificationState === 'loading' ? tr('جاري التفعيل...', 'Enabling...') : notificationState === 'error' ? tr('فشل التفعيل، أعد المحاولة', 'Could not enable, retry') : tr('تفعيل تنبيهات الطلبات', 'Enable order alerts')}
              </button>
+             {notificationState === 'enabled' && <button type="button" onClick={async () => {
+               try {
+                 await showDeviceNotificationTest();
+                 setNotificationTestMessage(tr('تم إرسال تنبيه اختباري. إن لم يظهر، تحقق من إشعارات iPhone ووضع التركيز.', 'Device test queued. If hidden, check iPhone Notifications and Focus settings.'));
+               } catch (error) {
+                 console.error(error);
+                 setNotificationTestMessage(tr('تعذر عرض التنبيه الاختباري.', 'Could not display a test alert.'));
+               }
+             }} className="border border-border-delicate px-3 py-2 text-xs font-bold text-brand-primary">
+               {tr('اختبار هذا الجهاز', 'Test this device')}
+             </button>}
+             {notificationError && <p role="alert" className="text-xs text-red-700">
+               {notificationError === 'notifications_home_screen_required' ? tr('افتح التطبيق من أيقونة الشاشة الرئيسية على iPhone ثم فعّل الإشعارات.', 'Open the app from its iPhone Home Screen icon, then enable alerts.')
+                 : notificationError === 'notification_permission_denied' ? tr('اسمح بإشعارات التطبيق من إعدادات iPhone.', 'Allow this app in iPhone Notifications settings.')
+                 : notificationError === 'not_authorized_for_restaurant' ? tr('حساب المطبخ غير مخوّل لهذا المطعم.', 'This kitchen account is not authorized for this restaurant.')
+                 : tr('تعذر تسجيل الجهاز. تحقق من الاتصال وأعد المحاولة.', 'Could not register this device. Check your connection and retry.')}
+             </p>}
+             {notificationTestMessage && <p role="status" className="text-xs text-text-muted">{notificationTestMessage}</p>}
+             </div>
              <div className="text-center sm:text-right">
                 <p className="text-[9px] font-bold text-brand-gold uppercase tracking-widest opacity-60 font-sans">{tr('قيد التحضير', 'Preparing')}</p>
                 <p className="text-2xl font-display not-italic text-brand-primary font-bold"><span className="font-sans">{preparingOrders.length}</span></p>

@@ -33,7 +33,7 @@ import {
 import { db } from "../lib/supabase-db";
 import { Order, OrderStatus, WaiterRequest } from "../types";
 import { format } from "date-fns";
-import { enableStaffNotifications } from "../lib/notifications";
+import { enableStaffNotifications, showDeviceNotificationTest } from "../lib/notifications";
 import { supabase } from "../lib/supabase";
 import { localizeDeviceType, useLanguage } from "../lib/i18n";
 
@@ -61,6 +61,7 @@ export default function WaiterDashboard({
   const [loading, setLoading] = useState(true);
   const [notificationState, setNotificationState] = useState<"idle" | "loading" | "enabled" | "error">("idle");
   const [notificationError, setNotificationError] = useState<string | null>(null);
+  const [notificationTestMessage, setNotificationTestMessage] = useState<string | null>(null);
   const [rejectingOrder, setRejectingOrder] = useState<Order | null>(null);
   const [banningOrder, setBanningOrder] = useState<Order | null>(null);
 
@@ -447,9 +448,24 @@ export default function WaiterDashboard({
               <Bell className="w-4 h-4" />
               {notificationState === "enabled" ? tr('تم تفعيل الإشعارات', 'Notifications enabled') : notificationState === "loading" ? tr('جاري التفعيل...', 'Enabling...') : notificationState === "error" ? tr('تعذر التفعيل — أعد المحاولة', 'Try again') : tr('تفعيل تنبيهات النداء والطلبات', 'Enable call and order alerts')}
             </button>
+            {notificationState === "enabled" && <button type="button"
+              onClick={async () => {
+                try {
+                  await showDeviceNotificationTest();
+                  setNotificationTestMessage(tr('تم إرسال تنبيه اختباري إلى هذا الجهاز. إن لم يظهر، تحقق من إعدادات إشعارات iPhone ووضع التركيز.', 'Device test queued. If it does not appear, check iPhone Notifications and Focus settings.'));
+                } catch (error) {
+                  console.error(error);
+                  setNotificationTestMessage(tr('تعذر عرض التنبيه الاختباري على هذا الجهاز.', 'This device could not display a test alert.'));
+                }
+              }}
+              className="px-5 py-2 border border-border-delicate text-brand-primary text-[10px] font-bold">
+              {tr('اختبار إشعار هذا الجهاز', 'Test this device')}
+            </button>}
+            {notificationTestMessage && <p role="status" className="text-xs text-text-muted max-w-xs">{notificationTestMessage}</p>}
             {notificationError && <p role="alert" className="text-xs text-red-700 text-center lg:text-start max-w-xs">
               {notificationError === "web_push_not_configured" ? tr('مفتاح إشعارات المتصفح غير مضبوط على الخادم.', 'Browser push key is missing from this deployment.')
                 : notificationError === "notifications_https_required" ? tr('الإشعارات تتطلب اتصال HTTPS آمن.', 'Notifications require a secure HTTPS connection.')
+                : notificationError === "notifications_home_screen_required" ? tr('على iPhone افتح التطبيق من أيقونة الشاشة الرئيسية، ثم فعّل الإشعارات من داخل التطبيق.', 'On iPhone, open the app from its Home Screen icon, then enable notifications inside the app.')
                 : notificationError === "notifications_unsupported" ? tr('هذا المتصفح لا يدعم إشعارات الويب.', 'This browser does not support web push notifications.')
                 : notificationError === "notification_permission_denied" ? tr('تم رفض إذن الإشعارات. اسمح بالإشعارات لهذا الموقع من إعدادات المتصفح.', 'Notifications are blocked. Allow them for this site in your browser settings.')
                 : notificationError === "authentication_required" ? tr('انتهت جلسة الدخول. سجّل الدخول مجدداً.', 'Your session expired. Sign in again.')

@@ -8,6 +8,9 @@ const decodeKey = (value: string) => {
 
 export async function enableStaffNotifications(restaurantId: string) {
   if (!window.isSecureContext) throw new Error("notifications_https_required");
+  const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  if (isIos && !(window.navigator as Navigator & { standalone?: boolean }).standalone && !window.matchMedia("(display-mode: standalone)").matches)
+    throw new Error("notifications_home_screen_required");
   if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) throw new Error("notifications_unsupported");
   const publicKey = (import.meta as any).env?.VITE_WEB_PUSH_PUBLIC_KEY;
   if (!publicKey) throw new Error("web_push_not_configured");
@@ -30,4 +33,14 @@ export async function enableStaffNotifications(restaurantId: string) {
     const result = await response.json().catch(() => null);
     throw new Error(result?.error || "notification_registration_failed");
   }
+}
+
+export async function showDeviceNotificationTest() {
+  if (Notification.permission !== "granted") throw new Error("notification_permission_denied");
+  const registration = await navigator.serviceWorker.ready;
+  await registration.showNotification("NovX test", {
+    body: "If this is hidden, check iPhone Settings → Notifications and Focus.",
+    tag: "novx-device-test",
+    data: { url: window.location.pathname + window.location.search },
+  });
 }
