@@ -291,27 +291,17 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    className="w-full bg-transparent border-b border-border-delicate py-3.5 pl-20 font-display text-xl text-brand-primary placeholder:text-text-muted/20 focus:outline-none focus:border-brand-primary transition-all text-right"
+                    className={`w-full bg-transparent border-b border-border-delicate py-3.5 font-display text-xl text-brand-primary placeholder:text-text-muted/20 focus:outline-none focus:border-brand-primary transition-all ${dir === 'rtl' ? 'pl-24 text-right' : 'pl-10 pr-14 text-left'}`}
                     placeholder={tr('أدخل الرقم السري', 'Enter password')}
                   />
                   <Lock className="absolute left-0 top-1/2 -translate-y-1/2 text-border-delicate group-focus-within:text-brand-primary transition-colors w-5 h-5 opacity-40" />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute left-8 top-1/2 -translate-y-1/2 text-text-muted/40 hover:text-brand-primary hover:scale-105 transition-all text-xs cursor-pointer flex items-center gap-1.5 px-2 py-1 bg-bg-paper hover:bg-brand-primary/5 border border-border-delicate/40 select-none"
-                    title={showPassword ? tr('إخفاء كلمة المرور', 'Hide password') : tr('عرض كلمة المرور', 'Show password')}
+                    className={`absolute top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-lg text-text-muted hover:text-brand-primary hover:bg-brand-primary/5 transition-colors cursor-pointer ${dir === 'rtl' ? 'left-9' : 'right-0'}`}
+                    aria-label={showPassword ? tr('إخفاء كلمة المرور', 'Hide password') : tr('عرض كلمة المرور', 'Show password')}
                   >
-                    {showPassword ? (
-                      <>
-                        <EyeOff className="w-3.5 h-3.5" />
-                        <span className="text-[10px] font-bold">{tr('إخفاء', 'Hide')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <Eye className="w-3.5 h-3.5" />
-                        <span className="text-[10px] font-bold">{tr('عرض', 'Show')}</span>
-                      </>
-                    )}
+                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                   </button>
                 </div>
               </div>

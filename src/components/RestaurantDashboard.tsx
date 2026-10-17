@@ -98,6 +98,7 @@ export default function RestaurantDashboard({
   const [bannedDevices, setBannedDevices] = useState<any[]>([]);
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [restaurantLoadError, setRestaurantLoadError] = useState(false);
   const [showStaffModal, setShowStaffModal] = useState<{
     open: boolean;
     role: "waiter" | "kitchen";
@@ -351,15 +352,50 @@ export default function RestaurantDashboard({
   const selectedDateCancelled = selectedDateOrders.filter(o => o.status === 'cancelled').length;
 
   useEffect(() => {
+    let active = true;
+    let missingRetryTimer: number | null = null;
+    let positiveReadVersion = 0;
+    setLoading(true);
+    setRestaurantLoadError(false);
+    setRestaurant(null);
     const unsubRestaurant = onSnapshot(
       doc(db, "restaurants", restaurantId),
       (snap) => {
+        if (!active) return;
         if (snap.exists()) {
+          positiveReadVersion += 1;
+          if (missingRetryTimer !== null) window.clearTimeout(missingRetryTimer);
+          missingRetryTimer = null;
           setRestaurant({ id: snap.id, ...snap.data() } as Restaurant);
+          setRestaurantLoadError(false);
+          setLoading(false);
+        } else if (missingRetryTimer === null) {
+          // An initial empty RLS read can race session restoration. Confirm it
+          // before showing an unavailable restaurant instead of flashing it.
+          missingRetryTimer = window.setTimeout(async () => {
+            missingRetryTimer = null;
+            const retryVersion = positiveReadVersion;
+            try {
+              const retry = await getDoc(doc(db, "restaurants", restaurantId));
+              if (!active || retryVersion !== positiveReadVersion) return;
+              setRestaurant(retry.exists() ? { id: retry.id, ...retry.data() } as Restaurant : null);
+              setRestaurantLoadError(false);
+            } catch (error) {
+              if (!active || retryVersion !== positiveReadVersion) return;
+              console.error("Unable to confirm restaurant availability", error);
+              setRestaurantLoadError(true);
+            } finally {
+              if (active && retryVersion === positiveReadVersion) setLoading(false);
+            }
+          }, 1000);
         }
-        setLoading(false);
       },
-      (err) => { console.error("Unable to load restaurant", err); setLoading(false); }
+      (err) => {
+        if (!active) return;
+        console.error("Unable to load restaurant", err);
+        setRestaurantLoadError(true);
+        setLoading(false);
+      }
     );
 
     const unsubWaiters = onSnapshot(
@@ -462,6 +498,8 @@ export default function RestaurantDashboard({
     );
 
     return () => {
+      active = false;
+      if (missingRetryTimer !== null) window.clearTimeout(missingRetryTimer);
       unsubRestaurant();
       unsubWaiters();
       unsubKitchen();
@@ -474,18 +512,19 @@ export default function RestaurantDashboard({
   }, [restaurantId]);
 
   const fetchRestaurant = async () => {
+    setLoading(true);
+    setRestaurantLoadError(false);
     try {
       const docRef = doc(db, "restaurants", restaurantId);
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         setRestaurant({ id: docSnap.id, ...docSnap.data() } as Restaurant);
+      } else {
+        setRestaurant(null);
       }
     } catch (err) {
-      handleFirestoreError(
-        err,
-        OperationType.GET,
-        `restaurants/${restaurantId}`,
-      );
+      console.error("Unable to retry restaurant load", err);
+      setRestaurantLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -603,12 +642,23 @@ export default function RestaurantDashboard({
     }
   };
 
-    if (!restaurant) {
+  if (loading && (!restaurant || restaurant.id !== restaurantId)) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center rounded-2xl border border-border-delicate bg-white p-8 text-center" role="status" dir={dir}>
+        <p className="text-sm font-semibold text-text-muted">{tr('جاري تحميل بيانات المطعم...', 'Loading restaurant details...')}</p>
+      </div>
+    );
+  }
+
+  if (!restaurant || restaurant.id !== restaurantId) {
     return (
       <div className="flex flex-col items-center justify-center p-12 min-h-[60vh] text-center space-y-6 bg-white border border-border-delicate" dir={dir}>
         <AlertCircle className="w-16 h-16 text-brand-gold" />
-        <h2 className="text-3xl font-display text-brand-primary italic">{tr('المطعم غير موجود أو قد يكون تم حذفه', 'Restaurant not found')}</h2>
-        <p className="text-text-muted max-w-md">{tr('نظراً لتحديث إعدادات خادم قاعدة بيانات المشروع، قد تكون بيانات تسجيل دخولك تنتمي للنظام السابق. يرجى تسجيل الخروج ثم الدخول كأدمن لتسجيل المطعم مجدداً.', 'Your account may belong to an older database. Sign out and contact an administrator if this restaurant should exist.')}</p>
+        <h2 className="text-3xl font-display text-brand-primary">{restaurantLoadError ? tr('تعذر تحميل بيانات المطعم', 'Could not load restaurant') : tr('المطعم غير متاح حالياً', 'Restaurant unavailable')}</h2>
+        <p className="text-text-muted max-w-md">{tr('تحقق من الاتصال ثم أعد المحاولة. إذا استمرت المشكلة، تواصل مع المسؤول.', 'Check your connection and retry. If this continues, contact an administrator.')}</p>
+        <button onClick={() => void fetchRestaurant()} className="bg-brand-primary text-white px-8 py-4 font-bold text-xs uppercase tracking-widest hover:bg-brand-secondary transition-all">
+          {tr('إعادة المحاولة', 'Retry')}
+        </button>
         <button 
           onClick={() => {
             localStorage.removeItem('novx_session');
@@ -687,77 +737,6 @@ export default function RestaurantDashboard({
         </div>
       )}
 
-      {/* Header Section */}
-      <div className="bg-white border border-border-delicate p-6 sm:p-12 relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-1.5 h-full bg-brand-primary" />
-        <div className="flex flex-col lg:flex-row justify-between items-center gap-8">
-          <div className="flex flex-col sm:flex-row items-center sm:items-start text-center sm:text-right gap-6 sm:gap-8 w-full">
-            <div className="w-20 h-20 sm:w-24 sm:h-24 bg-bg-paper border border-border-delicate flex items-center justify-center overflow-hidden shrink-0">
-              {restaurant.logoUrl ? (
-                <img
-                  src={restaurant.logoUrl}
-                  className="w-full h-full object-cover"
-                  alt="Logo"
-                  referrerPolicy="no-referrer"
-                />
-              ) : (
-                <img
-                  src={systemLogo || '/ordova-mark.png'}
-                  className="w-full h-full object-contain p-1"
-                  alt="System Logo"
-                  referrerPolicy="no-referrer"
-                />
-              )}
-            </div>
-            <div className="space-y-2 text-right">
-              <div className="flex items-center gap-3">
-                <span className="text-[10px] font-bold text-brand-gold uppercase tracking-widest">
-                  {tr('لوحة التحكم للمدير المالك', 'Owner dashboard')}
-                </span>
-                {systemLogo && restaurant.logoUrl && (
-                  <div className="h-3 w-px bg-border-delicate" />
-                )}
-                {systemLogo && restaurant.logoUrl && (
-                  <img src={systemLogo} className="h-4 object-contain opacity-70" alt="System Brand" referrerPolicy="no-referrer" />
-                )}
-              </div>
-              <h1 className="text-2xl sm:text-3xl font-display text-brand-primary tracking-tight">
-                {tr('أهلاً بك،', 'Welcome,')}{" "}
-                <span className="text-brand-gold">
-                  {restaurant.restaurantName}
-                </span>
-              </h1>
-              <p className="text-xs font-bold text-text-muted/60 tracking-wider">
-                {tr('المدير المسؤول:', 'Manager:')} {restaurant.managerName}
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-6 sm:gap-8 text-center sm:text-right min-w-[240px] border-t border-border-delicate lg:border-t-0 pt-6 lg:pt-0 w-full lg:w-auto">
-            <div className="space-y-1">
-              <p className="text-[9px] font-fold text-brand-gold font-bold tracking-widest opacity-60">
-                {tr('حالة الاشتراك', 'Subscription')}
-              </p>
-              <span
-                className={`text-xs font-bold tracking-widest ${restaurant.status === "active" ? "text-emerald-600" : "text-red-600"}`}
-              >
-                {restaurant.status === "active"
-                  ? tr('باقة بريميوم نشطة', 'Active plan')
-                  : tr('منتهي الاشتراك', 'Expired')}
-              </span>
-            </div>
-            <div className="space-y-1">
-              <p className="text-[9px] font-bold text-brand-gold tracking-widest opacity-60">
-                {tr('تاريخ التجديد', 'Renewal date')}
-              </p>
-              <p className="text-sm font-bold text-brand-primary">
-                {safeFormatDate(restaurant.endDate, "yyyy/MM/dd")}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <AnimatePresence mode="wait">
         {activeTab === "overview" && (
           <motion.div
@@ -767,6 +746,47 @@ export default function RestaurantDashboard({
             exit={{ opacity: 0, y: -20 }}
             className="space-y-12"
           >
+            <section
+              className="relative overflow-hidden rounded-[28px] px-6 py-8 text-white shadow-[0_20px_45px_rgba(8,18,32,0.14)] sm:px-10 sm:py-10"
+              style={{ backgroundImage: 'linear-gradient(135deg, var(--color-brand-primary), var(--color-brand-secondary))' }}
+            >
+              <div className="pointer-events-none absolute -top-24 -end-20 h-72 w-72 rounded-full border-[36px] border-white/[0.04]" />
+              <div className="pointer-events-none absolute -bottom-32 start-1/3 h-64 w-64 rounded-full bg-white/[0.04] blur-2xl" />
+              <div className="relative flex flex-col gap-8">
+                <div className="flex flex-col items-start gap-5 sm:flex-row sm:items-center sm:gap-7">
+                  <img
+                    src={restaurant.logoUrl || systemLogo || '/ordova-mark.png'}
+                    className="h-16 w-16 shrink-0 object-contain sm:h-20 sm:w-20"
+                    alt={restaurant.logoUrl ? tr('شعار المطعم', 'Restaurant logo') : tr('شعار أوردوفا', 'Ordova logo')}
+                    referrerPolicy="no-referrer"
+                  />
+                  <div className="min-w-0 space-y-2">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/70">
+                      {tr('لوحة التحكم للمدير المالك', 'Owner dashboard')}
+                    </p>
+                    <h1 className="font-display text-2xl font-bold leading-tight sm:text-4xl">
+                      {tr('أهلاً بك،', 'Welcome,')} <span className="text-white">{restaurant.restaurantName}</span>
+                    </h1>
+                    <p className="text-sm text-white/75">
+                      {tr('المدير المسؤول:', 'Manager:')} {restaurant.managerName}
+                    </p>
+                  </div>
+                </div>
+                <div className="grid gap-4 border-t border-white/20 pt-6 sm:grid-cols-2 sm:gap-8">
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-semibold text-white/65">{tr('حالة الاشتراك', 'Subscription')}</p>
+                    <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-bold ${restaurant.status === 'active' ? 'bg-emerald-400/15 text-emerald-100' : 'bg-red-400/20 text-red-100'}`}>
+                      <span className={`h-2 w-2 rounded-full ${restaurant.status === 'active' ? 'bg-emerald-300' : 'bg-red-300'}`} />
+                      {restaurant.status === 'active' ? tr('باقة بريميوم نشطة', 'Active plan') : tr('منتهي الاشتراك', 'Expired')}
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-semibold text-white/65">{tr('تاريخ التجديد', 'Renewal date')}</p>
+                    <p className="text-base font-bold text-white">{safeFormatDate(restaurant.endDate, 'yyyy/MM/dd')}</p>
+                  </div>
+                </div>
+              </div>
+            </section>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
               <StatCard
                 title={tr('المبيعات اليومية', 'Daily sales')}
