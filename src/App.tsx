@@ -206,7 +206,7 @@ export default function App() {
         className="workspace-sidebar workspace-shell-panel fixed inset-y-0 right-0 z-50 lg:relative border-l border-border-delicate shadow-2xl hidden lg:flex flex-col overflow-hidden whitespace-nowrap"
       >
         {/* Sidebar Banner */}
-        <div className="p-12 pb-20 flex flex-col items-center relative overflow-hidden">
+        <div className={session.role === 'admin' ? 'p-8 pb-8 flex flex-col items-center relative overflow-hidden' : 'p-12 pb-20 flex flex-col items-center relative overflow-hidden'}>
           <div className="absolute top-0 left-0 w-full h-[2px] bg-brand-gold opacity-30" />
           
           {/* Mobile Close Button */}
@@ -219,20 +219,20 @@ export default function App() {
 
           <motion.div 
             whileHover={{ scale: 1.05 }}
-            className="w-20 h-20 bg-brand-primary rounded-full flex items-center justify-center mb-8 shadow-xl"
+            className={session.role === 'admin' ? 'w-14 h-14 bg-brand-primary rounded-2xl flex items-center justify-center mb-4' : 'w-20 h-20 bg-brand-primary rounded-full flex items-center justify-center mb-8 shadow-xl'}
           >
             <Utensils className="text-white w-8 h-8" />
           </motion.div>
           <div className="text-center">
-            <h1 className="text-4xl font-display text-brand-primary italic leading-none mb-4">نوفكس AI</h1>
-            <p className="text-[9px] text-brand-gold font-bold uppercase tracking-[0.5em] opacity-80 italic">{tr('لوحة إدارة المطعم', 'Restaurant workspace')}</p>
+            <h1 className={session.role === 'admin' ? 'text-2xl font-display font-bold text-brand-primary leading-none mb-2' : 'text-4xl font-display text-brand-primary italic leading-none mb-4'}>{tr('نوفكس', 'NovX')}</h1>
+            <p className="text-xs text-text-muted font-bold">{session.role === 'admin' ? tr('لوحة الإدارة', 'Admin dashboard') : tr('لوحة إدارة المطعم', 'Restaurant workspace')}</p>
           </div>
         </div>
 
         {/* Navigation Items */}
-        <nav className="flex-1 px-8 space-y-2 overflow-y-auto no-scrollbar">
-          <div className="mb-10">
-             <div className="flex items-center gap-3 mb-8">
+        <nav className={session.role === 'admin' ? 'flex-1 px-4 space-y-2 overflow-y-auto no-scrollbar' : 'flex-1 px-8 space-y-2 overflow-y-auto no-scrollbar'}>
+          <div className={session.role === 'admin' ? 'mb-5' : 'mb-10'}>
+             <div className={session.role === 'admin' ? 'flex items-center gap-3 mb-3 px-3' : 'flex items-center gap-3 mb-8'}>
                 <span className="w-8 h-[1px] bg-brand-gold" />
                 <p className="text-[10px] font-bold text-brand-gold uppercase tracking-[0.3em]">{tr('أقسام النظام', 'Workspace')}</p>
              </div>
@@ -243,19 +243,15 @@ export default function App() {
                    setActiveTab(item.id);
                    if (window.innerWidth < 1024) setIsSidebarOpen(false);
                  }}
-                 className={`w-full flex items-center gap-6 px-8 py-5 rounded-none transition-all relative group overflow-hidden border-b border-transparent hover:border-border-delicate ${
-                   activeTab === item.id 
-                    ? 'text-brand-primary italic font-medium' 
-                    : 'text-text-muted hover:text-brand-primary'
-                 }`}
+                 className={session.role === 'admin'
+                   ? `w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-colors relative group overflow-hidden ${activeTab === item.id ? 'bg-brand-primary text-white font-bold' : 'text-text-muted hover:text-brand-primary hover:bg-bg-paper'}`
+                   : `w-full flex items-center gap-6 px-8 py-5 rounded-none transition-all relative group overflow-hidden border-b border-transparent hover:border-border-delicate ${activeTab === item.id ? 'text-brand-primary italic font-medium' : 'text-text-muted hover:text-brand-primary'}`}
                >
-                 <span className={`transition-transform duration-700 ${activeTab === item.id ? 'scale-110 text-brand-gold' : 'group-hover:scale-110 opacity-40'}`}>
+                 <span className={session.role === 'admin' ? (activeTab === item.id ? 'text-white' : 'text-brand-gold') : `transition-transform duration-700 ${activeTab === item.id ? 'scale-110 text-brand-gold' : 'group-hover:scale-110 opacity-40'}`}>
                     {item.icon}
                  </span>
-                 <span className="font-display text-xl tracking-tight">{item.label}</span>
-                 {activeTab === item.id && (
-                   <motion.div layoutId="sidebarActiveInd" className="absolute left-0 w-1.5 h-full bg-brand-gold" />
-                 )}
+                 <span className={session.role === 'admin' ? 'font-display text-base' : 'font-display text-xl tracking-tight'}>{item.label}</span>
+                 {session.role !== 'admin' && activeTab === item.id && <motion.div layoutId="sidebarActiveInd" className="absolute left-0 w-1.5 h-full bg-brand-gold" />}
                </button>
              ))}
           </div>
@@ -311,9 +307,9 @@ export default function App() {
         </header>
 
         {/* Desktop Header */}
-        <header className="workspace-shell-panel hidden lg:flex items-center justify-between px-16 py-10 backdrop-blur-sm border-b border-border-delicate">
+        <header className={session.role === 'admin' ? 'workspace-shell-panel hidden lg:flex items-center justify-between px-10 py-5 backdrop-blur-sm border-b border-border-delicate' : 'workspace-shell-panel hidden lg:flex items-center justify-between px-16 py-10 backdrop-blur-sm border-b border-border-delicate'}>
            <div className="flex items-center gap-6">
-              <h2 className="text-5xl font-display text-brand-primary tracking-tight italic">
+              <h2 className={session.role === 'admin' ? 'text-2xl font-display font-bold text-brand-primary' : 'text-5xl font-display text-brand-primary tracking-tight italic'}>
                 {currentMenuItems.find(m => m.id === activeTab)?.label || tr('الرئيسية', 'Home')}
               </h2>
               <div className="w-[1px] h-10 bg-brand-gold/20" />
@@ -324,7 +320,10 @@ export default function App() {
               }</span>
            </div>
            
-           <div className="flex items-center gap-12">
+           {session.role === 'admin' ? <div className="flex items-center gap-2">
+             <button type="button" onClick={toggleLanguage} className="rounded-xl border border-border-delicate px-4 py-2 text-sm font-bold text-brand-primary">{isEnglish ? 'العربية' : 'English'}</button>
+             <button type="button" onClick={handleLogout} className="rounded-xl border border-border-delicate px-4 py-2 text-sm font-bold text-red-700">{tr('خروج', 'Sign out')}</button>
+           </div> : <div className="flex items-center gap-12">
               <div className="relative group">
                  <Search className="absolute right-0 top-1/2 -translate-y-1/2 w-5 h-5 text-text-muted/30 group-focus-within:text-brand-primary transition-colors" />
                  <input 
@@ -337,12 +336,12 @@ export default function App() {
                  <div className="w-1.5 h-1.5 bg-emerald-600 rounded-full animate-pulse" />
                  <span className="text-[9px] font-bold text-emerald-700 uppercase tracking-[0.3em]">{tr('نشط ومستمر', 'Live')}</span>
               </div>
-           </div>
+           </div>}
          </header>
 
 
         {/* Viewport for Dashboard Pages */}
-        <main className="flex-1 overflow-y-auto px-4 pt-5 pb-28 sm:p-8 lg:p-20 no-scrollbar bg-bg-paper">
+        <main className={session.role === 'admin' ? 'flex-1 overflow-y-auto px-4 pt-5 pb-28 sm:p-8 lg:px-10 lg:py-8 no-scrollbar bg-bg-paper' : 'flex-1 overflow-y-auto px-4 pt-5 pb-28 sm:p-8 lg:p-20 no-scrollbar bg-bg-paper'}>
           <AnimatePresence mode="wait">
             {session.role === 'admin' && (
               <motion.div
@@ -351,7 +350,7 @@ export default function App() {
                 exit={{ opacity: 0, scale: 0.98 }}
                 key={`admin-${activeTab}`}
               >
-                <AdminDashboard activeTab={activeTab as any} />
+                <AdminDashboard activeTab={activeTab as any} onNavigate={setActiveTab} />
               </motion.div>
             )}
             {session.role === 'restaurant' && session.restaurantId && (

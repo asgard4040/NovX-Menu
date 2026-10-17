@@ -866,7 +866,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
             className="fixed inset-0 bg-brand-primary/95 backdrop-blur-md z-[1000] flex items-center justify-center p-4 sm:p-6 text-right font-sans"
             dir={dir}
           >
-            <div className="bg-white border border-border-delicate p-6 sm:p-10 max-w-md w-full shadow-2xl space-y-8 relative">
+            <div className="bg-white border border-border-delicate rounded-2xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-5 relative">
               <div className="absolute top-0 right-0 left-0 h-1 bg-brand-gold animate-pulse" />
               
               <div className="text-center space-y-4">
@@ -874,17 +874,17 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                   <ShieldAlert className="w-8 h-8" />
                 </div>
                 <h3 className="text-2xl font-display text-brand-primary tracking-tight">
-                  {tr('نظام حماية صالة المطعم والأمن', 'Restaurant location check')}
+                  {tr('تأكيد موقعك', 'Confirm your location')}
                 </h3>
                 <p className="text-xs text-text-muted leading-relaxed">
-                  {tr(`أهلاً بك عيني في ${restaurant?.restaurantName || 'مطعمنا'}! يرجى تفعيل الموقع للتأكد من تواجدك بالداخل وحماية طلبك.`, `Welcome to ${restaurant?.restaurantName || 'our restaurant'}. Please enable location so we can verify this table request.`)}
+                  {tr(`للاطلاع على منيو ${restaurant?.restaurantName || 'المطعم'} وإرسال طلبك، اسمح بالوصول إلى موقعك وأنت داخل المطعم.`, `To browse ${restaurant?.restaurantName || 'the restaurant'} menu and order, allow location access while you are at the restaurant.`)}
                 </p>
               </div>
 
               {locationError ? (
                 <div className="bg-red-50 text-red-800 border-r-4 border-r-red-600 p-4 rounded text-xs leading-relaxed space-y-2">
                   <p className="font-bold flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 shrink-0" /> {tr('تلميح أمني', 'Location notice')}
+                    <AlertTriangle className="w-4 h-4 shrink-0" /> {tr('تعذر تأكيد الموقع', 'Could not confirm location')}
                   </p>
                   <p>{locationError}</p>
                 </div>
@@ -894,13 +894,13 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                     <AlertTriangle className="w-4 h-4 shrink-0" /> {tr('خارج صالة المطعم الجغرافية!', 'Outside the restaurant area')}
                   </p>
                   <p>
-                    {tr('أنت حالياً تبعد حوالي', 'You are currently about')} <strong className="text-amber-800">{Math.round(computedDistance)} {tr('متر', 'm')}</strong> {tr('خارج نطاق صالة الطعام.', 'outside the dining area.')}
+                    {tr('تبعد تقريباً', 'You are about')} <strong className="text-amber-800">{Math.round(computedDistance)} {tr('متر', 'm')}</strong> {tr('عن المطعم.', 'from the restaurant.')}
                   </p>
                 </div>
               ) : (
                 <div className="bg-bg-paper p-4 rounded border border-border-delicate text-xs text-text-muted leading-relaxed flex items-center gap-3">
                   <MapPin className="text-brand-gold w-5 h-5 shrink-0" />
-                  {tr('تحميل الموقع يساعدنا لتأكيد تواجد هاتفك داخل صالة المطعم وتوصيل الطعام لطاولتك بسرعة.', 'Location helps us confirm that your phone is inside the restaurant and deliver the order to your table quickly.')}
+                  {tr('يُستخدم موقعك للتحقق من وجودك قرب المطعم قبل الطلب.', 'Your location is used to check that you are near the restaurant before ordering.')}
                 </div>
               )}
 
@@ -908,7 +908,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                 <button
                   onClick={verifyLocation}
                   disabled={verifyingLocation}
-                  className="w-full py-4 bg-brand-primary text-white text-[11px] font-bold uppercase tracking-widest hover:bg-brand-secondary transition-all flex items-center justify-center gap-3 rounded-none"
+                  className="w-full py-4 bg-brand-primary text-white text-sm font-bold hover:bg-brand-secondary transition-colors flex items-center justify-center gap-3 rounded-xl"
                 >
                   {verifyingLocation ? (
                     <>
@@ -917,7 +917,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                     </>
                   ) : (
                     <>
-                      {tr('تحديد ومشاركة الموقع', 'Share location')} 📍
+                      {tr('تأكيد موقعي', 'Confirm my location')}
                     </>
                   )}
                 </button>
@@ -928,7 +928,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       )}
 
       {/* Header */}
-      <header className="fixed top-0 inset-x-0 z-40 bg-white/95 backdrop-blur-xl border-b border-border-delicate shadow-sm px-4 sm:px-8 h-16 sm:h-20 flex items-center justify-between gap-3">
+      <header className="fixed top-0 inset-x-0 z-40 bg-bg-card/95 backdrop-blur-xl border-b border-border-delicate shadow-sm px-4 sm:px-8 h-16 sm:h-20 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           <div className="bg-bg-paper border border-border-delicate p-1 rounded-xl shrink-0">
             {restaurant?.logoUrl ? (
@@ -969,7 +969,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
             aria-label={tr('طلب ويتر', 'Call waiter')}
           >
             <Bell className="w-4 h-4 shrink-0" />
-            <span className="hidden sm:inline">{tr('طلب ويتر', 'Call waiter')}</span>
+            <span className="hidden min-[390px]:inline">{tr('ويتر', 'Waiter')}</span>
           </button>
 
           <button
@@ -982,151 +982,41 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
         </div>
       </header>
 
-      {/* Hero Section */}
-      <section className="pt-32 sm:pt-36 px-6 sm:px-8 pb-12 relative overflow-hidden">
-        <div className="max-w-3xl mx-auto text-center space-y-8">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="space-y-6 flex flex-col items-center"
-          >
-            <div className="flex items-center justify-center gap-3">
-              <span className="w-10 h-[1px] bg-brand-gold" />
-              <span className="text-[11px] font-bold uppercase tracking-widest text-brand-gold">
-                {tr('أهلاً ومرحباً بكم في مطعمنا', 'Welcome to our restaurant')}
-              </span>
-              <span className="w-10 h-[1px] bg-brand-gold" />
-            </div>
-            <h2 className="text-4xl md:text-7xl font-display text-brand-primary leading-[1.2] tracking-tight">
-              {tr('صـحـة و ', 'Enjoy your ')}<span className="italic text-brand-gold">{tr('عـافـيـة.', 'meal.')}</span>
+      {/* A compact introduction keeps the food within reach on a phone. */}
+      <section className="menu-preview-header pt-24 sm:pt-28 px-4 sm:px-8 pb-5 sm:pb-7">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+          <div>
+            <p className="text-xs font-bold text-brand-gold mb-1">{tr('أهلاً بك', 'Welcome')}</p>
+            <h2 className="text-2xl sm:text-4xl font-display font-bold text-brand-primary leading-tight">
+              {tr('ماذا تحب أن تطلب؟', 'What would you like to eat?')}
             </h2>
-            <p className="text-text-muted text-base max-w-xl leading-relaxed font-light mx-auto">
-              {tr('نهتم بتقديم وجبات ومأكولات طازجة ومحضرة يومياً بأعلى درجات الجودة والنظافة لتنال رضاكم.', 'Freshly prepared food, made every day with care and quality ingredients.')}
-            </p>
-
-            {/* Callouts Section: AI Assistant, Waiter Request, & Live Order Status Tracking */}
-            <div className={`grid grid-cols-1 ${orderComplete ? 'lg:grid-cols-3 max-w-5xl' : 'md:grid-cols-2 max-w-3xl'} gap-4 w-full mt-6`}>
-              {/* AI Assistant Callout Indicator */}
-              <motion.div
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setShowAIChat(true)}
-                className="cursor-pointer flex items-center gap-4 p-5 bg-gradient-to-r from-brand-primary/5 via-brand-gold/5 to-brand-primary/5 hover:from-brand-primary/10 hover:to-brand-primary/10 border border-brand-gold/20 hover:border-brand-gold/40 rounded-2xl text-right transition-all duration-300 shadow-sm"
-              >
-                <div className="w-12 h-12 rounded-xl bg-brand-primary flex items-center justify-center text-brand-gold shadow-md shadow-brand-primary/10 shrink-0">
-                  <Sparkles className="w-6 h-6 animate-pulse" />
-                </div>
-                <div className="space-y-0.5 flex-1 select-none">
-                  <h4 className="text-sm font-bold text-brand-primary flex items-center gap-2">
-                    {tr('اطلب الآن بالذكاء الاصطناعي', 'Order with AI')} ✨
-                    <span className="text-[9px] bg-green-500/10 text-green-700 px-2 py-0.5 rounded-full font-bold shrink-0">{tr('نشط', 'Available')}</span>
-                  </h4>
-                  <p className="text-xs text-text-muted leading-relaxed font-medium">
-                    {tr('اضغط هنا للتحدث مع المساعد الذكي لمساعدتك في المنيو وتسجيل طلبك مباشرة وطاولتك تلقائياً!', 'Chat with the assistant to explore the menu and place an order for your table.')}
-                  </p>
-                </div>
-              </motion.div>
-
-              {/* Waiter Callout Indicator */}
-              <motion.div
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setShowWaiterModal(true)}
-                className="cursor-pointer flex items-center gap-4 p-5 bg-gradient-to-r from-brand-gold/5 via-brand-primary/5 to-brand-gold/5 hover:from-brand-gold/10 hover:to-brand-gold/10 border border-brand-gold/20 hover:border-brand-gold/40 rounded-2xl text-right transition-all duration-300 shadow-sm"
-              >
-                <div className="w-12 h-12 rounded-xl bg-brand-gold flex items-center justify-center text-white shadow-md shadow-brand-gold/10 shrink-0">
-                  <Bell className="w-6 h-6 animate-bounce" />
-                </div>
-                <div className="space-y-0.5 flex-1 select-none">
-                  <h4 className="text-sm font-bold text-brand-primary flex items-center gap-2">
-                    {tr('طلب الويتر الآن', 'Call a waiter')} 🔔
-                    <span className="text-[9px] bg-green-500/10 text-green-700 px-2 py-0.5 rounded-full font-bold shrink-0">{tr('نشط', 'Available')}</span>
-                  </h4>
-                  <p className="text-xs text-text-muted leading-relaxed font-medium">
-                    {tr('اضغط هنا لطلب الويتر طاولتك مباشرة مع كتابة اسمك وتحديد نوع احتياجك (حساب، استفسار...)!', 'Request help at your table for the bill, a question, or anything else.')}
-                  </p>
-                </div>
-              </motion.div>
-
-              {/* Live Order Status Tracking Card (The requested Third Rectangle!) */}
-              {orderComplete && (
-                <motion.div
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={() => setShowOrderTrackingModal(true)}
-                  className="cursor-pointer flex items-center gap-4 p-5 bg-gradient-to-r from-emerald-500/5 via-brand-gold/5 to-emerald-500/5 hover:from-emerald-500/10 hover:to-emerald-500/10 border border-emerald-500/20 hover:border-emerald-500/40 rounded-2xl text-right transition-all duration-300 shadow-sm relative overflow-hidden group"
-                >
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-white shadow-md shrink-0 relative ${
-                    orderComplete.status === "pending"
-                      ? "bg-amber-500 shadow-amber-500/10"
-                      : orderComplete.status === "preparing"
-                        ? "bg-blue-500 shadow-blue-500/10 animate-pulse"
-                        : orderComplete.status === "ready"
-                          ? "bg-emerald-500 shadow-emerald-500/10 scale-105"
-                          : orderComplete.status === "served"
-                            ? "bg-gray-500 shadow-gray-500/10"
-                            : "bg-red-500 shadow-red-500/10"
-                  }`}>
-                    {orderComplete.status === "pending" && <span className="text-xl">⌛</span>}
-                    {orderComplete.status === "preparing" && <span className="text-xl">🍳</span>}
-                    {orderComplete.status === "ready" && <span className="text-xl">🎉</span>}
-                    {orderComplete.status === "served" && <span className="text-xl">🍽️</span>}
-                    {orderComplete.status === "rejected" && <span className="text-xl">⚠️</span>}
-                    <span className="absolute -top-1.5 -right-1.5 flex h-3 w-3">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
-                    </span>
-                  </div>
-                  <div className="space-y-0.5 flex-1 min-w-0 text-right">
-                    <h4 className="text-sm font-bold text-brand-primary flex items-center gap-2">
-                      {tr('تتبع حالة طلبك الحالي', 'Track your order')} 📊
-                      <span className={`text-[9.5px] px-2.5 py-0.5 rounded-full font-bold shrink-0 ${
-                        orderComplete.status === "pending"
-                          ? "bg-amber-500/10 text-amber-700 font-bold"
-                          : orderComplete.status === "preparing"
-                            ? "bg-blue-500/10 text-blue-700 font-bold"
-                            : orderComplete.status === "ready"
-                              ? "bg-emerald-500/10 text-emerald-700 font-bold"
-                              : orderComplete.status === "served"
-                                ? "bg-gray-500/10 text-gray-700 font-bold"
-                                : "bg-red-500/10 text-red-700 font-bold"
-                      }`}>
-                        {orderComplete.status === "pending" && tr('بإنتظار الموافقة', 'Pending')}
-                        {orderComplete.status === "preparing" && tr('قيد التحضير', 'Preparing')}
-                        {orderComplete.status === "ready" && tr('جاهز للتسليم', 'Ready')}
-                        {orderComplete.status === "served" && tr('تم تسليم الطلب', 'Served')}
-                        {orderComplete.status === "rejected" && tr('مرفوض', 'Rejected')}
-                      </span>
-                    </h4>
-                    <p className="text-xs text-text-muted leading-relaxed font-medium truncate">
-                      {orderComplete.status === "pending" && tr('بإنتظار موافقة كابتن الصالة لتأكيد طاولتك...', 'Waiting for the waiter to confirm your table...')}
-                      {orderComplete.status === "preparing" && tr('المطبخ يعمل الآن على تحضير وجبتك بكل حب! 🍳', 'The kitchen is preparing your food. 🍳')}
-                      {orderComplete.status === "ready" && tr('نور الصالة! وجبتك جاهزة للتقديم والتسليم.. 🎉', 'Your order is ready to be served. 🎉')}
-                      {orderComplete.status === "served" && tr('🍽️ بالهناء والشفاء! نتمنى لك وقتاً طيباً ووجبة شهية.', '🍽️ Your order has been served. Enjoy your meal!')}
-                      {orderComplete.status === "rejected" && tr(`⚠️ نعتذر، تم رفض الطلب: ${orderComplete.rejectionReason || "تواصل معنا"}`, `⚠️ Order rejected: ${orderComplete.rejectionReason || 'Please contact staff'}`)}
-                    </p>
-                  </div>
-                </motion.div>
-              )}
-            </div>
-          </motion.div>
+            <p className="text-sm text-text-muted mt-1">{tr('اختر أطباقك وأرسل الطلب من السلة.', 'Choose your dishes, then send your order from the cart.')}</p>
+          </div>
+          {orderComplete && (
+            <button type="button" onClick={() => setShowOrderTrackingModal(true)}
+              className="inline-flex items-center justify-between gap-4 rounded-xl border border-brand-gold/40 bg-bg-card px-4 py-3 text-sm font-bold text-brand-primary shadow-sm sm:min-w-56">
+              <span className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-brand-gold" />{tr('تتبع طلبك', 'Track your order')}</span>
+              <span className="text-xs text-text-muted">{orderComplete.status === 'pending' ? tr('قيد التأكيد', 'Pending') : orderComplete.status === 'preparing' ? tr('قيد التحضير', 'Preparing') : orderComplete.status === 'ready' ? tr('جاهز', 'Ready') : orderComplete.status === 'served' ? tr('تم التقديم', 'Served') : tr('راجع الطلب', 'Check order')}</span>
+            </button>
+          )}
         </div>
       </section>
 
       {/* Search and Categories Bar */}
-      <div className="sticky top-16 sm:top-20 z-30 bg-white/95 backdrop-blur-md border-b border-border-delicate py-6 space-y-4">
+      <div className="sticky top-16 sm:top-20 z-30 bg-bg-card/95 backdrop-blur-md border-b border-border-delicate py-3 sm:py-4 space-y-3">
         {/* Search Input */}
-        <div className="max-w-xl mx-auto px-6 sm:px-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-8">
           <div className="relative">
             <span className="absolute inset-y-0 right-4 flex items-center pr-3 pointer-events-none text-brand-gold">
               <Search className="w-5 h-5" />
             </span>
             <input
               type="text"
-              placeholder={tr('ابحث عن وجبتك المفضلة بالاسم أو المكونات...', 'Search by item or ingredient...')}
+              aria-label={tr('ابحث في المنيو', 'Search menu')}
+              placeholder={tr('ابحث عن طبق أو مكون', 'Search dishes or ingredients')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-bg-paper border border-border-delicate focus:border-brand-gold pr-12 pl-4 py-3 text-sm text-brand-primary placeholder:text-text-muted/50 outline-none text-right transition-all font-bold"
+              className="w-full bg-bg-paper border border-border-delicate rounded-xl focus:border-brand-gold pr-12 pl-4 py-3 text-sm text-brand-primary placeholder:text-text-muted/60 outline-none text-right transition-all"
             />
             {searchQuery && (
               <button
@@ -1140,18 +1030,19 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
         </div>
 
         {/* Categories Carousel */}
-        <div className="flex px-4 sm:px-8 overflow-x-auto no-scrollbar gap-3 md:gap-4 justify-start md:justify-center pb-2">
+        <div className="flex max-w-7xl mx-auto px-4 sm:px-8 overflow-x-auto no-scrollbar gap-2 justify-start pb-1" aria-label={tr('أقسام المنيو', 'Menu categories')}>
           {["الكل", ...(restaurant?.categories || ["الوجبات الأساسية", "المقبلات", "الحلويات", "المشروبات"])].map((cat) => {
             const isSelected = selectedCategory === cat;
             return (
               <button
                 key={cat}
                 onClick={() => setSelectedCategory(cat)}
-                className={`flex items-center gap-2 px-5 py-3 rounded-full text-xs font-bold whitespace-nowrap transition-all duration-300 relative border ${
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-full text-xs font-bold whitespace-nowrap transition-colors relative border ${
                   isSelected
                     ? "bg-brand-primary text-white border-brand-primary shadow-[0_10px_25px_-5px_rgba(45,58,39,0.22)]"
-                    : "bg-white text-text-muted hover:text-brand-primary border-border-delicate hover:border-brand-gold/30 hover:shadow-sm"
+                    : "bg-bg-card text-text-muted hover:text-brand-primary border-border-delicate hover:border-brand-gold/30 hover:shadow-sm"
                 }`}
+                aria-pressed={isSelected}
               >
                 <span className={`transition-transform duration-300 ${isSelected ? "scale-110 text-brand-gold" : "text-text-muted/60"}`}>
                   {getCategoryIcon(cat)}
@@ -1171,22 +1062,22 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       </div>
 
       {/* Dynamic Category Editorial Header */}
-      <div className="max-w-7xl mx-auto px-6 sm:px-8 pt-10 text-right">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-border-delicate pb-5">
+      <div className="max-w-7xl mx-auto px-4 sm:px-8 pt-6 text-right">
+        <div className="flex flex-row justify-between items-center gap-4 border-b border-border-delicate pb-3">
           <div className="space-y-1">
-            <h2 className="text-2xl sm:text-3xl font-display font-medium text-brand-primary flex items-center gap-3">
+            <h2 className="text-xl sm:text-2xl font-display font-bold text-brand-primary flex items-center gap-3">
               <span className="w-1.5 h-6 bg-brand-gold rounded-full" />
               {selectedCategory === "الكل" ? tr('جميع المأكولات والأصناف', 'All menu items') : localizeCategory(selectedCategory, language)}
             </h2>
           </div>
-          <span className="text-[10px] font-bold text-brand-gold uppercase tracking-widest bg-brand-primary/5 px-4 py-2 border border-brand-primary/10 rounded-full">
+          <span className="text-xs font-bold text-text-muted whitespace-nowrap">
             {filteredMenuItems.length} {tr('أصناف متوفرة', 'items available')}
           </span>
         </div>
       </div>
 
       {/* Menu Grid */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-8 py-8 sm:py-12 text-right">
+      <main className="max-w-7xl mx-auto px-4 sm:px-8 py-5 sm:py-8 text-right">
         {filteredMenuItems.length === 0 ? (
           <div className="text-center py-24 sm:py-32 border border-dashed border-border-delicate bg-white">
             <p className="font-display italic text-2xl text-brand-gold opacity-40">
@@ -1194,7 +1085,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6">
+          <div className="menu-preview-grid grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
             {filteredMenuItems.map((item, idx) => (
               <motion.div
                 key={item.id}
@@ -1202,13 +1093,14 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: Math.min(idx * 0.05, 0.4) }}
-                className="group flex flex-col justify-between h-full bg-white border border-border-delicate hover:border-brand-gold transition-all duration-500 overflow-hidden"
+                className="menu-preview-card group flex flex-col justify-between h-full bg-bg-card border border-border-delicate rounded-2xl hover:border-brand-gold transition-colors overflow-hidden shadow-sm"
               >
                 <div>
-                  <div className="aspect-[4/3] overflow-hidden relative">
+                  <div className="aspect-[16/10] overflow-hidden relative">
                     {item.imageUrl ? (
                       <img
                         src={item.imageUrl}
+                        loading="lazy"
                         className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-105"
                         alt={item.name}
                         referrerPolicy="no-referrer"
@@ -1232,7 +1124,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                     )}
                   </div>
 
-                  <div className="p-3 sm:p-5 space-y-2 text-right">
+                  <div className="p-4 space-y-2 text-right">
                     {item.category && (
                       <p className="text-[8px] sm:text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
                         {localizeCategory(item.category, language)}
@@ -1254,7 +1146,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                   </div>
                 </div>
 
-                <div className="p-3 sm:p-5 pt-0">
+                <div className="p-4 pt-0">
                   <div className="pt-2 sm:pt-3 border-t border-border-delicate/50 flex items-center justify-between gap-2">
                     {item.isAvailable === false ? (
                       <div className="w-full text-center bg-gray-100 border border-gray-200 text-gray-400 text-[10px] sm:text-xs font-bold py-2 px-3 cursor-not-allowed select-none">
@@ -1284,7 +1176,8 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                             e.stopPropagation();
                             removeFromCart(item.id);
                           }}
-                          className="hover:opacity-75 p-1"
+                          className="hover:opacity-75 p-2 min-w-10 min-h-10 flex items-center justify-center"
+                          aria-label={tr('تقليل الكمية', 'Decrease quantity')}
                         >
                           <Minus className="w-3 h-3" />
                         </button>
@@ -1296,7 +1189,8 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                             e.stopPropagation();
                             addToCart(item.id);
                           }}
-                          className="hover:opacity-75 p-1"
+                          className="hover:opacity-75 p-2 min-w-10 min-h-10 flex items-center justify-center"
+                          aria-label={tr('زيادة الكمية', 'Increase quantity')}
                         >
                           <Plus className="w-3 h-3" />
                         </button>
@@ -1307,7 +1201,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                           e.stopPropagation();
                           addToCart(item.id);
                         }}
-                        className="w-full bg-bg-paper hover:bg-brand-primary hover:text-white border border-border-delicate text-text-muted hover:border-brand-primary text-[10px] sm:text-xs font-bold py-2 px-3 transition-all duration-300 text-center flex items-center justify-center gap-1.5"
+                        className="w-full min-h-11 bg-bg-paper hover:bg-brand-primary hover:text-white border border-border-delicate rounded-full text-text-muted hover:border-brand-primary text-xs font-bold py-2 px-3 transition-colors text-center flex items-center justify-center gap-1.5"
                       >
                         <Plus className="w-3.5 h-3.5 shrink-0" /> {tr('إضافة للسلة', 'Add to cart')}
                       </button>
@@ -1327,29 +1221,25 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 100, opacity: 0 }}
-            className="fixed bottom-6 sm:bottom-10 left-0 right-0 z-50 flex justify-center px-4 sm:px-8"
+            className="fixed bottom-0 sm:bottom-6 left-0 right-0 z-50 flex justify-center px-3 pb-[calc(.75rem+env(safe-area-inset-bottom))] sm:px-8 sm:pb-0"
           >
             <button
               onClick={() => setShowCart(true)}
-              className="bg-brand-primary text-white py-4 px-6 sm:py-6 sm:px-12 rounded-full flex items-center gap-4 sm:gap-12 shadow-[0_20px_50px_rgba(45,58,39,0.3)] hover:bg-brand-secondary transition-all group max-w-full"
+              className="bg-brand-primary text-white py-3 px-5 sm:py-4 sm:px-8 rounded-2xl flex items-center justify-between gap-4 shadow-[0_12px_35px_rgba(0,0,0,0.25)] hover:bg-brand-secondary transition-colors w-full max-w-xl"
             >
               <div className="flex items-center gap-3 sm:gap-6">
                 <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
                 <div className="text-right">
-                  <p className="text-[8px] sm:text-[10px] font-bold uppercase tracking-widest opacity-60">
-                    {tr('مراجعة وتأكيد طلبك', 'Review order')}
-                  </p>
-                  <p className="text-base sm:text-xl font-display italic leading-none">
-                    {totalItems} {tr('أطباق مختارة', 'items selected')}
+                  <p className="text-base font-bold leading-none">
+                    {tr('عرض السلة', 'View cart')} · {totalItems}
                   </p>
                 </div>
               </div>
-              <div className="h-8 sm:h-10 w-[1px] bg-white/20 shrink-0" />
               <div className="flex items-center gap-3 sm:gap-6">
-                <span className="text-base sm:text-2xl font-display whitespace-nowrap">
+                <span className="text-sm sm:text-lg font-bold whitespace-nowrap">
                   {totalPrice.toLocaleString()} IQD
                 </span>
-                <div className="bg-white/20 p-1.5 sm:p-2 rounded-full group-hover:translate-x-2 transition-transform shrink-0">
+                <div className="bg-white/20 p-1.5 sm:p-2 rounded-full shrink-0">
                   <ArrowRight className="w-4 h-4 sm:w-5 sm:h-5" />
                 </div>
               </div>

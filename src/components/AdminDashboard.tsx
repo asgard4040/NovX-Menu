@@ -81,8 +81,10 @@ const safeFormatDate = (dateVal: any, formatStr: string, fallback: string = "---
 
 export default function AdminDashboard({
   activeTab: externalTab,
+  onNavigate,
 }: {
   activeTab?: "overview" | "restaurants" | "ai" | "alerts";
+  onNavigate?: (tab: "overview" | "restaurants" | "ai" | "alerts") => void;
 }) {
   const { dir, language, tr } = useLanguage();
   const [internalTab, setInternalTab] = useState<
@@ -139,7 +141,6 @@ export default function AdminDashboard({
     totalRestaurants: 0,
     monthlyProfit: 0,
     activeSubscriptions: 0,
-    dailySubscriptions: 0,
   });
 
   useEffect(() => {
@@ -353,7 +354,6 @@ export default function AdminDashboard({
       setRestaurants(data);
       localStorage.setItem("novix_restaurants", JSON.stringify(data));
 
-      // Calculate basic stats for demo
       setStats({
         totalRestaurants: data.length,
         monthlyProfit: data.reduce(
@@ -361,7 +361,6 @@ export default function AdminDashboard({
           0,
         ),
         activeSubscriptions: data.filter((r) => r.status === "active").length,
-        dailySubscriptions: 1, // Placeholder
       });
     } catch (err) {
       console.warn("Could not load restaurants from Supabase (using local cache):", err);
@@ -377,7 +376,6 @@ export default function AdminDashboard({
               0,
             ),
             activeSubscriptions: data.filter((r) => r.status === "active").length,
-            dailySubscriptions: 1,
           });
         } catch (_) {}
       }
@@ -427,7 +425,7 @@ export default function AdminDashboard({
   });
 
   return (
-    <div className="space-y-12" dir={dir}>
+    <div className="space-y-8" dir={dir}>
       {isOffline && (
         <div className="p-4 bg-amber-50/80 border-r-4 border-brand-gold text-brand-primary text-xs font-sans font-bold flex items-center gap-3 animate-pulse">
           <span className="w-2.5 h-2.5 bg-brand-gold rounded-full shrink-0" />
@@ -441,37 +439,64 @@ export default function AdminDashboard({
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="space-y-12"
+            className="space-y-6"
           >
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <p className="text-xs font-bold text-brand-gold mb-1">{tr('نظرة عامة', 'Overview')}</p>
+                <h2 className="text-2xl sm:text-3xl font-display font-bold text-brand-primary">{tr('إدارة المطاعم ببساطة', 'Manage your restaurants')}</h2>
+                <p className="text-sm text-text-muted mt-1">{tr('تابع الشركاء والاشتراكات من مكان واحد.', 'Partners and subscriptions at a glance.')}</p>
+              </div>
+              <button type="button" onClick={() => setShowAddModal(true)}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-primary px-5 py-3 text-sm font-bold text-white hover:bg-brand-secondary min-h-12">
+                <Plus className="w-4 h-4" />{tr('إضافة مطعم', 'Add restaurant')}
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-5">
               <StatCard
                 title={tr('إجمالي المطاعم', 'Total restaurants')}
                 value={stats.totalRestaurants}
                 icon={<Building2 className="w-6 h-6 text-brand-primary" />}
-                trend={tr('+12% النمو', '+12% growth')}
               />
               <StatCard
-                title={tr('الأرباح المتوقعة', 'Expected revenue')}
+                title={tr('قيمة الاشتراكات الشهرية', 'Monthly plan value')}
                 value={`${stats.monthlyProfit.toLocaleString()} ${tr('د.ع', 'IQD')}`}
                 icon={<CreditCard className="w-6 h-6 text-emerald-500" />}
-                trend={tr('+5% زيادة', '+5% increase')}
               />
               <StatCard
                 title={tr('الاشتراكات النشطة', 'Active subscriptions')}
                 value={stats.activeSubscriptions}
                 icon={<CheckCircle2 className="w-6 h-6 text-purple-500" />}
-                trend={tr('95% استقرار', '95% stable')}
-              />
-              <StatCard
-                title={tr('طلبات اليوم', 'Today’s requests')}
-                value={stats.dailySubscriptions}
-                icon={<Users className="w-6 h-6 text-amber-500" />}
-                trend={tr('+8% اليوم', '+8% today')}
               />
             </div>
 
+            <div className="bg-white border border-border-delicate rounded-2xl p-5 sm:p-6">
+              <div className="flex items-center justify-between gap-4 mb-4">
+                <div>
+                  <h3 className="text-lg font-bold text-brand-primary">{tr('أحدث المطاعم', 'Recent restaurants')}</h3>
+                  <p className="text-xs text-text-muted">{tr('الوصول السريع إلى الشركاء', 'Quick access to your partners')}</p>
+                </div>
+                <button type="button" onClick={() => onNavigate ? onNavigate('restaurants') : setInternalTab('restaurants')}
+                  className="text-sm font-bold text-brand-primary hover:text-brand-secondary whitespace-nowrap">{tr('عرض الكل', 'View all')}</button>
+              </div>
+              {restaurants.length ? <div className="divide-y divide-border-delicate">
+                {restaurants.slice(0, 4).map((res) => <div key={res.id} className="flex items-center justify-between gap-3 py-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    {res.logoUrl ? <img src={res.logoUrl} alt="" className="w-10 h-10 rounded-xl object-cover shrink-0" /> : <div className="w-10 h-10 rounded-xl bg-bg-paper flex items-center justify-center shrink-0"><Building2 className="w-5 h-5 text-brand-primary" /></div>}
+                    <div className="min-w-0"><p className="font-bold text-brand-primary truncate">{res.restaurantName}</p><p className="text-xs text-text-muted truncate">{res.managerName}</p></div>
+                  </div>
+                  <button type="button" onClick={() => setEditingRestaurant(res)} className="shrink-0 rounded-lg border border-border-delicate px-3 py-2 text-xs font-bold text-brand-primary hover:bg-bg-paper">{tr('تعديل', 'Edit')}</button>
+                </div>)}
+              </div> : <p className="py-8 text-center text-sm text-text-muted">{loading ? tr('جاري التحميل...', 'Loading...') : tr('لا توجد مطاعم بعد.', 'No restaurants yet.')}</p>}
+            </div>
+
             {/* Support and System Branding Card */}
-            <div className="bg-white border border-border-delicate p-10 relative overflow-hidden space-y-8">
+            <details className="bg-white border border-border-delicate rounded-2xl overflow-hidden group">
+              <summary className="list-none cursor-pointer p-5 sm:p-6 flex items-center justify-between gap-4 font-bold text-brand-primary">
+                <span className="flex items-center gap-2"><Settings className="w-5 h-5" />{tr('إعدادات الدعم والشعار', 'Support and branding settings')}</span>
+                <span className="text-xs text-text-muted group-open:hidden">{tr('عرض الإعدادات', 'Open settings')}</span>
+              </summary>
+            <div className="p-5 sm:p-8 border-t border-border-delicate relative overflow-hidden space-y-8">
               <div className="absolute top-0 right-0 w-[4px] h-full bg-brand-gold" />
               
               <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-8 border-b border-border-delicate/40 pb-8">
@@ -571,6 +596,7 @@ export default function AdminDashboard({
                 </motion.div>
               )}
             </div>
+            </details>
           </motion.div>
         )}
 
@@ -580,24 +606,28 @@ export default function AdminDashboard({
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="space-y-16"
+            className="space-y-5"
           >
-            <div className="flex flex-col xl:flex-row justify-between items-stretch xl:items-center gap-6 sm:gap-10 bg-white p-5 sm:p-10 border border-border-delicate">
-              <div className="flex flex-col sm:flex-row flex-wrap gap-4 sm:gap-6 w-full xl:w-auto">
-                <div className="relative flex-1 xl:w-96 group">
-                  <Search className="absolute right-0 top-1/2 -translate-y-1/2 text-text-muted/40 w-5 h-5 group-focus-within:text-brand-primary" />
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div><h2 className="text-2xl sm:text-3xl font-display font-bold text-brand-primary">{tr('المطاعم', 'Restaurants')}</h2><p className="text-sm text-text-muted">{tr('ابحث، افتح المنيو، أو عدّل بيانات الشريك.', 'Find a partner, open its menu, or edit its details.')}</p></div>
+              <button onClick={() => setShowAddModal(true)} className="bg-brand-primary text-white px-5 py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2 hover:bg-brand-secondary transition-colors min-h-12"><Plus className="w-4 h-4" />{tr('إضافة مطعم', 'Add restaurant')}</button>
+            </div>
+            <div className="bg-white p-4 sm:p-5 border border-border-delicate rounded-2xl space-y-3">
+              <div className="relative">
+                  <Search className="absolute start-4 top-1/2 -translate-y-1/2 text-text-muted w-5 h-5 pointer-events-none" />
                   <input
                     type="text"
                     placeholder={tr('البحث عن اسم المطعم أو المدير...', 'Search restaurant or manager...')}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pr-10 py-3 sm:py-4 bg-transparent border-b border-border-delicate text-base sm:text-lg font-display focus:outline-none focus:border-brand-primary transition-all text-right"
+                    className="w-full ps-12 pe-4 py-3 bg-bg-paper border border-border-delicate rounded-xl text-sm focus:outline-none focus:border-brand-primary transition-colors"
                   />
-                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <select
                   value={filterProvince}
                   onChange={(e) => setFilterProvince(e.target.value)}
-                  className="px-4 sm:px-6 py-3 sm:py-4 bg-bg-paper border border-border-delicate rounded-none text-[10px] font-bold uppercase tracking-[0.2em] focus:outline-none cursor-pointer hover:bg-white transition-colors"
+                  className="px-3 py-3 bg-bg-paper border border-border-delicate rounded-xl text-sm focus:outline-none cursor-pointer"
                 >
                   <option value="">{tr('كل المحافظات', 'All provinces')}</option>
                   {IRAQI_PROVINCES.map((p) => (
@@ -609,7 +639,7 @@ export default function AdminDashboard({
                 <select
                   value={filterType}
                   onChange={(e) => setFilterType(e.target.value)}
-                  className="px-4 sm:px-6 py-3 sm:py-4 bg-bg-paper border border-border-delicate rounded-none text-[10px] font-bold uppercase tracking-[0.2em] focus:outline-none cursor-pointer hover:bg-white transition-colors text-right"
+                  className="px-3 py-3 bg-bg-paper border border-border-delicate rounded-xl text-sm focus:outline-none cursor-pointer"
                 >
                   <option value="">{tr('كل الباقات/الفئات', 'All plans')}</option>
                   {SUBSCRIPTION_TYPES.map((t) => (
@@ -621,25 +651,34 @@ export default function AdminDashboard({
                 <select
                   value={filterExpiry}
                   onChange={(e) => setFilterExpiry(e.target.value as any)}
-                  className="px-4 sm:px-6 py-3 sm:py-4 bg-bg-paper border border-border-delicate rounded-none text-[10px] font-bold uppercase tracking-[0.2em] focus:outline-none cursor-pointer hover:bg-white transition-colors text-right"
+                  className="px-3 py-3 bg-bg-paper border border-border-delicate rounded-xl text-sm focus:outline-none cursor-pointer"
                 >
                   <option value="all">{tr('كل حالات الاشتراك', 'All subscription statuses')}</option>
                   <option value="expired">{tr('مطاعم منتهية الاشتراك 🔴', 'Expired restaurants 🔴')}</option>
                   <option value="soon">{tr('مطاعم ستنتهي خلال 3 أيام 🟡', 'Expiring in 3 days 🟡')}</option>
                 </select>
               </div>
-              <button
-                onClick={() => setShowAddModal(true)}
-                className="bg-brand-primary text-white px-6 sm:px-12 py-4 sm:py-5 rounded-none font-bold flex items-center justify-center gap-4 shadow-xl hover:bg-brand-secondary transition-all w-full xl:w-auto"
-              >
-                <Plus className="w-5 h-5" />
-                <span className="text-[10px] uppercase tracking-widest font-bold">
-                  {tr('تسجيل وإضافة شريك جديد', 'Add restaurant')}
-                </span>
-              </button>
             </div>
 
-            <div className="bg-white border border-border-delicate overflow-hidden">
+            <p className="text-xs text-text-muted">{filteredRestaurants.length} {tr('مطاعم', 'restaurants')}</p>
+            {!loading && filteredRestaurants.length === 0 && <div className="bg-white border border-dashed border-border-delicate rounded-2xl p-8 text-center text-sm text-text-muted">{tr('لا توجد مطاعم تطابق البحث.', 'No restaurants match your search.')}</div>}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 lg:hidden">
+              {filteredRestaurants.map((res) => <article key={res.id} className="bg-white border border-border-delicate rounded-2xl p-4 space-y-4">
+                <div className="flex items-center gap-3">
+                  {res.logoUrl ? <img src={res.logoUrl} alt="" className="w-12 h-12 rounded-xl object-cover" /> : <div className="w-12 h-12 rounded-xl bg-bg-paper flex items-center justify-center"><Building2 className="w-5 h-5 text-brand-primary" /></div>}
+                  <div className="min-w-0 flex-1"><h3 className="font-bold text-brand-primary truncate">{res.restaurantName}</h3><p className="text-xs text-text-muted truncate">{res.managerName} · {localizeProvince(res.province, language)}</p></div>
+                  <span className={`text-xs font-bold ${res.status === 'active' ? 'text-emerald-700' : 'text-red-700'}`}>{res.status === 'active' ? tr('نشط', 'Active') : tr('موقوف', 'Paused')}</span>
+                </div>
+                <p className="text-xs text-text-muted">{tr('الباقة', 'Plan')}: {res.subscriptionType} · {tr('تنتهي', 'Expires')} {safeFormatDate(res.endDate, 'yyyy-MM-dd')}</p>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => setEditingRestaurant(res)} className="rounded-lg bg-brand-primary text-white px-3 py-2 text-xs font-bold">{tr('تعديل', 'Edit')}</button>
+                  <a href={`${window.location.origin}?restaurantId=${res.id}`} target="_blank" rel="noreferrer" className="rounded-lg border border-border-delicate px-3 py-2 text-xs font-bold text-brand-primary">{tr('فتح المنيو', 'Open menu')}</a>
+                  <button type="button" onClick={() => { navigator.clipboard.writeText(`${window.location.origin}?loginRestaurantId=${res.id}`); setCopiedId(res.id); setTimeout(() => setCopiedId(null), 2000); }} className="rounded-lg border border-border-delicate px-3 py-2 text-xs font-bold text-brand-primary">{copiedId === res.id ? tr('تم النسخ', 'Copied') : tr('نسخ رابط الدخول', 'Copy login link')}</button>
+                  <button type="button" onClick={() => toggleStatus(res.id, res.status)} className="rounded-lg border border-border-delicate px-3 py-2 text-xs font-bold text-brand-primary">{res.status === 'active' ? tr('إيقاف', 'Pause') : tr('تفعيل', 'Reactivate')}</button>
+                </div>
+              </article>)}
+            </div>
+            <div className="hidden lg:block bg-white border border-border-delicate rounded-2xl overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-right" dir={dir}>
                   <thead>
@@ -1346,37 +1385,28 @@ function StatCard({
   title,
   value,
   icon,
-  trend,
 }: {
   title: string;
   value: string | number;
   icon: React.ReactNode;
-  trend: string;
 }) {
   return (
-    <div className="bg-white p-6 sm:p-10 rounded-none border border-border-delicate shadow-sm relative overflow-hidden group hover:border-brand-gold/30 transition-all">
-      <div className="flex justify-between items-start mb-6 sm:mb-12 relative z-10">
-        <div className="p-3 sm:p-4 bg-bg-paper rounded-full border border-border-delicate group-hover:bg-brand-primary group-hover:text-white transition-all duration-500">
+    <div className="bg-white p-5 sm:p-6 rounded-2xl border border-border-delicate shadow-sm relative overflow-hidden">
+      <div className="flex justify-between items-start mb-4 relative z-10">
+        <div className="p-3 bg-bg-paper rounded-xl border border-border-delicate">
           {React.cloneElement(icon as React.ReactElement, {
             className: "w-5 h-5 transition-colors",
           })}
         </div>
-        <span
-          className={`text-[9px] font-bold px-4 py-1.5 rounded-full uppercase tracking-[0.2em] italic border border-border-delicate ${trend.includes("+") ? "text-emerald-700 bg-emerald-50" : "text-text-muted bg-bg-paper"}`}
-        >
-          {trend}
-        </span>
       </div>
       <div className="relative z-10">
-        <p className="text-brand-gold text-[10px] font-bold uppercase tracking-[0.4em] mb-2 sm:mb-4">
+        <p className="text-text-muted text-sm font-bold mb-2">
           {title}
         </p>
-        <p className="text-3xl sm:text-4xl font-display text-brand-primary italic tracking-tight tabular-nums leading-none">
+        <p className="text-2xl sm:text-3xl font-display font-bold text-brand-primary tracking-tight tabular-nums leading-none">
           {value}
         </p>
       </div>
-      {/* Decorative corner accent */}
-      <div className="absolute top-0 right-0 w-8 h-8 border-t border-r border-brand-gold/10 opacity-0 group-hover:opacity-100 transition-opacity" />
     </div>
   );
 }
