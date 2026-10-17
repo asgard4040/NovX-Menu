@@ -70,17 +70,88 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     try {
       if (!supabaseConfigured) throw new Error('client_config_missing');
       if (role !== 'admin' && !loginRestaurantId) throw new Error('restaurant_required');
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role, username, password, restaurantId: loginRestaurantId }),
-      });
-      if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('api_unavailable');
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'invalid_credentials');
-      const { error: sessionError } = await supabase.auth.setSession({ access_token: result.accessToken, refresh_token: result.refreshToken });
-      if (sessionError) throw sessionError;
-      onLogin(result.session as UserSession);
+
+      let sessionData: UserSession | null = null;
+
+      try {
+        const response = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role, username, password, restaurantId: loginRestaurantId }),
+        });
+
+        if (response.headers.get('content-type')?.includes('application/json')) {
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || 'invalid_credentials');
+          const { error: sessionError } = await supabase.auth.setSession({
+            access_token: result.accessToken,
+            refresh_token: result.refreshToken,
+          });
+          if (sessionError) throw sessionError;
+          sessionData = result.session as UserSession;
+        } else {
+          throw new Error('api_unavailable');
+        }
+      } catch (apiErr: any) {
+        // If the serverless/backend API is unreachable or returns an HTML gateway error,
+        // fall back directly to Supabase client authentication so sign-in never fails unnecessarily.
+        const isApiUnavailable = apiErr instanceof TypeError || apiErr?.message === 'api_unavailable';
+        if (isApiUnavailable && supabaseConfigured) {
+          const email = username.includes('@')
+            ? username.trim().toLowerCase()
+            : `${username.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '')}@accounts.novx.invalid`;
+
+          const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+            email,
+            password,
+          });
+
+          if (authError || !authData.session) {
+            throw new Error('invalid_credentials');
+          }
+
+          const user = authData.user;
+          const metadata = user.app_metadata || {};
+
+          if (role === 'admin') {
+            if (metadata.system_role !== 'admin') throw new Error('role_mismatch');
+            sessionData = {
+              role: 'admin',
+              id: user.id,
+              name: user.user_metadata?.name || username,
+            };
+          } else {
+            const { data: member, error: memErr } = await supabase
+              .from('restaurant_members')
+              .select('role,restaurant_id')
+              .eq('user_id', user.id)
+              .eq('restaurant_id', loginRestaurantId)
+              .eq('active', true)
+              .maybeSingle();
+
+            const memberRole = member?.role === 'owner' || member?.role === 'manager'
+              ? 'restaurant'
+              : member?.role;
+
+            if (memErr || !member || memberRole !== role) {
+              throw new Error('role_mismatch');
+            }
+
+            sessionData = {
+              role: memberRole as UserSession['role'],
+              id: user.id,
+              restaurantId: member.restaurant_id,
+              name: user.user_metadata?.name || username,
+            };
+          }
+        } else {
+          throw apiErr;
+        }
+      }
+
+      if (sessionData) {
+        onLogin(sessionData);
+      }
     } catch (err) {
       console.error(err);
       const code = err instanceof TypeError ? 'api_unavailable' : err instanceof Error ? err.message : 'invalid_credentials';

@@ -45,6 +45,12 @@ function parseCustomerLocation(value: unknown) {
 }
 
 const app = express();
+app.use((req: any, _res: any, next: any) => {
+  if (req.body !== undefined && !req._body) {
+    req._body = true;
+  }
+  next();
+});
 app.use(express.json({ limit: "256kb" }));
 
   app.get("/api/home-screen-manifest", (req, res) => {

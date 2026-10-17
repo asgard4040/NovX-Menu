@@ -72,11 +72,36 @@ export default function App() {
     // trust the role or restaurant stored by the browser.
     supabase.auth.getSession().then(async ({ data }) => {
       if (!data.session) { localStorage.removeItem('novx_session'); return; }
-      const response = await fetch('/api/auth/session', { headers: { Authorization: `Bearer ${data.session.access_token}` } });
-      if (!response.ok) { await supabase.auth.signOut(); localStorage.removeItem('novx_session'); return; }
-      const verifiedSession = await response.json() as UserSession;
-      setSession(verifiedSession);
-      localStorage.setItem('novx_session', JSON.stringify(verifiedSession));
+      try {
+        const response = await fetch('/api/auth/session', { headers: { Authorization: `Bearer ${data.session.access_token}` } });
+        if (response.ok) {
+          const verifiedSession = await response.json() as UserSession;
+          setSession(verifiedSession);
+          localStorage.setItem('novx_session', JSON.stringify(verifiedSession));
+          return;
+        }
+        if (response.status === 401 || response.status === 403) {
+          await supabase.auth.signOut();
+          localStorage.removeItem('novx_session');
+          setSession(null);
+          return;
+        }
+      } catch (e) {
+        console.warn('Session verification network error, trying fallback:', e);
+      }
+
+      // Fallback verification from client Supabase session
+      const user = data.session.user;
+      if (user.app_metadata?.system_role === 'admin') {
+        const fallbackSession: UserSession = { role: 'admin', id: user.id, name: user.user_metadata?.name || 'admin' };
+        setSession(fallbackSession);
+        localStorage.setItem('novx_session', JSON.stringify(fallbackSession));
+      } else {
+        const cached = localStorage.getItem('novx_session');
+        if (cached) {
+          try { setSession(JSON.parse(cached)); } catch {}
+        }
+      }
     });
   }, []);
 
