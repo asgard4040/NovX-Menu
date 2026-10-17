@@ -270,10 +270,20 @@ app.use(express.json({ limit: "256kb" }));
   });
   app.post("/api/push-subscriptions", async (req, res) => {
     const bearer = req.headers.authorization?.replace(/^Bearer /, ""); if (!bearer) return res.status(401).end();
+    if (!supabaseUrl || !supabaseAnonKey) return res.status(503).json({ error: "server_config_missing" });
+    const restaurantId = String(req.body?.restaurantId || "");
+    const subscription = req.body?.subscription;
+    if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(restaurantId)
+      || typeof subscription?.endpoint !== "string" || subscription.endpoint.length > 2048
+      || !subscription.endpoint.startsWith("https://")
+      || typeof subscription?.keys?.auth !== "string" || typeof subscription?.keys?.p256dh !== "string")
+      return res.status(400).json({ error: "invalid_push_subscription" });
     const userClient = createClient(supabaseUrl, supabaseAnonKey, { global: { headers: { Authorization: `Bearer ${bearer}` } }, auth: { persistSession: false } });
     const { data: identity } = await userClient.auth.getUser(bearer); if (!identity.user) return res.status(401).end();
-    const subscription = req.body?.subscription; const { error } = await userClient.from("push_subscriptions").upsert({ restaurant_id: req.body?.restaurantId, user_id: identity.user.id, endpoint: subscription?.endpoint, subscription }, { onConflict: "endpoint" });
-    if (error) return res.status(403).json({ error: error.message }); return res.status(204).end();
+    const { data: member } = await userClient.from("restaurant_members").select("role").eq("restaurant_id", restaurantId).eq("user_id", identity.user.id).eq("active", true).maybeSingle();
+    if (!member || !["owner", "manager", "waiter"].includes(member.role)) return res.status(403).json({ error: "not_authorized_for_restaurant" });
+    const { error } = await userClient.from("push_subscriptions").upsert({ restaurant_id: restaurantId, user_id: identity.user.id, endpoint: subscription.endpoint, subscription }, { onConflict: "endpoint" });
+    if (error) return res.status(403).json({ error: error.code === "23505" ? "subscription_conflict" : "notification_registration_failed" }); return res.status(204).end();
   });
   app.post("/api/chat", rateLimit, async (req, res) => {
     try {

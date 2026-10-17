@@ -60,6 +60,7 @@ export default function WaiterDashboard({
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [notificationState, setNotificationState] = useState<"idle" | "loading" | "enabled" | "error">("idle");
+  const [notificationError, setNotificationError] = useState<string | null>(null);
   const [rejectingOrder, setRejectingOrder] = useState<Order | null>(null);
   const [banningOrder, setBanningOrder] = useState<Order | null>(null);
 
@@ -427,8 +428,9 @@ export default function WaiterDashboard({
             <button
               onClick={async () => {
                 setNotificationState("loading");
+                setNotificationError(null);
                 try { await enableStaffNotifications(restaurantId); setNotificationState("enabled"); }
-                catch (error) { console.error(error); setNotificationState("error"); }
+                catch (error) { console.error(error); setNotificationError(error instanceof Error ? error.message : "notification_registration_failed"); setNotificationState("error"); }
               }}
               disabled={notificationState === "loading" || notificationState === "enabled"}
               className="flex items-center justify-center gap-2 px-5 py-3 border border-brand-gold text-brand-primary text-[10px] font-bold disabled:opacity-60"
@@ -436,6 +438,16 @@ export default function WaiterDashboard({
               <Bell className="w-4 h-4" />
               {notificationState === "enabled" ? tr('تم تفعيل الإشعارات', 'Notifications enabled') : notificationState === "loading" ? tr('جاري التفعيل...', 'Enabling...') : notificationState === "error" ? tr('تعذر التفعيل — أعد المحاولة', 'Try again') : tr('تفعيل إشعارات النداء', 'Enable call alerts')}
             </button>
+            {notificationError && <p role="alert" className="text-xs text-red-700 text-center lg:text-start max-w-xs">
+              {notificationError === "web_push_not_configured" ? tr('مفتاح إشعارات المتصفح غير مضبوط على الخادم.', 'Browser push key is missing from this deployment.')
+                : notificationError === "notifications_https_required" ? tr('الإشعارات تتطلب اتصال HTTPS آمن.', 'Notifications require a secure HTTPS connection.')
+                : notificationError === "notifications_unsupported" ? tr('هذا المتصفح لا يدعم إشعارات الويب.', 'This browser does not support web push notifications.')
+                : notificationError === "notification_permission_denied" ? tr('تم رفض إذن الإشعارات. اسمح بالإشعارات لهذا الموقع من إعدادات المتصفح.', 'Notifications are blocked. Allow them for this site in your browser settings.')
+                : notificationError === "authentication_required" ? tr('انتهت جلسة الدخول. سجّل الدخول مجدداً.', 'Your session expired. Sign in again.')
+                : notificationError === "not_authorized_for_restaurant" ? tr('حسابك غير مخوّل لاستقبال إشعارات هذا المطعم.', 'Your account is not authorized for this restaurant.')
+                : notificationError === "subscription_conflict" ? tr('هذا المتصفح مرتبط بحساب موظف آخر. ألغِ إشعارات الموقع من إعدادات المتصفح ثم أعد المحاولة.', 'This browser is linked to another staff account. Reset this site’s notification subscription in browser settings, then try again.')
+                : tr('تعذر تسجيل الجهاز للإشعارات. تحقق من اتصالك وأعد المحاولة.', 'Could not register this device for notifications. Check your connection and try again.')}
+            </p>}
           </div>
         </div>
       </div>
