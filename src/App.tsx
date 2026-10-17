@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   BarChart3, 
@@ -58,6 +58,19 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [workspaceTheme, setWorkspaceTheme] = useState<MenuTheme>(DEFAULT_THEME);
   const [systemLogo, setSystemLogo] = useState(() => localStorage.getItem('novix_system_logo') || '');
+  const mobileNavRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const nav = mobileNavRef.current;
+    if (!nav) return;
+    const scrollNavWithWheel = (event: WheelEvent) => {
+      if (nav.scrollWidth <= nav.clientWidth || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      event.preventDefault();
+      nav.scrollLeft += event.deltaY * (getComputedStyle(nav).direction === 'rtl' ? -1 : 1);
+    };
+    nav.addEventListener('wheel', scrollNavWithWheel, { passive: false });
+    return () => nav.removeEventListener('wheel', scrollNavWithWheel);
+  }, [session?.role]);
 
   useEffect(() => {
     // Set initial sidebar state based on screen size
@@ -240,10 +253,10 @@ export default function App() {
       <motion.aside 
         initial={false}
         animate={{ width: isSidebarOpen ? '320px' : '0px', opacity: isSidebarOpen ? 1 : 0 }}
-        className="workspace-sidebar workspace-shell-panel fixed inset-y-0 right-0 z-50 lg:relative border-l border-border-delicate shadow-2xl hidden lg:flex flex-col overflow-hidden whitespace-nowrap"
+        className="workspace-sidebar workspace-shell-panel fixed inset-y-0 right-0 z-50 hidden flex-col overflow-hidden whitespace-nowrap border-l border-border-delicate shadow-2xl lg:relative lg:flex lg:h-screen lg:min-h-0"
       >
         {/* Sidebar Banner */}
-        <div className={session.role === 'admin' ? 'p-8 pb-8 flex flex-col items-center relative overflow-hidden' : 'p-12 pb-20 flex flex-col items-center relative overflow-hidden'}>
+        <div className="relative flex shrink-0 flex-col items-center overflow-hidden p-8 pb-8">
           <div className="absolute top-0 left-0 w-full h-[2px] bg-brand-gold opacity-30" />
           
           {/* Mobile Close Button */}
@@ -267,7 +280,7 @@ export default function App() {
         </div>
 
         {/* Navigation Items */}
-        <nav className={session.role === 'admin' ? 'flex-1 px-4 space-y-2 overflow-y-auto no-scrollbar' : 'flex-1 px-8 space-y-2 overflow-y-auto no-scrollbar'}>
+        <nav className={session.role === 'admin' ? 'sidebar-scroll min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-y-contain px-4' : 'sidebar-scroll min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-y-contain px-8'}>
           <div className={session.role === 'admin' ? 'mb-5' : 'mb-10'}>
              <div className={session.role === 'admin' ? 'flex items-center gap-3 mb-3 px-3' : 'flex items-center gap-3 mb-8'}>
                 <span className="w-8 h-[1px] bg-brand-gold" />
@@ -312,7 +325,7 @@ export default function App() {
         </nav>
 
         {/* Sidebar Footer User Info */}
-        <div className="p-10 bg-bg-paper mt-auto border-t border-border-delicate">
+        <div className="shrink-0 border-t border-border-delicate bg-bg-paper p-6 lg:p-8">
            <div className="flex items-center gap-5">
               <div className="w-12 h-12 rounded-full border border-brand-gold/30 flex items-center justify-center font-display italic text-brand-primary bg-white">
                  {session.name?.[0] || session.role[0].toUpperCase()}
@@ -425,7 +438,7 @@ export default function App() {
       </div>
 
       {session.role !== 'waiter' && session.role !== 'kitchen' && (
-        <nav className="mobile-bottom-nav lg:hidden fixed bottom-0 inset-x-0 z-50 flex items-stretch gap-1 overflow-x-auto border-t border-border-delicate workspace-shell-panel px-2 pt-2 pb-[calc(.5rem+env(safe-area-inset-bottom))] shadow-[0_-10px_30px_rgba(0,0,0,.10)]" aria-label={tr('التنقل الرئيسي', 'Main navigation')}>
+        <nav ref={mobileNavRef} className="mobile-bottom-nav lg:hidden fixed bottom-0 inset-x-0 z-50 flex items-stretch gap-1 overflow-x-auto border-t border-border-delicate workspace-shell-panel px-2 pt-2 pb-[calc(.5rem+env(safe-area-inset-bottom))] shadow-[0_-10px_30px_rgba(0,0,0,.10)]" aria-label={tr('التنقل الرئيسي', 'Main navigation')}>
           {currentMenuItems.map((item) => (
             <button
               key={item.id}

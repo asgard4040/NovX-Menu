@@ -6,6 +6,7 @@ import { Order, OrderStatus } from '../types';
 import { format } from 'date-fns';
 import { useLanguage } from '../lib/i18n';
 import { enableStaffNotifications, showDeviceNotificationTest } from '../lib/notifications';
+import { StaffWelcomeCard } from './StaffWelcomeCard';
 
 const safeFormatDate = (dateVal: any, formatStr: string, fallback: string = "---") => {
   if (!dateVal) return fallback;
@@ -184,23 +185,21 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
 
   return (
     <div className="space-y-8 lg:space-y-12 pb-24 lg:pb-0" dir={dir}>
-      {/* Header */}
-      <div className="bg-white border border-border-delicate p-6 sm:p-12 relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-1.5 h-full bg-brand-primary" />
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-8">
-          <div className="flex flex-col sm:flex-row items-center sm:items-start text-center sm:text-right gap-6 sm:gap-8 w-full">
-            <div className="w-16 h-16 sm:w-20 sm:h-20 bg-bg-paper border border-border-delicate flex items-center justify-center overflow-hidden shrink-0">
-               <img src={systemLogo || '/ordova-mark.png'} className="w-full h-full object-contain p-1" alt="System Logo" referrerPolicy="no-referrer" />
-            </div>
-            <div className="space-y-1">
-              <p className="text-[10px] font-bold text-brand-gold uppercase tracking-[0.5em] italic">{tr('شاشات المطبخ', 'Kitchen display')}</p>
-              <h1 className="text-3xl sm:text-4xl font-display text-brand-primary italic tracking-tighter">{tr('قسم الطهي والتحضير', 'Kitchen workspace')}</h1>
-              <p className="text-xs font-bold text-text-muted/60 uppercase tracking-widest">{tr('إدارة متكاملة للطلبات مباشرة', 'Live preparation workflow')}</p>
-            </div>
-          </div>
-          
-          <div className="flex flex-wrap items-center gap-4 sm:gap-8 justify-center lg:justify-end border-t border-border-delicate pt-6 lg:border-t-0 lg:pt-0 w-full lg:w-auto">
-             <div className="flex flex-col gap-2 max-w-xs">
+      <div className={mobileView === 'preparing' ? '' : 'hidden xl:block'}>
+        <StaffWelcomeCard
+          logoUrl={restaurant?.logoUrl || systemLogo || '/ordova-mark.png'}
+          logoAlt={restaurant?.logoUrl ? tr('شعار المطعم', 'Restaurant logo') : tr('شعار أوردوفا', 'Ordova logo')}
+          eyebrow={restaurant?.restaurantName || tr('شاشات المطبخ', 'Kitchen display')}
+          title={tr('قسم الطهي والتحضير', 'Kitchen workspace')}
+          description={tr('إدارة متكاملة للطلبات مباشرة', 'Live preparation workflow')}
+          metrics={[
+            { label: tr('قيد التحضير', 'Preparing'), value: preparingOrders.length },
+            { label: tr('جاهز للتقديم', 'Ready'), value: readyOrders.length },
+          ]}
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border-delicate bg-white p-3 sm:p-4">
              <button type="button" disabled={notificationState === 'loading' || notificationState === 'enabled'}
                onClick={async () => {
                  setNotificationState('loading');
@@ -208,7 +207,7 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
                  try { await enableStaffNotifications(restaurantId); setNotificationState('enabled'); }
                  catch (error) { console.error(error); setNotificationError(error instanceof Error ? error.message : 'notification_registration_failed'); setNotificationState('error'); }
                }}
-               className="flex items-center gap-2 px-3 py-2 border border-brand-gold text-brand-primary text-xs font-bold disabled:opacity-60">
+               className="flex items-center gap-2 rounded-xl border border-brand-gold px-4 py-3 text-xs font-bold text-brand-primary disabled:opacity-60">
                <Bell className="w-4 h-4" />
                {notificationState === 'enabled' ? tr('الإشعارات مفعلة', 'Alerts enabled') : notificationState === 'loading' ? tr('جاري التفعيل...', 'Enabling...') : notificationState === 'error' ? tr('فشل التفعيل، أعد المحاولة', 'Could not enable, retry') : tr('تفعيل تنبيهات الطلبات', 'Enable order alerts')}
              </button>
@@ -220,27 +219,16 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
                  console.error(error);
                  setNotificationTestMessage(tr('تعذر عرض التنبيه الاختباري.', 'Could not display a test alert.'));
                }
-             }} className="border border-border-delicate px-3 py-2 text-xs font-bold text-brand-primary">
+             }} className="rounded-xl border border-border-delicate px-4 py-3 text-xs font-bold text-brand-primary">
                {tr('اختبار هذا الجهاز', 'Test this device')}
              </button>}
-             {notificationError && <p role="alert" className="text-xs text-red-700">
+              {notificationError && <p role="alert" className="w-full text-xs text-red-700">
                {notificationError === 'notifications_home_screen_required' ? tr('افتح التطبيق من أيقونة الشاشة الرئيسية على iPhone ثم فعّل الإشعارات.', 'Open the app from its iPhone Home Screen icon, then enable alerts.')
                  : notificationError === 'notification_permission_denied' ? tr('اسمح بإشعارات التطبيق من إعدادات iPhone.', 'Allow this app in iPhone Notifications settings.')
                  : notificationError === 'not_authorized_for_restaurant' ? tr('حساب المطبخ غير مخوّل لهذا المطعم.', 'This kitchen account is not authorized for this restaurant.')
                  : tr('تعذر تسجيل الجهاز. تحقق من الاتصال وأعد المحاولة.', 'Could not register this device. Check your connection and retry.')}
              </p>}
-             {notificationTestMessage && <p role="status" className="text-xs text-text-muted">{notificationTestMessage}</p>}
-             </div>
-             <div className="text-center sm:text-right">
-                <p className="text-[9px] font-bold text-brand-gold uppercase tracking-widest opacity-60 font-sans">{tr('قيد التحضير', 'Preparing')}</p>
-                <p className="text-2xl font-display not-italic text-brand-primary font-bold"><span className="font-sans">{preparingOrders.length}</span></p>
-             </div>
-             <div className="text-center sm:text-right">
-                <p className="text-[9px] font-bold text-brand-gold uppercase tracking-widest opacity-60 font-sans">{tr('جاهز للتقديم', 'Ready')}</p>
-                <p className="text-2xl font-display not-italic text-emerald-600 font-bold"><span className="font-sans">{readyOrders.length}</span></p>
-             </div>
-          </div>
-        </div>
+              {notificationTestMessage && <p role="status" className="w-full text-xs text-text-muted">{notificationTestMessage}</p>}
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-12">

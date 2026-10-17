@@ -36,6 +36,7 @@ import { format } from "date-fns";
 import { enableStaffNotifications, showDeviceNotificationTest } from "../lib/notifications";
 import { supabase } from "../lib/supabase";
 import { localizeDeviceType, useLanguage } from "../lib/i18n";
+import { StaffWelcomeCard } from "./StaffWelcomeCard";
 
 const safeFormatDate = (dateVal: any, formatStr: string, fallback: string = "---") => {
   if (!dateVal) return fallback;
@@ -405,29 +406,22 @@ export default function WaiterDashboard({
 
   return (
     <div className="space-y-8 lg:space-y-12 pb-24 lg:pb-0" dir={dir}>
-      {/* Header */}
-      <div className="bg-white border border-border-delicate p-6 sm:p-12 relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-1.5 h-full bg-brand-primary" />
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-8">
-          <div className="flex flex-col sm:flex-row items-center sm:items-start text-center sm:text-right gap-6 sm:gap-8 w-full">
-            <div className="w-16 h-16 sm:w-20 sm:h-20 bg-bg-paper border border-border-delicate flex items-center justify-center overflow-hidden shrink-0">
-               <img src={systemLogo || '/ordova-mark.png'} className="w-full h-full object-contain p-1" alt="System Logo" referrerPolicy="no-referrer" />
-            </div>
-            <div className="space-y-1">
-              <p className="text-[10px] font-bold text-brand-gold uppercase tracking-[0.5em] italic">
-                {tr('إدارة وتنسيق الردهة', 'Dining room operations')}
-              </p>
-              <h1 className="text-3xl sm:text-4xl font-display text-brand-primary italic tracking-tighter">
-                {tr('لوحة تحكم الخدمة (الموظفين)', 'Waiter workspace')}
-              </h1>
-              <p className="text-xs font-bold text-text-muted/60 uppercase tracking-widest">
-                {tr('متابعة وخدمة الطاولات في الوقت الفعلي', 'Live table service and order tracking')}
-              </p>
-            </div>
-          </div>
+      {view === "dashboard" && (
+        <StaffWelcomeCard
+          logoUrl={restaurant?.logoUrl || systemLogo || '/ordova-mark.png'}
+          logoAlt={restaurant?.logoUrl ? tr('شعار المطعم', 'Restaurant logo') : tr('شعار أوردوفا', 'Ordova logo')}
+          eyebrow={restaurant?.restaurantName || tr('إدارة وتنسيق الردهة', 'Dining room operations')}
+          title={tr('لوحة تحكم الخدمة', 'Waiter workspace')}
+          description={tr('متابعة وخدمة الطاولات في الوقت الفعلي', 'Live table service and order tracking')}
+          metrics={[
+            { label: tr('طلبات جديدة', 'New orders'), value: pendingOrders.length },
+            { label: tr('نداءات معلقة', 'Pending calls'), value: pendingRequestsCount },
+          ]}
+        />
+      )}
 
-          <div className="flex flex-col gap-2 w-full lg:w-auto shrink-0">
-            <div className="flex items-center justify-center gap-4 px-6 py-3 bg-bg-paper border border-border-delicate">
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border-delicate bg-white p-3 sm:p-4">
+            <div className="flex items-center justify-center gap-3 rounded-xl bg-bg-paper px-4 py-3">
               <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shrink-0" />
               <span className="text-[10px] font-bold text-brand-primary uppercase tracking-widest">{tr('تحديث ومزامنة فورية حية', 'Live sync')}</span>
             </div>
@@ -439,7 +433,7 @@ export default function WaiterDashboard({
                 catch (error) { console.error(error); setNotificationError(error instanceof Error ? error.message : "notification_registration_failed"); setNotificationState("error"); }
               }}
               disabled={notificationState === "loading" || notificationState === "enabled"}
-              className="flex items-center justify-center gap-2 px-5 py-3 border border-brand-gold text-brand-primary text-[10px] font-bold disabled:opacity-60"
+              className="flex items-center justify-center gap-2 rounded-xl border border-brand-gold px-4 py-3 text-[10px] font-bold text-brand-primary disabled:opacity-60"
             >
               <Bell className="w-4 h-4" />
               {notificationState === "enabled" ? tr('تم تفعيل الإشعارات', 'Notifications enabled') : notificationState === "loading" ? tr('جاري التفعيل...', 'Enabling...') : notificationState === "error" ? tr('تعذر التفعيل — أعد المحاولة', 'Try again') : tr('تفعيل تنبيهات النداء والطلبات', 'Enable call and order alerts')}
@@ -454,7 +448,7 @@ export default function WaiterDashboard({
                   setNotificationTestMessage(tr('تعذر عرض التنبيه الاختباري على هذا الجهاز.', 'This device could not display a test alert.'));
                 }
               }}
-              className="px-5 py-2 border border-border-delicate text-brand-primary text-[10px] font-bold">
+              className="rounded-xl border border-border-delicate px-4 py-3 text-[10px] font-bold text-brand-primary">
               {tr('اختبار إشعار هذا الجهاز', 'Test this device')}
             </button>}
             {notificationTestMessage && <p role="status" className="text-xs text-text-muted max-w-xs">{notificationTestMessage}</p>}
@@ -469,8 +463,6 @@ export default function WaiterDashboard({
                 : notificationError === "subscription_conflict" ? tr('هذا المتصفح مرتبط بحساب موظف آخر. ألغِ إشعارات الموقع من إعدادات المتصفح ثم أعد المحاولة.', 'This browser is linked to another staff account. Reset this site’s notification subscription in browser settings, then try again.')
                 : tr('تعذر تسجيل الجهاز للإشعارات. تحقق من اتصالك وأعد المحاولة.', 'Could not register this device for notifications. Check your connection and try again.')}
             </p>}
-          </div>
-        </div>
       </div>
 
       {/* View Switcher for Waiter */}
