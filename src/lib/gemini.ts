@@ -17,7 +17,12 @@ export async function chatWithAI(
         message, restaurantId, history, language,
       }),
     });
-    const data = await response.json();
+    let data: any = {};
+    try {
+      data = await response.json();
+    } catch {
+      data = {};
+    }
     if (!response.ok) return data.reply || (language === "en" ? "The AI assistant is unavailable right now." : "المساعد الذكي غير متاح حالياً.");
     return data.reply || (language === "en" ? "I don't have an answer right now. Can I help with something else?" : "تأمر يا عيوني، هسة ما عندي جواب، اگدر أساعدك بطلب ثاني؟");
   } catch (error) {

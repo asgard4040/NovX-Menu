@@ -1,10 +1,10 @@
-export const DEFAULT_AI_MODEL = 'gemini-3.5-flash';
+export const DEFAULT_AI_MODEL = 'gemini-3.8-flash';
 
 export const AI_MODELS = [
+  { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', provider: 'gemini' },
   { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', provider: 'gemini' },
   { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', provider: 'gemini' },
   { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', provider: 'gemini' },
-  { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', provider: 'gemini' },
   { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna', provider: 'openai' },
   { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', provider: 'openai' },
 ] as const;

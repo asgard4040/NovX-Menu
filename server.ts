@@ -16,7 +16,12 @@ if (!supabaseUrl || !supabaseAnonKey) console.warn("Supabase server configuratio
 const supabase = createClient(supabaseUrl || "http://127.0.0.1:54321", supabaseAnonKey || "missing", { auth: { persistSession: false } });
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const supabaseAdmin = serviceRoleKey ? createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
-const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
+function getGeminiClient(): GoogleGenAI | null {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return null;
+  return new GoogleGenAI({ apiKey: key });
+}
+const ai = getGeminiClient();
 
 const camel = (key: string) => key.replace(/_([a-z])/g, (_, value) => value.toUpperCase());
 const camelRow = (value: any): any => Array.isArray(value) ? value.map(camelRow) : value && typeof value === "object"
@@ -315,27 +320,69 @@ app.use(express.json({ limit: "256kb" }));
     try {
       const { message, restaurantId, history } = req.body;
       const language = req.body?.language === "en" ? "en" : "ar";
-      if (typeof message !== "string" || !message.trim()) return res.status(400).json({ error: "invalid_message" });
-      const access = await supabase.rpc("public_restaurant_menu", { p_restaurant_id: restaurantId });
-      if (access.error) return res.status(403).json({ error: "subscription_inactive" });
-      if (!supabaseAdmin) return res.status(503).json({ reply: language === "en" ? "The AI settings service is not configured." : "خدمة إعدادات المساعد غير مهيأة." });
-      const { data: aiSettings, error: settingsError } = await supabaseAdmin.from("app_settings").select("model,prompt,temperature").eq("key", "ai").maybeSingle();
-      if (settingsError) throw settingsError;
-      const model = aiSettings?.model || DEFAULT_AI_MODEL;
-      const provider = providerForAIModel(model);
-      if (!provider) return res.status(503).json({ reply: language === "en" ? "The selected AI model is not supported. Ask the administrator to choose another model." : "النموذج المختار غير مدعوم. يرجى اختيار نموذج آخر من لوحة الإدارة." });
-      if ((provider === "gemini" && !ai) || (provider === "openai" && !process.env.OPENAI_API_KEY))
-        return res.status(503).json({ reply: language === "en" ? `${provider === "openai" ? "OpenAI" : "Gemini"} is not configured on the server yet.` : `مفتاح ${provider === "openai" ? "OpenAI" : "Gemini"} غير مهيأ على الخادم بعد.` });
+      if (typeof message !== "string" || !message.trim()) return res.status(400).json({ reply: language === "en" ? "Message is required." : "الرسالة مطلوبة." });
+
+      const resolvedId = await resolveRestaurantId(String(restaurantId || ""));
+      const access = await supabase.rpc("public_restaurant_menu", { p_restaurant_id: resolvedId });
+      if (access.error) return res.status(403).json({ reply: language === "en" ? "This restaurant's subscription is inactive." : "اشتراك هذا المطعم غير نشط حالياً." });
+
+      let aiSettings: any = null;
+      if (supabaseAdmin) {
+        try {
+          const { data, error } = await supabaseAdmin.from("app_settings").select("model,prompt,temperature").eq("key", "ai").maybeSingle();
+          if (!error && data) aiSettings = data;
+        } catch (settingsErr) {
+          console.warn("Could not load AI app_settings, using defaults:", settingsErr);
+        }
+      }
+
+      const rawModel = aiSettings?.model || DEFAULT_AI_MODEL;
+      const model = rawModel === "gemini-2.0-flash" ? DEFAULT_AI_MODEL : rawModel;
+      const provider = providerForAIModel(model) || "gemini";
+      const geminiClient = getGeminiClient();
+
+      if ((provider === "gemini" && !geminiClient) || (provider === "openai" && !process.env.OPENAI_API_KEY)) {
+        return res.status(200).json({ reply: language === "en" ? `${provider === "openai" ? "OpenAI" : "Gemini"} is not configured on the server yet.` : `مفتاح ${provider === "openai" ? "OpenAI" : "Gemini"} غير مهيأ على الخادم بعد.` });
+      }
+
       const menuItems = access.data?.menu_items || [];
       const restaurantName = access.data?.restaurant?.restaurant_name || "المطعم";
       const menu = Array.isArray(menuItems) ? menuItems.map((item: any) => `• ${item.name} | ${item.price} د.ع | ${item.ingredients || ""}`).join("\n") : "";
       const system = `${aiSettings?.prompt || `أنت مساعد مطعم عراقي محترم ومختصر لمطعم ${restaurantName}.`}\nOnly recommend items from this menu. Never invent menu items or prices:\n${menu}\n${language === "en" ? "Reply in English. Keep menu item names as stored." : "أجب باللغة العربية."}`;
       const safeHistory = (Array.isArray(history) ? history.slice(-12) : []).filter((item: any) => item?.role === "user" || item?.role === "model")
         .map((item: any) => ({ role: item.role as "user" | "model", text: String(item.parts?.[0]?.text || "").slice(0, 2000) })).filter((item) => item.text);
+
       let reply = "";
       if (provider === "gemini") {
-        const response = await ai!.models.generateContent({ model, contents: [{ role: "user", parts: [{ text: system }] }, ...safeHistory.map((item) => ({ role: item.role, parts: [{ text: item.text }] })), { role: "user", parts: [{ text: message.slice(0, 2000) }] }], config: { temperature: Number(aiSettings?.temperature ?? .3) } });
-        reply = response.text || "";
+        try {
+          const response = await geminiClient!.models.generateContent({
+            model,
+            contents: [
+              { role: "user", parts: [{ text: system }] },
+              ...safeHistory.map((item) => ({ role: item.role, parts: [{ text: item.text }] })),
+              { role: "user", parts: [{ text: message.slice(0, 2000) }] }
+            ],
+            config: { temperature: Number(aiSettings?.temperature ?? 0.3) }
+          });
+          reply = response.text || "";
+        } catch (geminiErr: any) {
+          console.error("Gemini model request failed for", model, geminiErr?.message || geminiErr);
+          if (model !== DEFAULT_AI_MODEL) {
+            console.log("Retrying with default model:", DEFAULT_AI_MODEL);
+            const fallbackResponse = await geminiClient!.models.generateContent({
+              model: DEFAULT_AI_MODEL,
+              contents: [
+                { role: "user", parts: [{ text: system }] },
+                ...safeHistory.map((item) => ({ role: item.role, parts: [{ text: item.text }] })),
+                { role: "user", parts: [{ text: message.slice(0, 2000) }] }
+              ],
+              config: { temperature: 0.3 }
+            });
+            reply = fallbackResponse.text || "";
+          } else {
+            throw geminiErr;
+          }
+        }
       } else {
         const response = await fetch("https://api.openai.com/v1/responses", {
           method: "POST",
@@ -345,12 +392,20 @@ app.use(express.json({ limit: "256kb" }));
         });
         if (!response.ok) {
           console.error("OpenAI request failed", { status: response.status });
-          return res.status(502).json({ reply: language === "en" ? "The selected AI provider is unavailable. Please try again later." : "مزود المساعد الذكي غير متاح حالياً. يرجى المحاولة لاحقاً." });
+          return res.status(200).json({ reply: language === "en" ? "The selected AI provider is unavailable. Please try again later." : "مزود المساعد الذكي غير متاح حالياً. يرجى المحاولة لاحقاً." });
         }
         reply = openAIResponseText(await response.json());
       }
       return res.json({ reply: reply || (language === "en" ? "No answer is available right now." : "لا تتوفر إجابة حالياً.") });
-    } catch (error) { console.error(error); return res.status(500).json({ reply: req.body?.language === "en" ? "The service is temporarily unavailable." : "حدثت مشكلة اتصال بالخدمة." }); }
+    } catch (error: any) {
+      console.error("Chat API error:", error?.message || error);
+      const language = req.body?.language === "en" ? "en" : "ar";
+      return res.status(200).json({
+        reply: language === "en"
+          ? "I am temporarily unavailable right now. Please explore our menu or ask the waiter for assistance."
+          : "أهلاً بيكم! المساعد الذكي غير متاح مؤقتاً حالياً. يرجى تصفح المنيو أو نداء الويتر لخدمتكم.",
+      });
+    }
   });
   app.get("/api/health", (_req, res) => {
     const missing = [!supabaseUrl && "SUPABASE_URL", !supabaseAnonKey && "SUPABASE_ANON_KEY"].filter(Boolean);
