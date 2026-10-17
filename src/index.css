@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Prata&family=Sora:wght@300;400;500;600;700;800&family=Tajawal:wght@300;400;500;700;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Sora:wght@300;400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
 @theme {
@@ -11,9 +11,9 @@
   --color-text-muted: #54616B;
   --color-border-delicate: #DDE2E5;
   
-  --font-sans: "Sora", "Tajawal", ui-sans-serif, system-ui, sans-serif;
-  --font-serif: "Prata", serif;
-  --font-display: "Sora", "Tajawal", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Sora", "IBM Plex Sans Arabic", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Sora", "IBM Plex Sans Arabic", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Sora", "IBM Plex Sans Arabic", ui-sans-serif, system-ui, sans-serif;
 }
 
 @layer base {
@@ -42,13 +42,11 @@
 .menu-theme { background: var(--color-bg-paper); color: var(--color-text-main); }
 .menu-theme[data-menu-theme="ordova"] .menu-preview-header { border-bottom: 4px solid var(--color-brand-gold); }
 .menu-theme[data-menu-theme="ordova"] .menu-preview-card { border-radius: 1.25rem; box-shadow: 0 10px 28px rgb(8 18 32 / .06); }
-.menu-theme[data-menu-theme="urban-modern"] { --font-display: "Outfit", sans-serif; }
 .menu-theme[data-menu-theme="urban-modern"] .menu-preview-header { text-align: right; border-bottom: 8px solid var(--color-brand-gold); }
 .menu-theme[data-menu-theme="urban-modern"] .menu-preview-card { border-radius: 0; border-width: 0 0 0 5px; }
-.menu-theme[data-menu-theme="pure-minimal"] { --font-display: "Outfit", sans-serif; letter-spacing: .015em; }
+.menu-theme[data-menu-theme="pure-minimal"] { letter-spacing: .015em; }
 .menu-theme[data-menu-theme="pure-minimal"] .menu-preview-header { background: transparent; color: var(--color-text-main); border-bottom: 1px solid #ddd; }
 .menu-theme[data-menu-theme="pure-minimal"] .menu-preview-card { border: 0; border-bottom: 1px solid #ddd; box-shadow: none; }
-.menu-theme[data-menu-theme="fast-bite"] { --font-display: "Tajawal", sans-serif; }
 .menu-theme[data-menu-theme="fast-bite"] .menu-preview-header { transform: skewY(-1deg); padding-block: 3rem; }
 .menu-theme[data-menu-theme="fast-bite"] .menu-preview-card { border: 3px solid var(--color-brand-primary); border-radius: 1.5rem; box-shadow: 6px 6px 0 var(--color-brand-gold); }
 .menu-theme[data-menu-theme="heritage"] .menu-preview-header { border-bottom: 6px double var(--color-brand-gold); text-align: center; }
@@ -123,15 +121,13 @@
 .workspace-sidebar .sidebar-scroll::-webkit-scrollbar { width: 6px; }
 .workspace-sidebar .sidebar-scroll::-webkit-scrollbar-thumb { background: var(--color-brand-gold); border-radius: 999px; }
 
-.workspace-theme[data-workspace-theme="urban-modern"] { --font-display: "Outfit", "Tajawal", sans-serif; }
 .workspace-theme[data-workspace-theme="urban-modern"] [class~="bg-white"] { border-radius: 0; border-inline-start-width: 4px; border-inline-start-color: var(--color-brand-gold); }
 .workspace-theme[data-workspace-theme="urban-modern"] .workspace-sidebar { border-inline-start: 6px solid var(--color-brand-gold); }
 
-.workspace-theme[data-workspace-theme="pure-minimal"] { --font-display: "Outfit", "Tajawal", sans-serif; letter-spacing: .01em; }
+.workspace-theme[data-workspace-theme="pure-minimal"] { letter-spacing: .01em; }
 .workspace-theme[data-workspace-theme="pure-minimal"] [class~="bg-white"] { border-radius: 0; box-shadow: none !important; }
 .workspace-theme[data-workspace-theme="pure-minimal"] .workspace-sidebar { box-shadow: none; }
 
-.workspace-theme[data-workspace-theme="fast-bite"] { --font-display: "Tajawal", sans-serif; }
 .workspace-theme[data-workspace-theme="fast-bite"] [class~="bg-white"] { border-radius: 1.25rem; box-shadow: 5px 5px 0 color-mix(in srgb, var(--color-brand-gold), transparent 20%); }
 .workspace-theme[data-workspace-theme="fast-bite"] button { border-radius: .85rem; font-weight: 800; }
 

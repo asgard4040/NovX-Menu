@@ -443,7 +443,7 @@ export default function App() {
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}
-              className={`min-w-[72px] flex-1 h-16 px-2 flex flex-col items-center justify-center gap-1 transition-colors ${activeTab === item.id ? 'bg-brand-primary text-white' : 'text-text-muted'}`}
+              className={`min-w-[72px] flex-1 h-16 px-2 flex flex-col items-center justify-center gap-1 rounded-2xl transition-colors ${activeTab === item.id ? 'bg-brand-primary text-white' : 'text-text-muted'}`}
             >
               {item.icon}
               <span className="text-[10px] font-bold whitespace-nowrap">{item.label}</span>
