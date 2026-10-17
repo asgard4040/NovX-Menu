@@ -15,9 +15,9 @@ export async function enableStaffNotifications(restaurantId: string) {
   const registration = await navigator.serviceWorker.register("/push-sw.js");
   const applicationServerKey = decodeKey(publicKey);
   let subscription = await registration.pushManager.getSubscription();
-  if (subscription?.options.applicationServerKey) {
-    const currentKey = new Uint8Array(subscription.options.applicationServerKey);
-    if (currentKey.length !== applicationServerKey.length || currentKey.some((byte, index) => byte !== applicationServerKey[index])) {
+  if (subscription) {
+    const currentKey = subscription.options.applicationServerKey ? new Uint8Array(subscription.options.applicationServerKey) : null;
+    if (!currentKey || currentKey.length !== applicationServerKey.length || currentKey.some((byte, index) => byte !== applicationServerKey[index])) {
       await subscription.unsubscribe();
       subscription = null;
     }

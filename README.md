@@ -24,6 +24,8 @@ Set these environment variables for Production (and Preview if needed), then red
 - `SUPABASE_SERVICE_ROLE_KEY`: server-only, required for privileged admin, restaurant, and staff operations. Never prefix this variable with `VITE_`.
 - `VITE_WEB_PUSH_PUBLIC_KEY` if staff notifications are enabled; `GEMINI_API_KEY` only if AI chat is enabled.
 
+For waiter push alerts, set `VITE_WEB_PUSH_PUBLIC_KEY` in Vercel Production to the **same public VAPID key** used as `WEB_PUSH_PUBLIC_KEY` by the Supabase `notification-dispatcher`, then redeploy. The private VAPID key stays only in Supabase Edge Function secrets. Each waiter must enable notifications on their own HTTPS browser/device; a successful build or empty notification outbox does not prove push delivery.
+
 After deployment, open `https://<your-deployment>/api/health`; it must return JSON with `status: "ok"`, not the application's HTML or a 404. Then sign in with an admin account created in the **same Supabase project** using `npm run create:admin -- <username> <strong-password>` in a trusted local/server shell. Do not put the service-role key or admin password in the browser or a public Vercel variable. The internal username is converted to `<username>@accounts.novx.invalid`; a different Supabase project or an uncreated account will return incorrect credentials. If sign-in still fails, inspect the `/api/auth/login` response and Vercel function logs without sharing the password or secret keys.
 
 ## Migration
