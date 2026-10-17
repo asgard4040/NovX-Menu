@@ -101,6 +101,15 @@ export default function WaiterDashboard({
     }, 500);
     return () => window.clearTimeout(timer);
   }, [waiterRequests.length]);
+  useEffect(() => {
+    const orderId = new URLSearchParams(window.location.search).get("orderId");
+    if (!orderId) return;
+    setView("dashboard");
+    const timer = window.setTimeout(() => {
+      document.getElementById(`staff-order-${orderId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [orders.length]);
   const [menuItems, setMenuItems] = useState<any[]>([]);
   const [menuLoading, setMenuLoading] = useState(false);
   const [cart, setCart] = useState<{ [id: string]: { name: string; price: number; quantity: number } }>({});
@@ -436,7 +445,7 @@ export default function WaiterDashboard({
               className="flex items-center justify-center gap-2 px-5 py-3 border border-brand-gold text-brand-primary text-[10px] font-bold disabled:opacity-60"
             >
               <Bell className="w-4 h-4" />
-              {notificationState === "enabled" ? tr('تم تفعيل الإشعارات', 'Notifications enabled') : notificationState === "loading" ? tr('جاري التفعيل...', 'Enabling...') : notificationState === "error" ? tr('تعذر التفعيل — أعد المحاولة', 'Try again') : tr('تفعيل إشعارات النداء', 'Enable call alerts')}
+              {notificationState === "enabled" ? tr('تم تفعيل الإشعارات', 'Notifications enabled') : notificationState === "loading" ? tr('جاري التفعيل...', 'Enabling...') : notificationState === "error" ? tr('تعذر التفعيل — أعد المحاولة', 'Try again') : tr('تفعيل تنبيهات النداء والطلبات', 'Enable call and order alerts')}
             </button>
             {notificationError && <p role="alert" className="text-xs text-red-700 text-center lg:text-start max-w-xs">
               {notificationError === "web_push_not_configured" ? tr('مفتاح إشعارات المتصفح غير مضبوط على الخادم.', 'Browser push key is missing from this deployment.')
@@ -1117,6 +1126,7 @@ function WaiterOrderCard({
   const isPreparing = type === "preparing";
   return (
     <motion.div
+      id={`staff-order-${order.id}`}
       layout
       initial={{ opacity: 0, scale: 0.98 }}
       animate={{ opacity: 1, scale: 1 }}

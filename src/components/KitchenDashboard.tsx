@@ -5,6 +5,7 @@ import { collection, query, where, onSnapshot, doc, updateDoc, orderBy, Timestam
 import { Order, OrderStatus } from '../types';
 import { format } from 'date-fns';
 import { useLanguage } from '../lib/i18n';
+import { enableStaffNotifications } from '../lib/notifications';
 
 const safeFormatDate = (dateVal: any, formatStr: string, fallback: string = "---") => {
   if (!dateVal) return fallback;
@@ -31,6 +32,18 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
   const [supportPhone, setSupportPhone] = useState(() => localStorage.getItem("novix_support_phone") || "07740064528");
   const [systemLogo, setSystemLogo] = useState(() => localStorage.getItem("novix_system_logo") || "");
   const [mobileView, setMobileView] = useState<'preparing' | 'ready'>('preparing');
+  const [notificationState, setNotificationState] = useState<'idle' | 'loading' | 'enabled' | 'error'>('idle');
+
+  useEffect(() => {
+    const orderId = new URLSearchParams(window.location.search).get('orderId');
+    if (!orderId) return;
+    const matching = orders.find((order) => order.id === orderId);
+    if (matching?.status === 'ready') setMobileView('ready');
+    const timer = window.setTimeout(() => {
+      document.getElementById(`staff-order-${orderId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [orders.length]);
 
   useEffect(() => {
     const fetchSupport = async () => {
@@ -188,7 +201,17 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
             </div>
           </div>
           
-          <div className="flex gap-8 justify-center lg:justify-end border-t border-border-delicate pt-6 lg:border-t-0 lg:pt-0 w-full lg:w-auto">
+          <div className="flex flex-wrap items-center gap-4 sm:gap-8 justify-center lg:justify-end border-t border-border-delicate pt-6 lg:border-t-0 lg:pt-0 w-full lg:w-auto">
+             <button type="button" disabled={notificationState === 'loading' || notificationState === 'enabled'}
+               onClick={async () => {
+                 setNotificationState('loading');
+                 try { await enableStaffNotifications(restaurantId); setNotificationState('enabled'); }
+                 catch (error) { console.error(error); setNotificationState('error'); }
+               }}
+               className="flex items-center gap-2 px-3 py-2 border border-brand-gold text-brand-primary text-xs font-bold disabled:opacity-60">
+               <Bell className="w-4 h-4" />
+               {notificationState === 'enabled' ? tr('الإشعارات مفعلة', 'Alerts enabled') : notificationState === 'loading' ? tr('جاري التفعيل...', 'Enabling...') : notificationState === 'error' ? tr('فشل التفعيل، أعد المحاولة', 'Could not enable, retry') : tr('تفعيل تنبيهات الطلبات', 'Enable order alerts')}
+             </button>
              <div className="text-center sm:text-right">
                 <p className="text-[9px] font-bold text-brand-gold uppercase tracking-widest opacity-60 font-sans">{tr('قيد التحضير', 'Preparing')}</p>
                 <p className="text-2xl font-display not-italic text-brand-primary font-bold"><span className="font-sans">{preparingOrders.length}</span></p>
@@ -294,6 +317,7 @@ function KitchenOrderCard({
   const { tr } = useLanguage();
   return (
     <motion.div
+      id={`staff-order-${order.id}`}
       layout
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
