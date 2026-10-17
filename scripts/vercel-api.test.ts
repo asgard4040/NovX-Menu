@@ -46,6 +46,16 @@ test("Vercel API gateway forwards health, home-screen-manifest, and POST auth ro
     }
     const invalid = await fetch(`http://127.0.0.1:${address.port}/api/index?route=home-screen-manifest&restaurantId=bad&portal=waiter`);
     assert.equal(invalid.status, 400);
+
+    // 4. POST /api/chat via gateway returns JSON
+    const chatResponse = await fetch(`http://127.0.0.1:${address.port}/api/index?route=chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Hello", restaurantId }),
+    });
+    assert.match(chatResponse.headers.get("content-type") || "", /application\/json/);
+    const chatData = await chatResponse.json();
+    assert.ok(typeof chatData.reply === "string");
   } finally {
     server.close();
   }

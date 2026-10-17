@@ -32,5 +32,15 @@ export default function handler(req: Request, res: Response) {
     req.url = `/api/${pathname}${search ? `?${search}` : ""}`;
   }
 
-  return app(req, res);
+  return new Promise<void>((resolve, reject) => {
+    if (res.writableEnded) {
+      resolve();
+      return;
+    }
+    res.on("finish", () => resolve());
+    res.on("close", () => resolve());
+    res.on("error", (err) => reject(err));
+    app(req, res);
+  });
 }
+
