@@ -72,6 +72,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
   const [showCart, setShowCart] = useState(false);
   const [submittingOrder, setSubmittingOrder] = useState(false);
   const [showAIChat, setShowAIChat] = useState(false);
+  const [showAIHint, setShowAIHint] = useState(true);
   const [aiSettings, setAiSettings] = useState<any>(null);
 
   // States & helper functions for item options customization (cheese/spicy)
@@ -152,21 +153,49 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
 
   useEffect(() => {
     if (!orderComplete?.id) return;
+    const orderId = orderComplete.id;
+    let active = true;
+    let timer: number | undefined;
+    let controller: AbortController | null = null;
     const refresh = async () => {
+      if (!active || controller || document.visibilityState === 'hidden') return;
       const token = localStorage.getItem("novix_active_order_token") || "";
-      const response = await fetch(`/api/orders/${encodeURIComponent(orderComplete.id)}/status?token=${encodeURIComponent(token)}`);
-      if (!response.ok) return;
-      const data = await response.json();
-      if (data.status === "served") {
-        localStorage.removeItem("novix_active_order_id");
-        localStorage.removeItem("novix_active_order_token");
+      if (!token) return;
+      controller = new AbortController();
+      try {
+        const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}/status?token=${encodeURIComponent(token)}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
+        const data = await response.json() as Partial<Order>;
+        if (active && data.id === orderId) {
+          setOrderComplete((previous) => previous?.id === orderId ? { ...previous, ...data } : previous);
+        }
+      } catch (error) {
+        if (active && (error as Error).name !== 'AbortError') console.warn('Order tracking refresh failed', error);
+      } finally {
+        controller = null;
+        if (active) timer = window.setTimeout(refresh, showOrderTrackingModal ? 4_000 : 12_000);
       }
-      setOrderComplete(data as Order);
     };
-    refresh();
-    const timer = window.setInterval(refresh, 10_000);
-    return () => window.clearInterval(timer);
-  }, [orderComplete?.id]);
+    const refreshNow = () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      void refresh();
+    };
+    refreshNow();
+    window.addEventListener('online', refreshNow);
+    window.addEventListener('focus', refreshNow);
+    document.addEventListener('visibilitychange', refreshNow);
+    return () => {
+      active = false;
+      if (timer !== undefined) window.clearTimeout(timer);
+      controller?.abort();
+      window.removeEventListener('online', refreshNow);
+      window.removeEventListener('focus', refreshNow);
+      document.removeEventListener('visibilitychange', refreshNow);
+    };
+  }, [orderComplete?.id, showOrderTrackingModal]);
 
   // Waiter Call States
   const [showWaiterModal, setShowWaiterModal] = useState(false);
@@ -978,13 +1007,26 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
             <span className="hidden min-[390px]:inline">{tr('ويتر', 'Waiter')}</span>
           </button>
 
-          <button
-            onClick={() => setShowAIChat(true)}
-            className="flex items-center justify-center h-10 w-10 rounded-full border border-border-delicate bg-bg-paper text-brand-primary hover:border-brand-gold hover:text-brand-gold transition-colors"
-            aria-label={tr('المساعد الذكي', 'AI assistant')}
-          >
-            <MessageSquare className="w-4 h-4" />
-          </button>
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => { setShowAIHint(false); setShowAIChat(true); }}
+              className="flex items-center justify-center h-10 w-10 rounded-full border border-brand-gold bg-brand-gold/10 text-brand-primary hover:bg-brand-gold/20 transition-colors"
+              aria-label={tr('المساعد الذكي: تحدث معه لاختيار طعامك', 'AI assistant: chat to choose your food')}
+            >
+              <MessageSquare className="w-4 h-4" />
+            </button>
+            {showAIHint && !showAIChat && (
+              <div className="absolute top-full end-0 mt-3 w-56 sm:w-64 rounded-2xl border border-border-delicate bg-bg-card p-3 shadow-xl text-start z-50" dir={dir}>
+                <span className="absolute -top-1.5 end-3 h-3 w-3 rotate-45 border-s border-t border-border-delicate bg-bg-card" aria-hidden="true" />
+                <button type="button" onClick={() => setShowAIHint(false)} className="absolute top-2 end-2 p-1 text-text-muted hover:text-brand-primary" aria-label={tr('إخفاء التلميح', 'Dismiss tip')}><X className="w-4 h-4" /></button>
+                <button type="button" onClick={() => { setShowAIHint(false); setShowAIChat(true); }} className="block pe-5 text-start w-full">
+                  <span className="block text-xs font-bold text-brand-primary">{tr('محتار ماذا تطلب؟', 'Not sure what to eat?')}</span>
+                  <span className="block text-xs text-text-muted leading-relaxed mt-1">{tr('تحدث مع المساعد الذكي ليساعدك في اختيار وجبتك.', 'Chat with our AI assistant to find a meal you’ll enjoy.')}</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -1101,7 +1143,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                       <img
                         src={item.imageUrl}
                         loading="lazy"
-                        className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
+                        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
                         alt={item.name}
                         referrerPolicy="no-referrer"
                       />
@@ -1328,7 +1370,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                               {item.imageUrl ? (
                                 <img
                                   src={item.imageUrl}
-                                  className="w-full h-full object-contain"
+                                  className="w-full h-full object-cover"
                                   referrerPolicy="no-referrer"
                                   alt={item.name}
                                 />
@@ -1667,7 +1709,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                     {showCustomizer.item.imageUrl ? (
                       <img
                         src={showCustomizer.item.imageUrl}
-                        className="w-full h-full object-contain"
+                        className="w-full h-full object-cover"
                         referrerPolicy="no-referrer"
                         alt={showCustomizer.item.name}
                       />

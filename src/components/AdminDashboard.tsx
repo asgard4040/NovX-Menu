@@ -52,6 +52,7 @@ import QRCode from "react-qr-code";
 import { supabase } from "../lib/supabase";
 import { persistRestaurantImage } from "../lib/storage";
 import { localizeProvince, useLanguage } from "../lib/i18n";
+import { AI_MODELS, DEFAULT_AI_MODEL, firstModelForProvider, providerForAIModel, type AIProvider } from "../lib/ai-models";
 
 const safeFormatDate = (dateVal: any, formatStr: string, fallback: string = "---") => {
   if (!dateVal) return fallback;
@@ -101,7 +102,8 @@ export default function AdminDashboard({
   const [aiPrompt, setAiPrompt] = useState(
     `أنت مساعد افتراضي ذكي لمطعم في العراق، مخصص لمساعدة الزبائن في استعراض المنيو وأقسامه وتسجيل طلباتهم.`
   );
-  const [aiModel, setAiModel] = useState("gemini-3.5-flash");
+  const [aiModel, setAiModel] = useState(DEFAULT_AI_MODEL);
+  const aiProvider = providerForAIModel(aiModel) || 'gemini';
   const [aiTemperature, setAiTemperature] = useState(0.3);
   const [isSavingAI, setIsSavingAI] = useState(false);
   const [aiSaveSuccess, setAiSaveSuccess] = useState(false);
@@ -695,14 +697,14 @@ export default function AdminDashboard({
                 <div><h3 className="text-lg font-bold text-brand-primary">{tr('تعليمات المساعد', 'Assistant instructions')}</h3><p className="text-xs text-text-muted">{tr('صف النبرة والمساعدة التي تريد تقديمها للعملاء.', 'Describe the tone and help customers should receive.')}</p></div>
                 <div className="space-y-2"><label className="block text-sm font-bold text-brand-primary">{tr('التعليمات', 'Instructions')}</label><textarea value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} rows={8} className="w-full rounded-xl bg-bg-paper border border-border-delicate p-4 text-sm text-brand-primary focus:outline-none focus:border-brand-primary resize-y leading-relaxed" placeholder={tr('اكتب تعليمات المساعد...', 'Enter assistant instructions...')} /></div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2"><label className="block text-sm font-bold text-brand-primary">{tr('النموذج', 'Model')}</label><select value={aiModel} onChange={(e) => setAiModel(e.target.value)} className="w-full rounded-xl bg-bg-paper border border-border-delicate px-4 py-3 text-sm text-brand-primary">
-                    <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
-                    <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-                    <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-                    <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                  <div className="space-y-2"><label className="block text-sm font-bold text-brand-primary">{tr('مزود الذكاء الاصطناعي', 'AI provider')}</label><select value={aiProvider} onChange={(e) => setAiModel(firstModelForProvider(e.target.value as AIProvider))} className="w-full rounded-xl bg-bg-paper border border-border-delicate px-4 py-3 text-sm text-brand-primary">
+                    <option value="gemini">Gemini</option><option value="openai">GPT (OpenAI)</option>
                   </select></div>
-                  <div className="space-y-2"><label className="block text-sm font-bold text-brand-primary">{tr('درجة التنوع', 'Response variety')}: {aiTemperature.toFixed(1)}</label><input type="range" min="0" max="1" step="0.1" value={aiTemperature} onChange={(e) => setAiTemperature(parseFloat(e.target.value))} className="w-full accent-brand-primary min-h-11" /></div>
+                  <div className="space-y-2"><label className="block text-sm font-bold text-brand-primary">{tr('النموذج', 'Model')}</label><select value={aiModel} onChange={(e) => setAiModel(e.target.value)} className="w-full rounded-xl bg-bg-paper border border-border-delicate px-4 py-3 text-sm text-brand-primary">
+                    {AI_MODELS.filter((option) => option.provider === aiProvider).map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+                  </select></div>
                 </div>
+                {aiProvider === 'gemini' && <div className="space-y-2"><label className="block text-sm font-bold text-brand-primary">{tr('درجة التنوع', 'Response variety')}: {aiTemperature.toFixed(1)}</label><input type="range" min="0" max="1" step="0.1" value={aiTemperature} onChange={(e) => setAiTemperature(parseFloat(e.target.value))} className="w-full accent-brand-primary min-h-11" /></div>}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-t border-border-delicate pt-5">
                   <p role={aiSaveError ? 'alert' : 'status'} className={aiSaveError ? 'text-xs font-bold text-red-700' : 'text-xs text-text-muted'}>{aiSaveError ? tr('تعذر الحفظ. لم تُطبق التغييرات؛ حاول مجدداً.', 'Save failed. Changes were not applied; please retry.') : aiSaveSuccess ? tr('تم حفظ إعدادات المساعد.', 'Assistant settings saved.') : tr('تنطبق التغييرات على كل المطاعم بعد الحفظ.', 'Saved changes apply to all restaurants.')}</p>
                   <button type="button" onClick={saveAISettings} disabled={isSavingAI} className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-primary text-white px-5 py-3 text-sm font-bold hover:bg-brand-secondary disabled:opacity-50 min-h-11"><Save className="w-4 h-4" />{isSavingAI ? tr('جاري الحفظ...', 'Saving...') : tr('حفظ التغييرات', 'Save changes')}</button>
@@ -711,7 +713,8 @@ export default function AdminDashboard({
               <aside className="bg-brand-primary text-white rounded-2xl p-6 sm:p-7 h-fit">
                 <Cpu className="w-8 h-8 text-brand-gold mb-4" />
                 <h3 className="text-lg font-bold mb-3">{tr('معلومة مهمة', 'Good to know')}</h3>
-                <p className="text-sm text-white/80 leading-relaxed">{tr('اضبط مفتاح Gemini على الخادم عبر GEMINI_API_KEY. لا تضع المفتاح في المتصفح أو في حقل التعليمات.', 'Configure GEMINI_API_KEY on the server. Never put the API key in the browser or in the instructions field.')}</p>
+                <p className="text-sm text-white/80 leading-relaxed">{aiProvider === 'gemini' ? tr('سيستخدم هذا النموذج مفتاح GEMINI_API_KEY من الخادم.', 'This model uses the server-side GEMINI_API_KEY.') : tr('سيستخدم هذا النموذج مفتاح OPENAI_API_KEY من الخادم.', 'This model uses the server-side OPENAI_API_KEY.')}</p>
+                <p className="text-xs text-white/70 mt-3">{tr('أضف المفتاح في متغيرات بيئة الخادم فقط، وليس في المتصفح أو التعليمات.', 'Set the key in server environment variables only, never in the browser or instructions.')}</p>
               </aside>
             </div>
           </motion.div>

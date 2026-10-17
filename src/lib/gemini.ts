@@ -17,8 +17,8 @@ export async function chatWithAI(
         message, restaurantId, history, language,
       }),
     });
-    if (!response.ok) throw new Error(`AI server response: ${response.status}`);
     const data = await response.json();
+    if (!response.ok) return data.reply || (language === "en" ? "The AI assistant is unavailable right now." : "المساعد الذكي غير متاح حالياً.");
     return data.reply || (language === "en" ? "I don't have an answer right now. Can I help with something else?" : "تأمر يا عيوني، هسة ما عندي جواب، اگدر أساعدك بطلب ثاني؟");
   } catch (error) {
     console.error("Server-side AI request failed:", error);

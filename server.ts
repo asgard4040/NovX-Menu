@@ -2,6 +2,7 @@ import express from "express";
 import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 import ws from "ws";
+import { DEFAULT_AI_MODEL, openAIResponseText, providerForAIModel } from "./src/lib/ai-models";
 
 if (!globalThis.WebSocket) {
   (globalThis as any).WebSocket = ws;
@@ -283,6 +284,7 @@ app.use(express.json({ limit: "256kb" }));
     return res.status(201).json(camelRow(data));
   });
   app.get("/api/orders/:orderId/status", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store, private");
     const { data, error } = await supabase.rpc("track_order", { p_order_id: req.params.orderId, p_tracking_token: String(req.query.token || "") });
     if (error || !data) return res.status(403).json({ error: "invalid_tracking_token" }); return res.json(camelRow(data));
   });
@@ -307,17 +309,41 @@ app.use(express.json({ limit: "256kb" }));
     try {
       const { message, restaurantId, history } = req.body;
       const language = req.body?.language === "en" ? "en" : "ar";
-      if (!message) return res.status(400).json({ error: "invalid_message" });
+      if (typeof message !== "string" || !message.trim()) return res.status(400).json({ error: "invalid_message" });
       const access = await supabase.rpc("public_restaurant_menu", { p_restaurant_id: restaurantId });
       if (access.error) return res.status(403).json({ error: "subscription_inactive" });
-      if (!ai) return res.json({ reply: language === "en" ? "The AI assistant is not configured on the server yet." : "المساعد الذكي غير مكوّن على الخادم حالياً." });
-      const { data: aiSettings } = supabaseAdmin ? await supabaseAdmin.from("app_settings").select("model,prompt,temperature").eq("key", "ai").maybeSingle() : { data: null };
+      if (!supabaseAdmin) return res.status(503).json({ reply: language === "en" ? "The AI settings service is not configured." : "خدمة إعدادات المساعد غير مهيأة." });
+      const { data: aiSettings, error: settingsError } = await supabaseAdmin.from("app_settings").select("model,prompt,temperature").eq("key", "ai").maybeSingle();
+      if (settingsError) throw settingsError;
+      const model = aiSettings?.model || DEFAULT_AI_MODEL;
+      const provider = providerForAIModel(model);
+      if (!provider) return res.status(503).json({ reply: language === "en" ? "The selected AI model is not supported. Ask the administrator to choose another model." : "النموذج المختار غير مدعوم. يرجى اختيار نموذج آخر من لوحة الإدارة." });
+      if ((provider === "gemini" && !ai) || (provider === "openai" && !process.env.OPENAI_API_KEY))
+        return res.status(503).json({ reply: language === "en" ? `${provider === "openai" ? "OpenAI" : "Gemini"} is not configured on the server yet.` : `مفتاح ${provider === "openai" ? "OpenAI" : "Gemini"} غير مهيأ على الخادم بعد.` });
       const menuItems = access.data?.menu_items || [];
       const restaurantName = access.data?.restaurant?.restaurant_name || "المطعم";
       const menu = Array.isArray(menuItems) ? menuItems.map((item: any) => `• ${item.name} | ${item.price} د.ع | ${item.ingredients || ""}`).join("\n") : "";
-      const system = `${aiSettings?.prompt || `أنت مساعد مطعم عراقي محترم ومختصر لمطعم ${restaurantName}. لا تخترع أصنافاً أو أسعاراً. المنيو:\n${menu}`}\n${language === "en" ? "Reply in English. Keep menu item names as stored; do not translate or invent item names or prices." : "أجب باللغة العربية."}`;
-      const response = await ai.models.generateContent({ model: aiSettings?.model || "gemini-3.5-flash", contents: [{ role: "user", parts: [{ text: system }] }, ...(Array.isArray(history) ? history.slice(-12) : []), { role: "user", parts: [{ text: String(message).slice(0, 2000) }] }], config: { temperature: Number(aiSettings?.temperature ?? .3) } });
-      return res.json({ reply: response.text || (language === "en" ? "No answer is available right now." : "لا تتوفر إجابة حالياً.") });
+      const system = `${aiSettings?.prompt || `أنت مساعد مطعم عراقي محترم ومختصر لمطعم ${restaurantName}.`}\nOnly recommend items from this menu. Never invent menu items or prices:\n${menu}\n${language === "en" ? "Reply in English. Keep menu item names as stored." : "أجب باللغة العربية."}`;
+      const safeHistory = (Array.isArray(history) ? history.slice(-12) : []).filter((item: any) => item?.role === "user" || item?.role === "model")
+        .map((item: any) => ({ role: item.role as "user" | "model", text: String(item.parts?.[0]?.text || "").slice(0, 2000) })).filter((item) => item.text);
+      let reply = "";
+      if (provider === "gemini") {
+        const response = await ai!.models.generateContent({ model, contents: [{ role: "user", parts: [{ text: system }] }, ...safeHistory.map((item) => ({ role: item.role, parts: [{ text: item.text }] })), { role: "user", parts: [{ text: message.slice(0, 2000) }] }], config: { temperature: Number(aiSettings?.temperature ?? .3) } });
+        reply = response.text || "";
+      } else {
+        const response = await fetch("https://api.openai.com/v1/responses", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ model, instructions: system, input: [...safeHistory.map((item) => ({ role: item.role === "model" ? "assistant" : "user", content: item.text })), { role: "user", content: message.slice(0, 2000) }], max_output_tokens: 1800, store: false }),
+          signal: AbortSignal.timeout(30_000),
+        });
+        if (!response.ok) {
+          console.error("OpenAI request failed", { status: response.status });
+          return res.status(502).json({ reply: language === "en" ? "The selected AI provider is unavailable. Please try again later." : "مزود المساعد الذكي غير متاح حالياً. يرجى المحاولة لاحقاً." });
+        }
+        reply = openAIResponseText(await response.json());
+      }
+      return res.json({ reply: reply || (language === "en" ? "No answer is available right now." : "لا تتوفر إجابة حالياً.") });
     } catch (error) { console.error(error); return res.status(500).json({ reply: req.body?.language === "en" ? "The service is temporarily unavailable." : "حدثت مشكلة اتصال بالخدمة." }); }
   });
   app.get("/api/health", (_req, res) => {

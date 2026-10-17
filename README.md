@@ -11,7 +11,7 @@ The application now uses Supabase PostgreSQL, Auth, Realtime, and Storage. The R
 
 Create the first system administrator only from a trusted server shell with a service-role key: `npm run create:admin -- <username> <strong-password>`. The script requires at least 12 password characters and never exposes the service-role key to the browser.
 
-The browser receives only `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and the public Web Push key. `SUPABASE_SERVICE_ROLE_KEY`, Firebase migration credentials, Gemini keys, and Web Push private keys are server/worker-only.
+The browser receives only `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and the public Web Push key. `SUPABASE_SERVICE_ROLE_KEY`, Firebase migration credentials, Gemini/OpenAI keys, and Web Push private keys are server/worker-only.
 
 ## Vercel deployment
 
@@ -22,7 +22,7 @@ Set these environment variables for Production (and Preview if needed), then red
 - `VITE_SUPABASE_URL` and `SUPABASE_URL`: your Supabase project URL.
 - `VITE_SUPABASE_ANON_KEY` and `SUPABASE_ANON_KEY`: the project's publishable/anon key.
 - `SUPABASE_SERVICE_ROLE_KEY`: server-only, required for privileged admin, restaurant, and staff operations. Never prefix this variable with `VITE_`.
-- `VITE_WEB_PUSH_PUBLIC_KEY` if staff notifications are enabled; `GEMINI_API_KEY` only if AI chat is enabled.
+- `VITE_WEB_PUSH_PUBLIC_KEY` if staff notifications are enabled. For AI chat, set `GEMINI_API_KEY` for Gemini and/or `OPENAI_API_KEY` for GPT on the server. The system administrator chooses the provider and model in **AI assistant** settings; chat uses that provider's key automatically. The existing Supabase service-role key is required to read these saved settings server-side. Never use a `VITE_` prefix for either AI key. Add the chosen key to Vercel's server environment variables and redeploy after changing it.
 
 For waiter push alerts, set `VITE_WEB_PUSH_PUBLIC_KEY` in Vercel Production to the **same public VAPID key** used as `WEB_PUSH_PUBLIC_KEY` by the Supabase `notification-dispatcher`, then redeploy. The private VAPID key stays only in Supabase Edge Function secrets. Each waiter must enable notifications on their own HTTPS browser/device; a successful build or empty notification outbox does not prove push delivery.
 
