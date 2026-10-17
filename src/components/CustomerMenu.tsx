@@ -822,6 +822,8 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
 
 
 
+  const normalizedSearch = searchQuery.trim().toLocaleLowerCase();
+  const featuredImage = menuItems.find((item) => item.isAvailable !== false && item.imageUrl)?.imageUrl;
   const filteredMenuItems = menuItems.filter((item) => {
     const matchesCategory =
       selectedCategory === "الكل" || 
@@ -829,16 +831,16 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       (!item.category && selectedCategory === "الوجبات الأساسية");
 
     const matchesSearch =
-      item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.name.toLocaleLowerCase().includes(normalizedSearch) ||
       (item.ingredients &&
-        item.ingredients.toLowerCase().includes(searchQuery.toLowerCase()));
+        item.ingredients.toLocaleLowerCase().includes(normalizedSearch));
 
     return matchesCategory && matchesSearch;
   });
 
   return (
     <div
-      className="menu-theme min-h-screen bg-bg-paper font-sans pb-28 text-text-main selection:bg-brand-primary/10"
+      className="menu-theme menu-redesign min-h-screen bg-bg-paper font-sans pb-28 text-text-main selection:bg-brand-primary/10"
       data-menu-theme={restaurant?.themeId || "italian-luxury"}
       style={themeStyle(resolveTheme(restaurant?.themeId, restaurant?.themeColors))}
       dir={dir}
@@ -850,9 +852,6 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
           <span>{tr('عيني زبائننا الكرام، جهازكم غير متصل بالإنترنت حالياً. لا تشيلون هم دقيقة، المنيو متوفر أوفلاين وسنحاول إعادة الاتصال تلقائياً لتحديث طلبكم فوراً!', 'You are offline. The menu remains available and we will reconnect automatically.')}</span>
         </div>
       )}
-
-      {/* Texture Overlay */}
-      <div className="fixed inset-0 pointer-events-none opacity-[0.03] z-[100] bg-[url('https://www.transparenttextures.com/patterns/natural-paper.png')]" />
 
       {/* --------------------------------------------------------- */}
       {/* SECURITY OUTSIDE-RANGE GEOFENCE OVERLAY */}
@@ -982,28 +981,33 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
         </div>
       </header>
 
-      {/* A compact introduction keeps the food within reach on a phone. */}
-      <section className="menu-preview-header pt-24 sm:pt-28 px-4 sm:px-8 pb-5 sm:pb-7">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
-          <div>
-            <p className="text-xs font-bold text-brand-gold mb-1">{tr('أهلاً بك', 'Welcome')}</p>
-            <h2 className="text-2xl sm:text-4xl font-display font-bold text-brand-primary leading-tight">
-              {tr('ماذا تحب أن تطلب؟', 'What would you like to eat?')}
-            </h2>
-            <p className="text-sm text-text-muted mt-1">{tr('اختر أطباقك وأرسل الطلب من السلة.', 'Choose your dishes, then send your order from the cart.')}</p>
-          </div>
-          {orderComplete && (
-            <button type="button" onClick={() => setShowOrderTrackingModal(true)}
-              className="inline-flex items-center justify-between gap-4 rounded-xl border border-brand-gold/40 bg-bg-card px-4 py-3 text-sm font-bold text-brand-primary shadow-sm sm:min-w-56">
-              <span className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-brand-gold" />{tr('تتبع طلبك', 'Track your order')}</span>
-              <span className="text-xs text-text-muted">{orderComplete.status === 'pending' ? tr('قيد التأكيد', 'Pending') : orderComplete.status === 'preparing' ? tr('قيد التحضير', 'Preparing') : orderComplete.status === 'ready' ? tr('جاهز', 'Ready') : orderComplete.status === 'served' ? tr('تم التقديم', 'Served') : tr('راجع الطلب', 'Check order')}</span>
-            </button>
+      <section className="px-3 sm:px-6 pt-20 sm:pt-24">
+        <div className="menu-preview-header menu-hero max-w-7xl mx-auto relative overflow-hidden rounded-[1.75rem] sm:rounded-[2.5rem] bg-brand-primary text-white min-h-48 sm:min-h-64">
+          {featuredImage && (
+            <img src={featuredImage}
+              alt="" aria-hidden="true" className="absolute inset-0 w-full h-full object-cover opacity-25" referrerPolicy="no-referrer" />
           )}
+          <div className="absolute inset-0 bg-gradient-to-l from-brand-primary via-brand-primary/85 to-brand-primary/35" />
+          <div className="relative z-10 p-6 sm:p-10 max-w-2xl">
+            <span className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs font-bold text-white/90 mb-3"><Utensils className="w-3.5 h-3.5" />{tr('منيو المطعم', 'Restaurant menu')}</span>
+            <h2 className="text-3xl sm:text-5xl font-display font-bold leading-tight">{restaurant?.restaurantName || tr('أهلاً بك', 'Welcome')}</h2>
+            <p className="text-sm sm:text-base text-white/85 mt-2">{tr('اختر ما تحب. أضفه للسلة، ثم أرسل طلبك لطاولتك.', 'Pick your favorites, add them to the cart, then order for your table.')}</p>
+            <div className="flex flex-wrap gap-2 mt-5">
+              <button type="button" onClick={() => document.getElementById('menu-items')?.scrollIntoView({ behavior: 'smooth' })}
+                className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-brand-primary hover:bg-bg-paper min-h-11">
+                {tr('تصفح الأطباق', 'Browse dishes')} <ArrowRight className="w-4 h-4 rtl:rotate-180" />
+              </button>
+              {orderComplete && <button type="button" onClick={() => setShowOrderTrackingModal(true)}
+                className="inline-flex items-center gap-2 rounded-xl border border-white/50 bg-white/10 px-4 py-2.5 text-sm font-bold text-white min-h-11">
+                <CheckCircle2 className="w-4 h-4" />{tr('تتبع طلبك', 'Track your order')}
+              </button>}
+            </div>
+          </div>
         </div>
       </section>
 
       {/* Search and Categories Bar */}
-      <div className="sticky top-16 sm:top-20 z-30 bg-bg-card/95 backdrop-blur-md border-b border-border-delicate py-3 sm:py-4 space-y-3">
+      <div className="menu-filter-bar sticky top-16 sm:top-20 z-30 bg-bg-card/95 backdrop-blur-md border-b border-border-delicate py-3 sm:py-4 space-y-3 mt-4 sm:mt-6">
         {/* Search Input */}
         <div className="max-w-7xl mx-auto px-4 sm:px-8">
           <div className="relative">
@@ -1048,13 +1052,6 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                   {getCategoryIcon(cat)}
                 </span>
                 <span className="tracking-wide">{cat === 'الكل' ? tr('الكل', 'All') : localizeCategory(cat, language)}</span>
-                {isSelected && (
-                  <motion.div
-                    layoutId="activeCatBubble"
-                    className="absolute inset-0 rounded-full bg-brand-primary -z-10"
-                    transition={{ type: "spring", stiffness: 380, damping: 30 }}
-                  />
-                )}
               </button>
             );
           })}
@@ -1062,7 +1059,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       </div>
 
       {/* Dynamic Category Editorial Header */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-8 pt-6 text-right">
+      <div id="menu-items" className="max-w-7xl mx-auto px-4 sm:px-8 pt-6 text-right scroll-mt-52">
         <div className="flex flex-row justify-between items-center gap-4 border-b border-border-delicate pb-3">
           <div className="space-y-1">
             <h2 className="text-xl sm:text-2xl font-display font-bold text-brand-primary flex items-center gap-3">
@@ -1071,7 +1068,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
             </h2>
           </div>
           <span className="text-xs font-bold text-text-muted whitespace-nowrap">
-            {filteredMenuItems.length} {tr('أصناف متوفرة', 'items available')}
+            {filteredMenuItems.length} {tr('أطباق', 'dishes')}
           </span>
         </div>
       </div>
@@ -1085,18 +1082,14 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
             </p>
           </div>
         ) : (
-          <div className="menu-preview-grid grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
-            {filteredMenuItems.map((item, idx) => (
-              <motion.div
+          <div className="menu-preview-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-5">
+            {filteredMenuItems.map((item) => (
+              <article
                 key={item.id}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: Math.min(idx * 0.05, 0.4) }}
-                className="menu-preview-card group flex flex-col justify-between h-full bg-bg-card border border-border-delicate rounded-2xl hover:border-brand-gold transition-colors overflow-hidden shadow-sm"
+                className="menu-preview-card menu-dish-card group flex flex-col justify-between h-full bg-bg-card border border-border-delicate rounded-2xl hover:border-brand-gold transition-colors overflow-hidden shadow-sm"
               >
-                <div>
-                  <div className="aspect-[16/10] overflow-hidden relative">
+                <div className="menu-dish-top">
+                  <div className="menu-dish-image aspect-[16/10] overflow-hidden relative">
                     {item.imageUrl ? (
                       <img
                         src={item.imageUrl}
@@ -1124,7 +1117,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                     )}
                   </div>
 
-                  <div className="p-4 space-y-2 text-right">
+                  <div className="menu-dish-copy p-4 space-y-2 text-right">
                     {item.category && (
                       <p className="text-[8px] sm:text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
                         {localizeCategory(item.category, language)}
@@ -1134,19 +1127,19 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                       <h3 className="font-display text-sm sm:text-base font-bold text-brand-primary leading-tight">
                         {item.name}
                       </h3>
-                      <p className="font-display text-xs sm:text-sm font-bold text-brand-gold">
+                      <p className="font-display text-xs sm:text-sm font-bold text-brand-primary">
                         <span className="font-sans">{item.price.toLocaleString()}</span>{" "}
                         <span className="text-[9px] opacity-70">{tr('د.ع', 'IQD')}</span>
                       </p>
                     </div>
 
-                    <p className="text-text-muted text-[10px] sm:text-xs font-light leading-relaxed line-clamp-2">
+                    <p className="text-text-muted text-xs leading-relaxed line-clamp-2">
                       {item.ingredients || tr('أجود المكونات الطازجة المحضّرة بحب وعناية.', 'Fresh ingredients, prepared with care.')}
                     </p>
                   </div>
                 </div>
 
-                <div className="p-4 pt-0">
+                <div className="menu-dish-actions p-4 pt-0">
                   <div className="pt-2 sm:pt-3 border-t border-border-delicate/50 flex items-center justify-between gap-2">
                     {item.isAvailable === false ? (
                       <div className="w-full text-center bg-gray-100 border border-gray-200 text-gray-400 text-[10px] sm:text-xs font-bold py-2 px-3 cursor-not-allowed select-none">
@@ -1208,7 +1201,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                     )}
                   </div>
                 </div>
-              </motion.div>
+              </article>
             ))}
           </div>
         )}
@@ -1264,33 +1257,37 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
               transition={{ type: "spring", damping: 35, stiffness: 300 }}
-              className="bg-white w-full max-w-md h-full relative flex flex-col p-6 sm:p-10 shadow-2xl border-l border-border-delicate overflow-hidden text-right"
+              className="menu-cart-drawer bg-bg-card w-full max-w-lg h-full relative flex flex-col p-5 sm:p-8 shadow-2xl border-l border-border-delicate overflow-hidden text-right"
               dir={dir}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="customer-cart-title"
             >
               {/* Texture Overlay */}
               <div className="absolute inset-0 pointer-events-none opacity-[0.03] bg-[url('https://www.transparenttextures.com/patterns/natural-paper.png')]" />
 
               {/* Drawer Header */}
-              <div className="flex justify-between items-center mb-6 sm:mb-8 relative border-b border-border-delicate pb-4">
+              <div className="flex justify-between items-center mb-4 relative border-b border-border-delicate pb-4">
                 <div>
-                  <h2 className="text-2xl sm:text-3xl font-display font-black text-brand-primary leading-none">
-                    {tr('سلة المشتريات', 'Your cart')}
+                  <h2 id="customer-cart-title" className="text-2xl font-display font-black text-brand-primary leading-none">
+                    {tr('راجع طلبك', 'Review your order')}
                   </h2>
-                  <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest mt-2">
-                     {tr('الوجبات التي قمت باختيارها', 'Selected dishes')}
+                  <p className="text-xs text-text-muted mt-2">
+                     {totalItems} {tr('أطباق في السلة', 'items in your cart')}
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setShowCart(false)}
-                  className="px-4 py-2 border border-border-delicate hover:bg-bg-paper text-brand-primary hover:text-brand-secondary transition-all text-xs font-bold"
+                  className="w-11 h-11 flex items-center justify-center rounded-xl border border-border-delicate hover:bg-bg-paper text-brand-primary transition-colors"
+                  aria-label={tr('إغلاق السلة', 'Close cart')}
                 >
-                  {tr('إغلاق السلة', 'Close cart')}
+                  <X className="w-5 h-5" />
                 </button>
               </div>
 
               {/* Scrollable Contents */}
-              <div className="flex-1 overflow-y-auto space-y-8 no-scrollbar relative">
+              <div className="flex-1 overflow-y-auto space-y-6 no-scrollbar relative">
                 {Object.keys(cart).length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
                     <div className="w-16 h-16 rounded-full bg-bg-paper border border-border-delicate flex items-center justify-center text-brand-gold">
@@ -1305,7 +1302,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                   </div>
                 ) : (
                   <>
-                    <div className="space-y-4">
+                    <div className="space-y-3">
                       {Object.entries(cart).map(([cartKey, qty]) => {
                         const { itemId, cheeseSelected, spicySelected } = parseCartKey(cartKey);
                         const item = menuItems.find((i) => i.id === itemId);
@@ -1318,9 +1315,9 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                         return (
                           <div 
                             key={cartKey} 
-                            className="flex gap-4 items-center bg-bg-paper border border-border-delicate p-3 hover:border-brand-gold transition-colors duration-300 text-right"
+                            className="flex gap-3 items-center bg-bg-paper border border-border-delicate rounded-xl p-3 text-right"
                           >
-                            <div className="w-16 h-16 bg-white border border-border-delicate shrink-0 overflow-hidden flex items-center justify-center">
+                            <div className="w-14 h-14 bg-bg-card rounded-lg shrink-0 overflow-hidden flex items-center justify-center">
                               {item.imageUrl ? (
                                 <img
                                   src={item.imageUrl}
@@ -1349,11 +1346,12 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                                 {itemPrice.toLocaleString()} <span className="text-[10px] opacity-70">{tr('د.ع', 'IQD')}</span>
                               </p>
                             </div>
-                            <div className="flex items-center gap-3 bg-white border border-border-delicate rounded-full py-1 px-3">
+                            <div className="flex items-center gap-1 bg-bg-card border border-border-delicate rounded-full py-1 px-1">
                               <button
                                 type="button"
                                 onClick={() => removeFromCart(cartKey)}
-                                className="text-text-muted hover:text-brand-primary transition-colors p-1"
+                                className="text-text-muted hover:text-brand-primary transition-colors p-2 min-w-9 min-h-9 flex items-center justify-center"
+                                aria-label={tr('تقليل الكمية', 'Decrease quantity')}
                               >
                                 <Minus className="w-3 h-3" />
                               </button>
@@ -1363,7 +1361,8 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                               <button
                                 type="button"
                                 onClick={() => addToCart(cartKey)}
-                                className="text-text-muted hover:text-brand-primary transition-colors p-1"
+                                className="text-text-muted hover:text-brand-primary transition-colors p-2 min-w-9 min-h-9 flex items-center justify-center"
+                                aria-label={tr('زيادة الكمية', 'Increase quantity')}
                               >
                                 <Plus className="w-3 h-3" />
                               </button>
@@ -1373,10 +1372,11 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                       })}
                     </div>
 
-                    <div className="pt-6 border-t border-border-delicate space-y-6 pb-6">
+                    <div className="pt-5 border-t border-border-delicate space-y-4 pb-6">
+                      <div><h3 className="text-base font-bold text-brand-primary">{tr('تفاصيل الطاولة', 'Table details')}</h3><p className="text-xs text-text-muted">{tr('أدخل اسمك ورقم الطاولة ليصل الطلب إليك.', 'Add your name and table so staff can find you.')}</p></div>
                       <div className="space-y-2">
-                        <label className="text-[10px] font-bold text-brand-gold uppercase tracking-widest block">
-                          {tr('اسم الزبون الكريم', 'Your name')}
+                        <label className="text-xs font-bold text-brand-primary block">
+                          {tr('اسمك', 'Your name')}
                         </label>
                         <input
                           required
@@ -1384,12 +1384,12 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                           onChange={(e) => setCustomerName(e.target.value)}
                           type="text"
                           placeholder={tr('الرجاء إدخال الاسم الكامل', 'Enter your full name')}
-                          className="w-full bg-bg-paper border border-border-delicate py-3 px-4 focus:outline-none focus:border-brand-primary transition-all text-sm text-brand-primary text-right font-bold focus:bg-white"
+                          className="w-full bg-bg-paper border border-border-delicate rounded-xl py-3 px-4 focus:outline-none focus:border-brand-primary transition-colors text-sm text-brand-primary text-right"
                         />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-[10px] font-bold text-brand-gold uppercase tracking-widest block">
-                          {tr('رقم الطاولة المخصصة', 'Table number')}
+                        <label className="text-xs font-bold text-brand-primary block">
+                          {tr('رقم الطاولة', 'Table number')}
                         </label>
                         <input
                           required
@@ -1397,18 +1397,18 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                           onChange={(e) => setTableNumber(e.target.value)}
                           type="text"
                           placeholder={tr('أدخل رقم طاولة جلوسك', 'Enter your table number')}
-                          className="w-full bg-bg-paper border border-border-delicate py-3 px-4 focus:outline-none focus:border-brand-primary transition-all text-sm text-brand-primary text-right font-bold focus:bg-white"
+                          className="w-full bg-bg-paper border border-border-delicate rounded-xl py-3 px-4 focus:outline-none focus:border-brand-primary transition-colors text-sm text-brand-primary text-right"
                         />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-[10px] font-bold text-brand-gold uppercase tracking-widest block">
-                          {tr('رغبات أو توجيهات خاصة بالطلب', 'Special instructions')}
+                        <label className="text-xs font-bold text-brand-primary block">
+                          {tr('ملاحظات (اختياري)', 'Notes (optional)')}
                         </label>
                         <textarea
                           value={notes}
                           onChange={(e) => setNotes(e.target.value)}
                           placeholder={tr('مثال: بدون بصل، صوص خارجي، درجة الاستواء...', 'Example: no onion, extra sauce...')}
-                          className="w-full bg-bg-paper border border-border-delicate p-4 rounded-none focus:outline-none focus:border-brand-primary transition-all text-xs h-24 resize-none leading-relaxed text-right font-bold focus:bg-white"
+                          className="w-full bg-bg-paper border border-border-delicate p-4 rounded-xl focus:outline-none focus:border-brand-primary transition-colors text-sm h-20 resize-none leading-relaxed text-right"
                         />
                       </div>
                     </div>
@@ -1418,10 +1418,10 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
 
               {/* Subtotal & Checkout Button */}
               {Object.keys(cart).length > 0 && (
-                <div className="pt-4 border-t border-border-delicate relative bg-white">
-                  <div className="flex justify-between items-baseline mb-6 bg-bg-paper border border-border-delicate p-4">
-                    <span className="text-xs font-bold text-brand-primary uppercase tracking-widest">
-                      {tr('المجموع الإجمالي للوجبات', 'Order total')}
+                <div className="pt-4 border-t border-border-delicate relative bg-bg-card pb-[env(safe-area-inset-bottom)]">
+                  <div className="flex justify-between items-baseline mb-3">
+                    <span className="text-sm font-bold text-brand-primary">
+                      {tr('المجموع', 'Total')}
                     </span>
                     <span className="text-xl sm:text-2xl font-sans text-brand-primary font-black">
                       {totalPrice.toLocaleString()} <span className="text-xs font-bold">{tr('د.ع', 'IQD')}</span>
@@ -1431,9 +1431,9 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                     type="button"
                     onClick={handlePlaceOrder}
                     disabled={submittingOrder}
-                    className="w-full py-4 bg-brand-primary text-white font-bold hover:bg-brand-secondary transition-all text-xs sm:text-sm tracking-widest text-center shadow-md uppercase disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="w-full py-4 bg-brand-primary text-white rounded-xl font-bold hover:bg-brand-secondary transition-colors text-sm text-center shadow-md disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    {submittingOrder ? tr('جاري إرسال الطلب...', 'Sending order...') : tr('إرسال الطلب للمطبخ والويترز', 'Send order to kitchen and waiters')}
+                    {submittingOrder ? tr('جاري إرسال الطلب...', 'Sending order...') : tr('تأكيد وإرسال الطلب', 'Confirm and send order')}
                   </button>
                 </div>
               )}

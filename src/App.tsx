@@ -178,13 +178,13 @@ export default function App() {
 
   return (
     <div
-      className="workspace-theme min-h-screen bg-bg-paper font-sans text-text-main selection:bg-brand-primary/10 flex overflow-hidden"
+      className={`workspace-theme ${session.role === 'admin' ? 'admin-shell' : ''} min-h-screen bg-bg-paper font-sans text-text-main selection:bg-brand-primary/10 flex overflow-hidden`}
       data-workspace-theme={workspaceTheme.id}
       style={themeStyle(workspaceTheme)}
       dir={dir}
     >
       {/* Texture Overlay */}
-      <div className="fixed inset-0 pointer-events-none opacity-[0.02] z-[100] bg-[url('https://www.transparenttextures.com/patterns/natural-paper.png')]" />
+      {session.role !== 'admin' && <div className="fixed inset-0 pointer-events-none opacity-[0.02] z-[100] bg-[url('https://www.transparenttextures.com/patterns/natural-paper.png')]" />}
 
       {/* Mobile Backdrop Overlay */}
       <AnimatePresence>

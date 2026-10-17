@@ -61,6 +61,64 @@
 .menu-theme[data-menu-theme="coastal"] .menu-preview-header { clip-path: ellipse(90% 75% at 50% 20%); padding-bottom: 4.5rem; }
 .menu-theme[data-menu-theme="coastal"] .menu-preview-card { border-radius: 2rem; border-width: 0; box-shadow: 0 8px 24px rgb(8 145 178 / .12); }
 
+/* Food-first menu: roomy cards on desktop, quick scanning rows on phones. */
+.menu-redesign .menu-hero { isolation: isolate; }
+.menu-redesign .menu-dish-card { min-width: 0; }
+.menu-redesign .menu-dish-image img { display: block; }
+.menu-redesign .menu-filter-bar { box-shadow: 0 9px 24px rgb(0 0 0 / .04); }
+.menu-redesign[data-menu-theme="coastal"] .menu-hero { clip-path: none; padding-bottom: 0; }
+.menu-redesign[data-menu-theme="fast-bite"] .menu-hero { transform: none; }
+@media (max-width: 639px) {
+  .menu-redesign .menu-dish-card {
+    display: grid;
+    grid-template-columns: 108px minmax(0, 1fr);
+    grid-template-areas: "image copy" "image actions";
+    grid-template-rows: 1fr auto;
+    min-height: 152px;
+  }
+  .menu-redesign .menu-dish-top { display: contents; }
+  .menu-redesign .menu-dish-image { grid-area: image; min-height: 152px; aspect-ratio: auto; }
+  .menu-redesign .menu-dish-copy { grid-area: copy; padding: .875rem .875rem .25rem; }
+  .menu-redesign .menu-dish-actions { grid-area: actions; padding: 0 .875rem .875rem; }
+  .menu-redesign .menu-dish-actions > div { padding-top: 0; border: 0; }
+  .menu-redesign .menu-dish-image img { height: 100%; }
+}
+
+/* A calmer, task-oriented system administration surface. */
+.admin-surface { max-width: 1440px; margin-inline: auto; }
+.admin-surface .admin-partner-card { box-shadow: 0 8px 28px rgb(0 0 0 / .035); transition: border-color .2s, transform .2s, box-shadow .2s; }
+.admin-surface .admin-partner-card:hover { border-color: var(--color-brand-gold); transform: translateY(-2px); box-shadow: 0 14px 36px rgb(0 0 0 / .07); }
+.admin-surface :is(input, select, textarea):focus-visible,
+.admin-restaurant-modal :is(input, select, textarea):focus-visible { outline: 2px solid var(--color-brand-gold); outline-offset: 2px; }
+.admin-surface > div > div > .bg-white { border-radius: 1.25rem; }
+.admin-restaurant-form label { font-size: .75rem; font-weight: 700; letter-spacing: normal; color: var(--color-text-main); opacity: 1; margin-bottom: .4rem; }
+.admin-restaurant-form :is(input:not([type="file"]), select, textarea) {
+  min-height: 2.85rem;
+  border: 1px solid var(--color-border-delicate);
+  border-radius: .75rem;
+  background: #fff;
+  font-size: .875rem;
+  letter-spacing: normal;
+  color: var(--color-text-main);
+}
+.admin-restaurant-form input:read-only { background: var(--color-bg-paper); }
+.admin-restaurant-form input::placeholder { color: var(--color-text-muted); opacity: .8; }
+.admin-restaurant-form .underline-animation input { padding-inline-start: 2rem; }
+.admin-restaurant-form .underline-animation svg { inset-inline-start: .75rem; inset-inline-end: auto; }
+.admin-restaurant-form input[type="date"] { width: 100%; }
+.admin-shell .workspace-sidebar.workspace-shell-panel { background: #17281e; color: #f6f8f2; border-color: rgb(255 255 255 / .12); }
+.admin-shell .workspace-sidebar .text-brand-primary { color: #f6f8f2; }
+.admin-shell .workspace-sidebar .text-text-muted { color: #d4dfd4; }
+.admin-shell .workspace-sidebar .border-border-delicate { border-color: rgb(255 255 255 / .14); }
+.admin-shell .workspace-sidebar .bg-bg-paper { background: #20382a; }
+.admin-shell .workspace-sidebar nav button:hover { background-color: rgb(255 255 255 / .08); }
+.admin-shell .workspace-sidebar nav button.bg-brand-primary { background-color: #315342; }
+.admin-shell main { background: #f5f7f3; }
+@media (prefers-reduced-motion: reduce) {
+  .admin-surface .admin-partner-card { transition: none; }
+  .admin-surface .admin-partner-card:hover { transform: none; }
+}
+
 /* The selected restaurant identity also brands the authenticated owner/staff workspace. */
 .workspace-theme {
   background: var(--color-bg-paper);
