@@ -4,6 +4,7 @@ import { Utensils, Lock, User, Eye, EyeOff, AlertCircle, ChevronRight, Building2
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { UserSession } from '../types';
 import { useLanguage } from '../lib/i18n';
+import { selectStaffPortal, updateHomeScreenLink } from '../lib/home-screen';
 
 interface LoginPageProps {
   onLogin: (user: UserSession) => void;
@@ -32,6 +33,11 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     const params = new URLSearchParams(window.location.search);
     const rid = params.get('loginRestaurantId');
     setLoginRestaurantId(rid);
+    if (rid) {
+      const requestedRole = params.get('portal');
+      setRole(requestedRole === 'waiter' || requestedRole === 'kitchen' ? requestedRole : 'restaurant');
+    }
+    updateHomeScreenLink();
 
     const fetchCustomRestaurant = async (id: string) => {
       setFetchingCustomRest(true);
@@ -41,7 +47,6 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         if (!response.ok) throw new Error(String(response.status));
         const data = (await response.json()).restaurant;
         setCustomRestaurant({ id, restaurantName: data.restaurantName, logoUrl: data.logoUrl, status: 'active' });
-        setRole('restaurant');
       } catch (err) {
         console.error("Error loading custom restaurant info:", err);
         setError(tr('حدث خطأ أثناء تحميل معلومات بوابة هذا المطعم.', 'Could not load this restaurant portal.'));
@@ -176,7 +181,10 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                 <button
                   type="button"
                   key={r.id}
-                  onClick={() => setRole(r.id as any)}
+                  onClick={() => {
+                    setRole(r.id as any);
+                    if (loginRestaurantId && r.id !== 'admin') selectStaffPortal(r.id, loginRestaurantId);
+                  }}
                   className={`flex-1 min-w-[70px] py-4 text-sm font-bold tracking-wider transition-all relative cursor-pointer ${
                     role === r.id 
                     ? 'text-brand-primary' 

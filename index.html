@@ -5,7 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" href="/novx-1.jpg" />
     <link rel="apple-touch-icon" href="/novx-1.png" />
-    <link rel="manifest" href="/manifest.json" />
+    <script>
+      // Set the manifest before the page finishes loading. iOS saves its
+      // start_url when adding this page to the Home Screen.
+      (() => {
+        const params = new URLSearchParams(location.search);
+        const menuId = params.get('restaurantId');
+        const staffId = params.get('loginRestaurantId');
+        const requestedRole = params.get('portal');
+        const role = requestedRole === 'waiter' || requestedRole === 'kitchen' ? requestedRole : 'restaurant';
+        const link = document.createElement('link');
+        link.rel = 'manifest';
+        link.href = menuId
+          ? '/api/home-screen-manifest?restaurantId=' + encodeURIComponent(menuId) + '&portal=menu'
+          : staffId
+            ? '/api/home-screen-manifest?restaurantId=' + encodeURIComponent(staffId) + '&portal=' + role
+            : '/manifest.json';
+        document.head.appendChild(link);
+      })();
+    </script>
     <title>المنيو الالكتروني</title>
   </head>
   <body>

@@ -1,6 +1,7 @@
 {
   "name": "المنيو الالكتروني",
   "short_name": "المنيو الالكتروني",
+  "id": "/home/admin",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#000000",

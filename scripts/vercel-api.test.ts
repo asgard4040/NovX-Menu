@@ -16,6 +16,20 @@ test("Vercel API gateway forwards the existing health route as JSON", async () =
     const response = await fetch(`http://127.0.0.1:${address.port}/api/index?route=health`);
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { status: "ok", database: "supabase" });
+
+    const restaurantId = "123e4567-e89b-42d3-a456-426614174000";
+    for (const portal of ["menu", "restaurant", "waiter", "kitchen"] as const) {
+      const manifestResponse = await fetch(`http://127.0.0.1:${address.port}/api/index?route=home-screen-manifest&restaurantId=${restaurantId}&portal=${portal}`);
+      assert.equal(manifestResponse.status, 200);
+      assert.match(manifestResponse.headers.get("content-type") || "", /application\/manifest\+json/);
+      const manifest = await manifestResponse.json();
+      assert.equal(manifest.id, `/home/${portal}/${restaurantId}`);
+      assert.equal(manifest.start_url, portal === "menu"
+        ? `/?restaurantId=${restaurantId}`
+        : `/?loginRestaurantId=${restaurantId}&portal=${portal}`);
+    }
+    const invalid = await fetch(`http://127.0.0.1:${address.port}/api/index?route=home-screen-manifest&restaurantId=bad&portal=waiter`);
+    assert.equal(invalid.status, 400);
   } finally {
     server.close();
   }

@@ -47,6 +47,7 @@ import { db, doc, onSnapshot } from './lib/supabase-db';
 import { DEFAULT_THEME, resolveTheme, themeStyle } from './lib/themes';
 import type { MenuTheme } from './lib/themes';
 import { useLanguage } from './lib/i18n';
+import { selectStaffPortal, updateHomeScreenLink } from './lib/home-screen';
 
 export default function App() {
   const { dir, isEnglish, toggleLanguage, tr } = useLanguage();
@@ -89,6 +90,19 @@ export default function App() {
       }
     }
   }, [session?.role]);
+
+  useEffect(() => {
+    if (customerRestaurantId) return;
+    if (session?.restaurantId && session.role !== 'admin') {
+      selectStaffPortal(session.role, session.restaurantId);
+    } else if (session?.role === 'admin') {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('loginRestaurantId');
+      url.searchParams.delete('portal');
+      window.history.replaceState(window.history.state, '', url);
+      updateHomeScreenLink();
+    }
+  }, [session?.role, session?.restaurantId, customerRestaurantId]);
 
   useEffect(() => {
     if (!session?.restaurantId || session.role === 'admin') {

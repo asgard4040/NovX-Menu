@@ -46,6 +46,24 @@ function parseCustomerLocation(value: unknown) {
 const app = express();
 app.use(express.json({ limit: "256kb" }));
 
+  app.get("/api/home-screen-manifest", (req, res) => {
+    const restaurantId = String(req.query.restaurantId || "");
+    const portal = String(req.query.portal || "");
+    if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(restaurantId)
+      || !["menu", "restaurant", "waiter", "kitchen"].includes(portal))
+      return res.status(400).json({ error: "invalid_home_screen_portal" });
+    const name = { menu: "NovX Menu", restaurant: "NovX Restaurant", waiter: "NovX Waiter", kitchen: "NovX Kitchen" }[portal];
+    const startUrl = portal === "menu"
+      ? `/?restaurantId=${encodeURIComponent(restaurantId)}`
+      : `/?loginRestaurantId=${encodeURIComponent(restaurantId)}&portal=${portal}`;
+    res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader("Content-Type", "application/manifest+json; charset=utf-8");
+    return res.json({ name, short_name: name, id: `/home/${portal}/${restaurantId}`,
+      start_url: startUrl, scope: "/", display: "standalone",
+      background_color: "#000000", theme_color: "#000000",
+      icons: [{ src: "/novx-1.png", sizes: "512x512", type: "image/png" }] });
+  });
+
   app.get("/api/restaurants/:restaurantId/access", async (req, res) => {
     const restaurantId = await resolveRestaurantId(req.params.restaurantId);
     const { data, error } = await supabase.rpc("public_restaurant_menu", { p_restaurant_id: restaurantId });
