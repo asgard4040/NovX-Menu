@@ -234,9 +234,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                       className="w-20 h-20 rounded-full object-cover border-2 border-brand-gold p-1 shadow-lg mb-3 max-h-20 max-w-20"
                     />
                   ) : (
-                    <div className="w-20 h-20 bg-bg-paper rounded-full border-2 border-brand-gold flex items-center justify-center text-brand-primary shadow-lg mb-3">
-                      <img src={systemLogo} alt="" className="w-14 h-14 object-contain" />
-                    </div>
+                    <img src={systemLogo} alt="" className="w-20 h-20 object-contain mb-3" />
                   )}
                   <p className="text-brand-gold text-[10px] font-bold uppercase tracking-widest leading-none mb-3">{tr('البوابة الأمنية المخصصة', 'Secure staff portal')}</p>
                   <h1 className="text-2xl sm:text-3xl font-display text-brand-primary tracking-tight font-bold mb-1">
