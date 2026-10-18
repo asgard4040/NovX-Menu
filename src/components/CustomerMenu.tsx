@@ -40,6 +40,7 @@ import { db } from "../lib/supabase-db";
 import { handleFirestoreError, OperationType } from "../lib/firestore-utils";
 import { Restaurant, MenuItem, Order, OrderItem } from "../types";
 import { chatWithAI } from "../lib/gemini";
+import { tableFromQrSearch } from "../lib/qr-tables";
 import { acceptableGpsAccuracyMeters, verifyGeofence } from "../lib/geofence";
 import { DEFAULT_THEME, resolveTheme, themeStyle } from "../lib/themes";
 import { localizeCategory, useLanguage } from "../lib/i18n";
@@ -124,7 +125,9 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
 
   // Checkout fields
   const [customerName, setCustomerName] = useState(() => localStorage.getItem("customer_name") || "");
-  const [tableNumber, setTableNumber] = useState(() => localStorage.getItem("table_number") || "");
+  const [tableNumber, setTableNumber] = useState(() => {
+    return tableFromQrSearch(window.location.search) || localStorage.getItem("table_number") || "";
+  });
   const [notes, setNotes] = useState("");
   const [showOrderTrackingModal, setShowOrderTrackingModal] = useState(false);
   const [orderComplete, setOrderComplete] = useState<Order | null>(() => {
@@ -551,7 +554,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
 
   const handleWaiterCallSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!customerName.trim() || !tableNumber.trim() || !waiterCallReason.trim()) {
+    if (!tableNumber.trim() || !waiterCallReason.trim()) {
       alert(tr("الرجاء ملء جميع الحقول المطلوبة.", "Please complete all required fields."));
       return;
     }
@@ -567,7 +570,6 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           restaurantId,
-          customerName: customerName.trim(),
           tableNumber: tableNumber.trim(),
           reason: waiterCallReason.trim(),
           idempotencyKey: waiterIdempotencyKeyRef.current,
@@ -1568,7 +1570,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                     onChange={(e) => setInputMessage(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleAISend()}
                     placeholder={tr('كيف يمكنني مساعدتك؟', 'How can I help you?')}
-                    className="flex-1 bg-transparent px-6 py-4 text-sm focus:outline-none placeholder:text-text-muted/50"
+                    className="min-w-0 flex-1 bg-transparent px-6 py-4 text-base focus:outline-none placeholder:text-text-muted/50"
                   />
                   <button
                     onClick={handleAISend}
@@ -1850,23 +1852,10 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
               ) : (
                 <form onSubmit={handleWaiterCallSubmit} className="space-y-6">
                   <p className="text-xs text-text-muted leading-relaxed">
-                    {tr('يرجى ملء الاسم ورقم الطاولة لتحديد مكان جلوسك بدقة وتأكيد احتياجك السريع للنداء.', 'Enter your name, table number, and what you need so staff can find you quickly.')}
+                    {tr('أدخل رقم الطاولة وما تحتاجه ليصل إليك الموظف بسرعة.', 'Enter your table number and what you need so staff can find you quickly.')}
                   </p>
 
                   <div className="space-y-4">
-                    {/* User Name */}
-                    <div className="space-y-1.5">
-                      <label className="block text-[10px] font-bold text-brand-gold uppercase tracking-wider">{tr('الاسم بالكامل', 'Full name')}</label>
-                      <input
-                        type="text"
-                        required
-                        placeholder={tr('أدخل اسمك هنا', 'Enter your name')}
-                        value={customerName}
-                        onChange={(e) => setCustomerName(e.target.value)}
-                        className="w-full bg-slate-50 border border-border-delicate px-4 py-3 text-sm font-bold focus:outline-none focus:border-brand-primary focus:bg-white text-right"
-                      />
-                    </div>
-
                     {/* Table Number */}
                     <div className="space-y-1.5">
                       <label className="block text-[10px] font-bold text-brand-gold uppercase tracking-wider">{tr('رقم الطاولة', 'Table number')}</label>

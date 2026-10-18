@@ -9,6 +9,7 @@ The application now uses Supabase PostgreSQL, Auth, Realtime, and Storage. The R
 3. Apply the SQL files in `supabase/migrations` in filename order through the Supabase CLI or SQL editor. Existing installations only need migrations they have not run yet. `202610150001_gps_accuracy_matches_radius.sql` aligns indoor GPS accuracy checks; `202610150002_order_workflow_permissions.sql` fixes order creation after a shift reset and limits menu edits to owners/managers.
    Apply `202610180001_ordova_default_theme.sql` to make Ordova the database default for future restaurants; it does not alter existing restaurant branding.
    Apply `202610180002_staff_passcodes.sql` and `202610180003_passcode_multi_restaurant_key.sql` before deploying the four-digit staff sign-in code.
+   Apply `202610180004_printable_qr_cards.sql` before using the printable QR card settings; it adds the optional table count and saved card design to existing restaurants without changing their data.
 4. Run `npm install` and `npm run dev`.
 
 Create the first system administrator only from a trusted server shell with a service-role key: `npm run create:admin -- <username> <strong-password>`. The script requires at least 12 password characters and never exposes the service-role key to the browser.

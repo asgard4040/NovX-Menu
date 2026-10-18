@@ -195,7 +195,7 @@ export default function App() {
   }
 
   if (!session) {
-    return <div dir={dir}><PublicLanguageToggle isEnglish={isEnglish} toggleLanguage={toggleLanguage} label={tr('تغيير اللغة', 'Change language')} /><LoginPage onLogin={handleLogin} /></div>;
+    return <div dir={dir}><LoginPage onLogin={handleLogin} /></div>;
   }
 
   const menuItems = {
@@ -456,19 +456,6 @@ export default function App() {
       <div className="fixed top-12 left-12 w-24 h-24 border-t border-l border-brand-gold/20 pointer-events-none opacity-40 z-0" />
       <div className="fixed bottom-12 left-12 w-24 h-24 border-b border-l border-brand-gold/20 pointer-events-none opacity-40 z-0" />
     </div>
-  );
-}
-
-function PublicLanguageToggle({ isEnglish, toggleLanguage, label }: { isEnglish: boolean; toggleLanguage: () => void; label: string }) {
-  return (
-    <button
-      type="button"
-      onClick={toggleLanguage}
-      className="fixed top-20 end-4 z-[200] h-11 px-4 bg-white/95 text-brand-primary border border-border-delicate shadow-lg flex items-center gap-2 font-bold text-xs"
-      aria-label={label}
-    >
-      <Languages className="w-4 h-4" /> {isEnglish ? 'AR' : 'EN'}
-    </button>
   );
 }
 

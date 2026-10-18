@@ -951,7 +951,9 @@ export default function WaiterDashboard({
                       <div className="space-y-2 text-right">
                         <h4 className="text-lg font-bold text-brand-primary">
                           {tr('طاولة', 'Table')} <span className="font-mono text-xl text-brand-primary">{req.tableNumber}</span>
-                          <span className="text-xs text-text-muted font-normal mr-2">({req.customerName})</span>
+                          {req.customerName && req.customerName !== 'Guest' && (
+                            <span className="text-xs text-text-muted font-normal mr-2">({req.customerName})</span>
+                          )}
                         </h4>
                         
                         <div className="bg-bg-paper border border-border-delicate p-4 rounded-xl">

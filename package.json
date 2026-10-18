@@ -10,7 +10,7 @@
     "clean": "rm -rf dist server.js",
     "start": "node dist/server.cjs",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/lib/subscription.test.ts src/lib/i18n.test.ts src/lib/ai-models.test.ts src/lib/themes.test.ts scripts/vercel-api.test.ts passcodes.test.ts",
+    "test": "tsx --test src/lib/subscription.test.ts src/lib/i18n.test.ts src/lib/ai-models.test.ts src/lib/themes.test.ts src/lib/qr-tables.test.ts scripts/vercel-api.test.ts passcodes.test.ts",
     "test:backend": "tsx scripts/smoke-backend.ts",
     "migrate:firebase": "tsx scripts/migrate-firebase-to-supabase.ts",
     "create:admin": "tsx scripts/create-admin.ts"

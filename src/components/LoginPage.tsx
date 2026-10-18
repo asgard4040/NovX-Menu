@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Lock, User, Eye, EyeOff, AlertCircle, ChevronRight, Delete } from 'lucide-react';
+import { Lock, User, Eye, EyeOff, AlertCircle, ChevronRight, Delete, Languages } from 'lucide-react';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { UserSession } from '../types';
 import { useLanguage } from '../lib/i18n';
@@ -13,7 +13,7 @@ interface LoginPageProps {
 }
 
 export default function LoginPage({ onLogin }: LoginPageProps) {
-  const { dir, tr } = useLanguage();
+  const { dir, isEnglish, setLanguage, tr } = useLanguage();
   const systemLogo = usePublicSystemLogo();
   const [role, setRole] = useState<'admin' | 'restaurant' | 'waiter' | 'kitchen'>('admin');
   const [username, setUsername] = useState('');
@@ -215,6 +215,19 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       >
         {/* Decorative Texture */}
         <div className="absolute inset-0 pointer-events-none opacity-[0.04] bg-[url('https://www.transparenttextures.com/patterns/natural-paper.png')]" />
+        <div className="relative z-10 mb-5 flex justify-end">
+          <div className="inline-flex items-center gap-1 rounded-full border border-border-delicate bg-bg-paper/80 p-1 shadow-sm" role="group" aria-label={tr('اللغة', 'Language')} dir="ltr">
+            <Languages className="ms-2 h-4 w-4 text-text-muted" aria-hidden="true" />
+            <button type="button" onClick={() => setLanguage('ar')} aria-pressed={!isEnglish}
+              className={`rounded-full px-3 py-1.5 text-xs font-bold transition-colors ${!isEnglish ? 'bg-brand-primary text-white shadow-sm' : 'text-text-muted hover:text-brand-primary'}`}>
+              العربية
+            </button>
+            <button type="button" onClick={() => setLanguage('en')} aria-pressed={isEnglish}
+              className={`rounded-full px-3 py-1.5 text-xs font-bold transition-colors ${isEnglish ? 'bg-brand-primary text-white shadow-sm' : 'text-text-muted hover:text-brand-primary'}`}>
+              English
+            </button>
+          </div>
+        </div>
         
         {fetchingCustomRest ? (
           <div className="flex flex-col items-center justify-center py-20 gap-4">

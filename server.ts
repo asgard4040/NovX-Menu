@@ -419,7 +419,7 @@ app.use(express.json({ limit: "256kb" }));
   app.post("/api/waiter-requests", rateLimit, async (req, res) => {
     const body = req.body || {}; const location = parseCustomerLocation(body.location);
     if (!location) return res.status(400).json({ error: "invalid_location" });
-    const customerName = String(body.customerName || "").trim();
+    const customerName = String(body.customerName || "").trim() || "Guest";
     const tableNumber = String(body.tableNumber || "").trim();
     const reason = String(body.reason || "").trim();
     const idempotencyKey = String(body.idempotencyKey || "");

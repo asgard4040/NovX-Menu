@@ -67,6 +67,7 @@ import { MENU_THEMES, contrastRatio, resolveTheme, themeStyle, ThemeColors } fro
 import { supabase } from "../lib/supabase";
 import { persistRestaurantImage } from "../lib/storage";
 import { localizeCategory, localizeDeviceType, useLanguage } from "../lib/i18n";
+import QrPrintStudio from "./QrPrintStudio";
 
 const DEFAULT_MENU_CATEGORIES = ["الوجبات الأساسية", "المقبلات", "الحلويات", "المشروبات"];
 
@@ -1576,6 +1577,8 @@ export default function RestaurantDashboard({
                 <ExternalLink className="w-5 h-5 shrink-0" /> {tr('استعراض صفحة زبائنك', 'View customer menu')}
               </button>
             </div>
+
+            <QrPrintStudio restaurant={restaurant} onSaved={setRestaurant} />
 
             {/* Custom Staff Login Link Section */}
             <div className="mt-16 p-8 border border-border-delicate bg-bg-paper w-full max-w-2xl text-center space-y-4">

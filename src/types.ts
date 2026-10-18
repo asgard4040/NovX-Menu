@@ -28,6 +28,8 @@ export interface Restaurant {
   geofenceRadiusMeters?: number;
   themeId?: string;
   themeColors?: { primary?: string; secondary?: string; accent?: string; background?: string; text?: string };
+  tableCount?: number;
+  qrDesign?: 'ordova' | 'minimal' | 'cafe' | 'bold';
 }
 
 export interface Waiter {
