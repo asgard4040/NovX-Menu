@@ -21,7 +21,7 @@ The demo form validates entries and prepares a WhatsApp message. The visitor rev
 ## Before production launch
 
 - Add verified product screenshots and approved customer testimonials when available.
-- Set `marketingConfig.canonicalUrl` to the final public URL, and use the same absolute URL for Open Graph image metadata.
+- Keep `marketingConfig.canonicalUrl` aligned with the public domain when it changes.
 - Add verified social account URLs to `marketingConfig.socialLinks`.
 - Review the privacy and service terms text with the ORDOVA team.
 

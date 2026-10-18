@@ -7,7 +7,7 @@ export const marketingConfig = {
   brand: 'ORDOVA',
   supportPhone: '07740064528',
   whatsapp: '9647740064528',
-  canonicalUrl: '', // Set to the public marketing URL when it is known.
+  canonicalUrl: 'https://ordova.cc',
   socialLinks: [] as { label: string; url: string }[],
   testimonials: [] as { quote: Bilingual; author: Bilingual; organization: Bilingual }[],
   screenshotSources: {} as Record<string, string>, // e.g. 'menu-ar': '/marketing/screenshots/menu-ar.webp'
