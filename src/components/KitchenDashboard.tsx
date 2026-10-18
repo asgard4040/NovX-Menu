@@ -281,11 +281,11 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
         </div>
       </div>
 
-      <nav className="fixed xl:hidden bottom-0 inset-x-0 z-50 grid grid-cols-2 gap-2 border-t border-border-delicate workspace-shell-panel px-2 pt-2 pb-[calc(.5rem+env(safe-area-inset-bottom))] shadow-[0_-10px_30px_rgba(0,0,0,.10)]" aria-label={tr('مراحل طلبات المطبخ', 'Kitchen order stages')}>
-        <button onClick={() => setMobileView('preparing')} className={`h-16 flex items-center justify-center gap-2 text-xs font-bold ${mobileView === 'preparing' ? 'bg-brand-primary text-white' : 'text-brand-primary'}`}>
+      <nav className="fixed xl:hidden bottom-[calc(.5rem+env(safe-area-inset-bottom))] inset-x-3 z-50 grid grid-cols-2 gap-2 rounded-2xl border border-border-delicate workspace-shell-panel p-2 shadow-[0_10px_30px_rgba(0,0,0,.16)]" aria-label={tr('مراحل طلبات المطبخ', 'Kitchen order stages')}>
+        <button onClick={() => setMobileView('preparing')} className={`h-16 rounded-xl flex items-center justify-center gap-2 text-xs font-bold ${mobileView === 'preparing' ? 'bg-brand-primary text-white' : 'text-brand-primary'}`}>
           <Clock className="w-5 h-5" /> {tr('تحضير', 'Preparing')} <span className="min-w-5 h-5 px-1 rounded-full bg-brand-gold text-white flex items-center justify-center">{preparingOrders.length}</span>
         </button>
-        <button onClick={() => setMobileView('ready')} className={`h-16 flex items-center justify-center gap-2 text-xs font-bold ${mobileView === 'ready' ? 'bg-emerald-600 text-white' : 'text-brand-primary'}`}>
+        <button onClick={() => setMobileView('ready')} className={`h-16 rounded-xl flex items-center justify-center gap-2 text-xs font-bold ${mobileView === 'ready' ? 'bg-emerald-600 text-white' : 'text-brand-primary'}`}>
           <CheckCircle2 className="w-5 h-5" /> {tr('جاهز', 'Ready')} <span className="min-w-5 h-5 px-1 rounded-full bg-emerald-500 text-white flex items-center justify-center">{readyOrders.length}</span>
         </button>
       </nav>

@@ -438,7 +438,7 @@ export default function App() {
       </div>
 
       {session.role !== 'waiter' && session.role !== 'kitchen' && (
-        <nav ref={mobileNavRef} className="mobile-bottom-nav lg:hidden fixed bottom-0 inset-x-0 z-50 flex items-stretch gap-1 overflow-x-auto border-t border-border-delicate workspace-shell-panel px-2 pt-2 pb-[calc(.5rem+env(safe-area-inset-bottom))] shadow-[0_-10px_30px_rgba(0,0,0,.10)]" aria-label={tr('التنقل الرئيسي', 'Main navigation')}>
+        <nav ref={mobileNavRef} className="mobile-bottom-nav lg:hidden fixed bottom-[calc(.5rem+env(safe-area-inset-bottom))] inset-x-3 z-50 flex items-stretch gap-1 overflow-x-auto rounded-2xl border border-border-delicate workspace-shell-panel p-2 shadow-[0_10px_30px_rgba(0,0,0,.16)]" aria-label={tr('التنقل الرئيسي', 'Main navigation')}>
           {currentMenuItems.map((item) => (
             <button
               key={item.id}

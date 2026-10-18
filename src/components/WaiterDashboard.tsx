@@ -466,10 +466,10 @@ export default function WaiterDashboard({
       </div>
 
       {/* View Switcher for Waiter */}
-      <div className="fixed lg:static bottom-0 inset-x-0 z-50 flex border-t lg:border border-border-delicate workspace-shell-panel lg:bg-bg-paper px-2 pt-2 pb-[calc(.5rem+env(safe-area-inset-bottom))] lg:p-1 shadow-[0_-10px_30px_rgba(0,0,0,.10)] lg:shadow-sm">
+      <div className="fixed lg:static bottom-[calc(.5rem+env(safe-area-inset-bottom))] inset-x-3 z-50 flex gap-1 rounded-2xl border border-border-delicate workspace-shell-panel lg:bg-bg-paper p-2 lg:p-1 shadow-[0_10px_30px_rgba(0,0,0,.16)] lg:shadow-sm">
         <button
           onClick={() => setView("dashboard")}
-          className={`flex-1 min-w-0 h-16 lg:h-auto lg:py-4 text-center text-[10px] lg:text-xs font-bold transition-all flex flex-col lg:flex-row items-center justify-center gap-1 lg:gap-2 ${
+          className={`flex-1 min-w-0 h-16 lg:h-auto lg:py-4 rounded-xl text-center text-[10px] lg:text-xs font-bold transition-all flex flex-col lg:flex-row items-center justify-center gap-1 lg:gap-2 ${
             view === "dashboard"
               ? "bg-brand-primary text-white shadow-md font-bold"
               : "text-brand-primary hover:bg-white"
@@ -480,7 +480,7 @@ export default function WaiterDashboard({
         </button>
         <button
           onClick={() => setView("requests")}
-          className={`flex-1 min-w-0 h-16 lg:h-auto lg:py-4 text-center text-[10px] lg:text-xs font-bold transition-all flex flex-col lg:flex-row items-center justify-center gap-1 lg:gap-2 relative ${
+          className={`flex-1 min-w-0 h-16 lg:h-auto lg:py-4 rounded-xl text-center text-[10px] lg:text-xs font-bold transition-all flex flex-col lg:flex-row items-center justify-center gap-1 lg:gap-2 relative ${
             view === "requests"
               ? "bg-brand-primary text-white shadow-md font-bold"
               : "text-brand-primary hover:bg-white"
@@ -496,7 +496,7 @@ export default function WaiterDashboard({
         </button>
         <button
           onClick={() => setView("menu")}
-          className={`flex-1 min-w-0 h-16 lg:h-auto lg:py-4 text-center text-[10px] lg:text-xs font-bold transition-all flex flex-col lg:flex-row items-center justify-center gap-1 lg:gap-2 ${
+          className={`flex-1 min-w-0 h-16 lg:h-auto lg:py-4 rounded-xl text-center text-[10px] lg:text-xs font-bold transition-all flex flex-col lg:flex-row items-center justify-center gap-1 lg:gap-2 ${
             view === "menu"
               ? "bg-brand-primary text-white shadow-md font-bold"
               : "text-brand-primary hover:bg-white"
@@ -507,7 +507,7 @@ export default function WaiterDashboard({
         </button>
         <button
           onClick={() => setView("bans")}
-          className={`flex-1 min-w-0 h-16 lg:h-auto lg:py-4 text-center text-[10px] lg:text-xs font-bold transition-all flex flex-col lg:flex-row items-center justify-center gap-1 lg:gap-2 ${
+          className={`flex-1 min-w-0 h-16 lg:h-auto lg:py-4 rounded-xl text-center text-[10px] lg:text-xs font-bold transition-all flex flex-col lg:flex-row items-center justify-center gap-1 lg:gap-2 ${
             view === "bans"
               ? "bg-brand-primary text-white shadow-md font-bold"
               : "text-brand-primary hover:bg-white"
