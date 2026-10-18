@@ -79,11 +79,13 @@ const resolveMenuCategories = (categories?: string[]) =>
 interface RestaurantDashboardProps {
   restaurantId: string;
   activeTab?: "overview" | "waiters" | "orders" | "menu" | "theme" | "help" | "qr" | "alerts";
+  onThemeChange?: (restaurant: Restaurant) => void;
 }
 
 export default function RestaurantDashboard({
   restaurantId,
   activeTab: externalTab,
+  onThemeChange,
 }: RestaurantDashboardProps) {
   const { dir, language, tr } = useLanguage();
   const [internalTab, setInternalTab] = useState<
@@ -982,7 +984,7 @@ export default function RestaurantDashboard({
         )}
 
         {activeTab === "theme" && restaurant && (
-          <ThemeSettings restaurant={restaurant} onSaved={(next) => setRestaurant(next)} />
+          <ThemeSettings restaurant={restaurant} onSaved={(next) => { setRestaurant(next); onThemeChange?.(next); }} />
         )}
 
         {activeTab === "waiters" && (
@@ -1663,7 +1665,7 @@ export default function RestaurantDashboard({
                 </p>
               </div>
               <div className="bg-white border border-border-delicate p-6 text-right shadow-sm space-y-1 border-r-4 border-r-red-600">
-                <p className="text-xs text-text-muted font-bold">{tr('حالات شديدة الخطورة ومثيرة للشبهة', 'High-risk cases')}</p>
+                <p className="text-xs text-text-muted font-bold">{tr('تنبيهات مهمة', 'Important alerts')}</p>
                 <p className="text-4xl font-display italic text-red-600 font-bold">
                   {alerts.filter(a => a.severity === 'critical' && a.status === 'unread').length}
                 </p>
@@ -1671,43 +1673,43 @@ export default function RestaurantDashboard({
             </div>
 
             {/* Sub-tab Switcher inside Alerts page */}
-            <div className="flex flex-col sm:flex-row border-b border-border-delicate">
+            <div className="flex flex-wrap gap-2 rounded-2xl border border-border-delicate bg-bg-paper p-2">
               <button
                 onClick={() => setAlertsSubTab("system_announcements")}
-                className={`flex-1 py-4 text-center text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${
+                className={`flex-1 min-w-[130px] rounded-xl px-3 py-3 text-center text-xs font-bold transition-colors ${
                   alertsSubTab === "system_announcements"
-                    ? "border-brand-primary text-brand-primary bg-bg-paper font-semibold shadow-sm"
-                    : "border-transparent text-text-muted hover:text-brand-primary"
+                    ? "bg-brand-primary text-white shadow-sm"
+                    : "text-text-muted hover:bg-white hover:text-brand-primary"
                 }`}
               >
                 📢 {tr('تبليغات وتوجيهات الإدارة', 'Admin announcements')} ({announcements.length})
               </button>
               <button
                 onClick={() => setAlertsSubTab("order_devices")}
-                className={`flex-1 py-4 text-center text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${
+                className={`flex-1 min-w-[130px] rounded-xl px-3 py-3 text-center text-xs font-bold transition-colors ${
                   alertsSubTab === "order_devices"
-                    ? "border-brand-primary text-brand-primary bg-bg-paper font-semibold shadow-sm"
-                    : "border-transparent text-text-muted hover:text-brand-primary"
+                    ? "bg-brand-primary text-white shadow-sm"
+                    : "text-text-muted hover:bg-white hover:text-brand-primary"
                 }`}
               >
                 📱 {tr('معلومات وبصمات طالبي الطعام', 'Customer devices')} ({orders.filter(o => o.deviceMetadata).length})
               </button>
               <button
                 onClick={() => setAlertsSubTab("security_alerts")}
-                className={`flex-1 py-4 text-center text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${
+                className={`flex-1 min-w-[130px] rounded-xl px-3 py-3 text-center text-xs font-bold transition-colors ${
                   alertsSubTab === "security_alerts"
-                    ? "border-brand-primary text-brand-primary bg-bg-paper font-semibold shadow-sm"
-                    : "border-transparent text-text-muted hover:text-brand-primary"
+                    ? "bg-brand-primary text-white shadow-sm"
+                    : "text-text-muted hover:bg-white hover:text-brand-primary"
                 }`}
               >
-                🚨 {tr('محاولات الاختراق والطلبات الوهمية', 'Suspicious activity')} ({alerts.length})
+                🚨 {tr('تنبيهات المطعم', 'Restaurant alerts')} ({alerts.length})
               </button>
               <button
                 onClick={() => setAlertsSubTab("banned_customers")}
-                className={`flex-1 py-4 text-center text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${
+                className={`flex-1 min-w-[130px] rounded-xl px-3 py-3 text-center text-xs font-bold transition-colors ${
                   alertsSubTab === "banned_customers"
-                    ? "border-brand-primary text-brand-primary bg-bg-paper font-semibold shadow-sm"
-                    : "border-transparent text-text-muted hover:text-brand-primary"
+                    ? "bg-brand-primary text-white shadow-sm"
+                    : "text-text-muted hover:bg-white hover:text-brand-primary"
                 }`}
               >
                 🚫 {tr('الزبائن المحظورين', 'Blocked customers')} ({bannedDevices.length})
@@ -1791,21 +1793,21 @@ export default function RestaurantDashboard({
               <div className="space-y-6">
                 <h4 className="text-lg font-display text-brand-primary font-bold border-b border-border-delicate pb-3 flex items-center gap-3">
                   <Bell className="w-5 h-5 text-brand-gold shrink-0" />
-                  {tr('سجل تتبع الهجمات والمحاولات المشبوهة', 'Suspicious activity log')}
+                  {tr('تنبيهات المطعم', 'Restaurant alerts')}
                 </h4>
 
               {alerts.length === 0 ? (
-                <div className="bg-white border border-border-delicate p-12 py-20 text-center space-y-4">
+                <div className="rounded-3xl bg-white border border-border-delicate p-10 text-center space-y-4">
                   <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
                     <CheckCircle2 className="w-8 h-8" />
                   </div>
                   <h4 className="text-xl font-display text-emerald-700 font-bold">{tr('لا توجد أي تنبيهات حالياً', 'No alerts right now')}</h4>
                   <p className="text-text-muted max-w-sm mx-auto text-xs leading-relaxed">
-                    {tr('درع الحماية نشط ويقوم بفحص كل عملية تصفح أو طلب قائمة طعام بشكل مستمر. صالة مطعمك آمنة ومحمية بالكامل!', 'Protection is active and customer requests are being monitored.')}
+                    {tr('ستظهر هنا التنبيهات التي تحتاج انتباهك.', 'Alerts that need your attention will appear here.')}
                   </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 gap-6">
+                <div className="grid grid-cols-1 gap-4">
                   {alerts.map((alert) => {
                     const isUnread = alert.status === 'unread';
                     const isCritical = alert.severity === 'critical';
@@ -1815,17 +1817,17 @@ export default function RestaurantDashboard({
                         key={alert.id}
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
-                        className={`bg-white border transition-all relative p-6 sm:p-8 flex flex-col md:flex-row gap-6 justify-between items-start md:items-center ${
+                        className={`rounded-2xl border transition-all relative p-5 sm:p-6 flex flex-col md:flex-row gap-5 justify-between items-start md:items-center ${
                           isUnread 
                             ? isCritical 
-                              ? 'border-red-600/30 bg-red-50/5 shadow-md shadow-red-500/5' 
-                              : 'border-amber-600/30 bg-amber-50/5 shadow-md shadow-amber-500/5'
-                            : 'border-border-delicate bg-white opacity-75'
+                              ? 'border-red-200 bg-red-50/50 shadow-sm'
+                              : 'border-amber-200 bg-amber-50/50 shadow-sm'
+                            : 'border-border-delicate bg-white'
                         }`}
                       >
                         {/* Bullet indication for unread */}
                         {isUnread && (
-                          <div className={`absolute top-4 right-4 w-2.5 h-2.5 rounded-full ${isCritical ? 'bg-red-600 animate-ping' : 'bg-amber-500 animate-ping'}`} />
+                          <div className={`absolute top-4 right-4 w-2.5 h-2.5 rounded-full ${isCritical ? 'bg-red-600' : 'bg-amber-500'}`} />
                         )}
 
                         <div className="space-y-4 flex-1">
@@ -1833,19 +1835,19 @@ export default function RestaurantDashboard({
                           <div className="flex flex-wrap items-center gap-2">
                             <span className={`px-2.5 py-1 text-[9px] font-bold rounded-full ${
                               isCritical 
-                                ? 'bg-red-100 text-red-100 bg-red-800' 
+                                ? 'bg-red-100 text-red-800'
                                 : alert.severity === 'warning' 
                                   ? 'bg-amber-100 text-amber-800' 
                                   : 'bg-blue-100 text-blue-800'
                             }`}>
-                              {alert.severity === 'critical' ? tr('حرج للغاية (خطر عالي)', 'Critical risk') : tr('شبهة احتيال مكررة', 'Suspicious activity')}
+                              {alert.severity === 'critical' ? tr('مهم', 'Important') : alert.severity === 'warning' ? tr('تنبيه', 'Warning') : tr('معلومة', 'Info')}
                             </span>
                             <span className="text-[9.5px] font-bold text-text-muted opacity-80 bg-bg-paper border border-border-delicate px-2.5 py-1 rounded-full">
-                              {tr('نوع الاختراق:', 'Alert type:')} {
-                                alert.type === 'outside_range' ? tr('طلب من خارج صالة المطعم (GPS)', 'Request outside restaurant (GPS)') :
-                                alert.type === 'desktop_device' ? tr('مسح باركود من نظام كمبيوتر / حاسوب مشبوه', 'QR scanned from a desktop device') :
-                                alert.type === 'multi_name_spam' ? tr('محاولة تغيير الاسم أو الطاولة (تكرار عشوائي)', 'Repeated name or table changes') :
-                                alert.type === 'failed_location' ? tr('تم حجب مشاركة الموقع الجغرافي', 'Location sharing unavailable') : tr('نشاط عشوائي مشبوه بالقرب من المطعم', 'Suspicious activity near the restaurant')
+                              {tr('النوع:', 'Type:')} {
+                                alert.type === 'outside_range' ? tr('خارج نطاق المطعم', 'Outside restaurant range') :
+                                alert.type === 'desktop_device' ? tr('استخدام جهاز مكتبي', 'Desktop device') :
+                                alert.type === 'multi_name_spam' ? tr('تغييرات متكررة', 'Repeated changes') :
+                                alert.type === 'failed_location' ? tr('الموقع غير متاح', 'Location unavailable') : tr('نشاط غير معتاد', 'Unusual activity')
                               }
                             </span>
                             <span className="text-[9px] font-mono text-text-muted mr-auto">
@@ -1859,23 +1861,21 @@ export default function RestaurantDashboard({
                               {alert.title}
                             </h4>
                             <p className="text-xs text-text-muted leading-relaxed">
-                              {tr('العميل المشتبه به:', 'Customer:')} <strong className="text-brand-primary">{alert.customerName || tr('غير محدد بعد', 'Unknown')}</strong>
+                              {tr('العميل:', 'Customer:')} <strong className="text-brand-primary">{alert.customerName || tr('غير محدد', 'Unknown')}</strong>
                               {alert.tableNumber && <> — {tr('طاولة', 'Table')}: <strong className="text-brand-secondary">{alert.tableNumber}</strong></>}
                             </p>
                           </div>
 
-                          {/* Device footprint details (True Identification Parameters) */}
-                          <div className="bg-bg-paper border border-border-delicate p-4 rounded-xl space-y-3.5 text-xs text-right">
-                            <p className="text-[10px] uppercase font-bold text-brand-gold tracking-widest border-b border-border-delicate pb-1.5 mb-2">
-                              {tr('أدلة الهوية الرقمية الحقيقية (Device DNA Signature)', 'Device details')}
-                            </p>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-y-2 gap-x-6">
+                          {/* Details remain available without overwhelming the alert summary. */}
+                          <details className="bg-bg-paper border border-border-delicate p-4 rounded-xl space-y-3.5 text-xs text-right">
+                            <summary className="cursor-pointer font-bold text-brand-primary">{tr('تفاصيل الجهاز والموقع', 'Device and location details')}</summary>
+                            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-y-2 gap-x-6">
                               <div>
                                 <span className="text-text-muted font-medium">{tr('نوع وماركة النظام:', 'Device type:')} </span>
                                 <strong className="text-brand-primary font-bold">{localizeDeviceType(alert.deviceMetadata.deviceType, language)}</strong>
                               </div>
                               <div>
-                                <span className="text-text-muted font-medium">{tr('البصمة الرقمية للعميل (Fingerprint ID):', 'Fingerprint:')} </span>
+                                <span className="text-text-muted font-medium">{tr('معرّف الجهاز:', 'Device ID:')} </span>
                                 <code className="bg-white border border-border-delicate px-1.5 py-0.5 rounded font-mono text-[9px] font-bold text-red-700">{alert.deviceMetadata.fingerprint}</code>
                               </div>
                               <div>
@@ -1887,21 +1887,21 @@ export default function RestaurantDashboard({
                                 <span className="text-brand-primary font-medium">{alert.deviceMetadata.language}</span>
                               </div>
                               <div className="md:col-span-2">
-                                <span className="text-text-muted font-medium">{tr('الحالة الجغرافية وموقع الزبون:', 'Location:')} </span>
+                                <span className="text-text-muted font-medium">{tr('الموقع:', 'Location:')} </span>
                                 <span className={`font-bold ${alert.deviceMetadata.coordinates ? 'text-rose-700' : 'text-amber-800'}`}>
                                   {alert.deviceMetadata.coordinates 
-                                    ? tr(`📍 إحداثيات المشتبه به [${alert.deviceMetadata.coordinates.lat.toFixed(5)}, ${alert.deviceMetadata.coordinates.lng.toFixed(5)}] على بعد ${alert.deviceMetadata.distanceMeters ? Math.round(alert.deviceMetadata.distanceMeters) : 0} متر من مطعمك!`, `📍 Coordinates [${alert.deviceMetadata.coordinates.lat.toFixed(5)}, ${alert.deviceMetadata.coordinates.lng.toFixed(5)}], ${alert.deviceMetadata.distanceMeters ? Math.round(alert.deviceMetadata.distanceMeters) : 0} m from the restaurant.`)
-                                    : tr('📍 الزبون حجب وحظر مشاركة الموقع الجغرافي الخاص بجهازه (قد يكون خارج المطعم)', '📍 Customer location was unavailable.')}
+                                    ? tr(`إحداثيات [${alert.deviceMetadata.coordinates.lat.toFixed(5)}, ${alert.deviceMetadata.coordinates.lng.toFixed(5)}]، على بعد ${alert.deviceMetadata.distanceMeters ? Math.round(alert.deviceMetadata.distanceMeters) : 0} متر.`, `Coordinates [${alert.deviceMetadata.coordinates.lat.toFixed(5)}, ${alert.deviceMetadata.coordinates.lng.toFixed(5)}], ${alert.deviceMetadata.distanceMeters ? Math.round(alert.deviceMetadata.distanceMeters) : 0} m away.`)
+                                    : tr('الموقع غير متاح.', 'Location unavailable.')}
                                 </span>
                               </div>
                             </div>
                             <details className="mt-2 text-[10px] cursor-pointer text-text-muted">
-                              <summary className="font-semibold hover:text-brand-primary transition-colors">{tr('عرض كود الـ User-Agent الكامل الخاص بجهاز ومذياع الطلب', 'Show full browser user agent')}</summary>
+                              <summary className="font-semibold hover:text-brand-primary transition-colors">{tr('معلومات المتصفح', 'Browser details')}</summary>
                               <div className="bg-white border border-border-delicate p-2.5 mt-2 rounded font-mono break-all text-left" dir="ltr">
                                 {alert.deviceMetadata.userAgent}
                               </div>
                             </details>
-                          </div>
+                          </details>
                         </div>
 
                         {/* Interactive actions for manager */}
@@ -1911,7 +1911,7 @@ export default function RestaurantDashboard({
                               onClick={() => resolveAlert(alert.id)}
                               className="px-4 py-2 bg-brand-primary hover:bg-brand-secondary text-white text-[10px] font-bold uppercase tracking-wider rounded transition-all text-center"
                             >
-                              {tr('تعليم كـ "مقروء ومحقق فيه"', 'Mark reviewed')}
+                              {tr('تمت المراجعة', 'Mark reviewed')}
                             </button>
                           )}
                           <button

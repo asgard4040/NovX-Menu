@@ -522,7 +522,7 @@ app.post("/api/orders", rateLimit, async (req, res) => {
   if (!location) return res.status(400).json({ error: "invalid_location" });
   const trackingToken = String(body.trackingToken || "");
   if (trackingToken.length < 20 || trackingToken.length > 200) return res.status(400).json({ error: "invalid_tracking_token" });
-  const customerName = String(body.customerName || "").trim();
+  const customerName = String(body.customerName || "").trim() || "Guest";
   const tableNumber = String(body.tableNumber || "").trim();
   const idempotencyKey = String(body.idempotencyKey || "");
   if (!body.restaurantId || !customerName || !tableNumber || idempotencyKey.length < 20 || idempotencyKey.length > 200 || !Array.isArray(body.items) || body.items.length < 1 || body.items.length > 100 || body.items.some((item) => !item || typeof item.id !== "string" || !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(item.id) || !Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 99))

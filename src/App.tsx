@@ -43,6 +43,7 @@ import WaiterDashboard from './components/WaiterDashboard';
 import KitchenDashboard from './components/KitchenDashboard';
 import CustomerMenu from './components/CustomerMenu';
 import LoginPage from './components/LoginPage';
+import FirstVisitGuide from './components/FirstVisitGuide';
 import { db, doc, onSnapshot } from './lib/supabase-db';
 import { DEFAULT_THEME, resolveTheme, themeStyle } from './lib/themes';
 import type { MenuTheme } from './lib/themes';
@@ -58,7 +59,14 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [workspaceTheme, setWorkspaceTheme] = useState<MenuTheme>(DEFAULT_THEME);
   const [systemLogo, setSystemLogo] = useState(() => localStorage.getItem('novix_system_logo') || '');
+  const [appAlert, setAppAlert] = useState<string | null>(null);
   const mobileNavRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const originalAlert = window.alert;
+    window.alert = (message) => setAppAlert(String(message ?? ''));
+    return () => { window.alert = originalAlert; };
+  }, []);
 
   useEffect(() => {
     const nav = mobileNavRef.current;
@@ -191,11 +199,11 @@ export default function App() {
 
   // If URL has restaurantId, show Customer Menu directly
   if (customerRestaurantId) {
-    return <div dir={dir}><CustomerMenu restaurantId={customerRestaurantId} /></div>;
+    return <div dir={dir}><CustomerMenu restaurantId={customerRestaurantId} /><div key={`customer-${customerRestaurantId}`}><FirstVisitGuide role="customer" restaurantId={customerRestaurantId} /></div><SystemNotice message={appAlert} onClose={() => setAppAlert(null)} /></div>;
   }
 
   if (!session) {
-    return <div dir={dir}><LoginPage onLogin={handleLogin} /></div>;
+    return <div dir={dir}><LoginPage onLogin={handleLogin} /><SystemNotice message={appAlert} onClose={() => setAppAlert(null)} /></div>;
   }
 
   const menuItems = {
@@ -410,7 +418,7 @@ export default function App() {
                 exit={{ opacity: 0, scale: 0.98 }}
                 key={`restaurant-${activeTab}`}
               >
-                <RestaurantDashboard restaurantId={session.restaurantId} activeTab={activeTab as any} />
+                <RestaurantDashboard restaurantId={session.restaurantId} activeTab={activeTab as any} onThemeChange={(restaurant) => setWorkspaceTheme(resolveTheme(restaurant.themeId, restaurant.themeColors))} />
               </motion.div>
             )}
             {session.role === 'waiter' && session.restaurantId && (
@@ -452,10 +460,22 @@ export default function App() {
         </nav>
       )}
 
+      <div key={`${session.role}-${session.restaurantId || 'system'}`}><FirstVisitGuide role={session.role} restaurantId={session.restaurantId} /></div>
+      <SystemNotice message={appAlert} onClose={() => setAppAlert(null)} />
+
       {/* Decorative Accents */}
       <div className="fixed top-12 left-12 w-24 h-24 border-t border-l border-brand-gold/20 pointer-events-none opacity-40 z-0" />
       <div className="fixed bottom-12 left-12 w-24 h-24 border-b border-l border-brand-gold/20 pointer-events-none opacity-40 z-0" />
     </div>
   );
+}
+
+function SystemNotice({ message, onClose }: { message: string | null; onClose: () => void }) {
+  if (!message) return null;
+  return <div role="alert" className="fixed end-4 top-4 z-[500] flex max-w-[min(26rem,calc(100vw-2rem))] items-start gap-3 rounded-2xl border border-brand-gold/30 bg-white p-4 text-sm text-brand-primary shadow-2xl">
+    <Bell className="mt-0.5 h-5 w-5 shrink-0 text-brand-gold" />
+    <p className="flex-1 whitespace-pre-wrap leading-relaxed">{message}</p>
+    <button type="button" onClick={onClose} aria-label="Dismiss" className="rounded-full p-1 hover:bg-bg-paper"><X className="h-4 w-4" /></button>
+  </div>;
 }
 

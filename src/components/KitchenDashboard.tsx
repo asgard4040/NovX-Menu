@@ -7,6 +7,7 @@ import { format } from 'date-fns';
 import { useLanguage } from '../lib/i18n';
 import { enableStaffNotifications, showDeviceNotificationTest } from '../lib/notifications';
 import { StaffWelcomeCard } from './StaffWelcomeCard';
+import { useOrderSound } from '../lib/use-order-sound';
 
 const safeFormatDate = (dateVal: any, formatStr: string, fallback: string = "---") => {
   if (!dateVal) return fallback;
@@ -29,6 +30,7 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
   const [restaurant, setRestaurant] = useState<any | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const orderSound = useOrderSound(restaurantId, 'kitchen');
   const [rejectingOrder, setRejectingOrder] = useState<Order | null>(null);
   const [supportPhone, setSupportPhone] = useState(() => localStorage.getItem("novix_support_phone") || "07740064528");
   const [systemLogo, setSystemLogo] = useState(() => localStorage.getItem("novix_system_logo") || "");
@@ -102,6 +104,7 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
       const sorted = snapshot.docs
         .map(d => ({ id: d.id, ...d.data() } as Order))
         .sort((a, b) => b.createdAt - a.createdAt);
+      orderSound.checkOrders(sorted);
       setOrders(sorted);
       setLoading(false);
     }, (err) => {
@@ -200,6 +203,10 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
       </div>
 
       <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border-delicate bg-white p-3 sm:p-4">
+             <button type="button" onClick={() => { void orderSound.toggle(); }} aria-pressed={orderSound.enabled}
+               className="flex items-center gap-2 rounded-xl border border-border-delicate px-4 py-3 text-xs font-bold text-brand-primary">
+               <Bell className="h-4 w-4" />{orderSound.enabled ? tr('صوت الطلبات: مفعل', 'Order sound: on') : tr('صوت الطلبات: متوقف', 'Order sound: off')}
+             </button>
              <button type="button" disabled={notificationState === 'loading' || notificationState === 'enabled'}
                onClick={async () => {
                  setNotificationState('loading');

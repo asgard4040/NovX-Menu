@@ -37,6 +37,7 @@ import { enableStaffNotifications, showDeviceNotificationTest } from "../lib/not
 import { supabase } from "../lib/supabase";
 import { localizeDeviceType, useLanguage } from "../lib/i18n";
 import { StaffWelcomeCard } from "./StaffWelcomeCard";
+import { useOrderSound } from "../lib/use-order-sound";
 
 const safeFormatDate = (dateVal: any, formatStr: string, fallback: string = "---") => {
   if (!dateVal) return fallback;
@@ -60,6 +61,7 @@ export default function WaiterDashboard({
   const [restaurant, setRestaurant] = useState<any | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const orderSound = useOrderSound(restaurantId, 'waiter');
   const [notificationState, setNotificationState] = useState<"idle" | "loading" | "enabled" | "error">("idle");
   const [notificationError, setNotificationError] = useState<string | null>(null);
   const [notificationTestMessage, setNotificationTestMessage] = useState<string | null>(null);
@@ -156,6 +158,7 @@ export default function WaiterDashboard({
         const sorted = snapshot.docs
           .map((d) => ({ id: d.id, ...d.data() }) as Order)
           .sort((a, b) => b.createdAt - a.createdAt);
+        orderSound.checkOrders(sorted);
         setOrders(sorted);
         setLoading(false);
       },
@@ -421,6 +424,10 @@ export default function WaiterDashboard({
       )}
 
       <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border-delicate bg-white p-3 sm:p-4">
+            <button type="button" onClick={() => { void orderSound.toggle(); }} aria-pressed={orderSound.enabled}
+              className="flex items-center gap-2 rounded-xl border border-border-delicate px-4 py-3 text-[10px] font-bold text-brand-primary">
+              <Bell className="h-4 w-4" />{orderSound.enabled ? tr('صوت الطلبات: مفعل', 'Order sound: on') : tr('صوت الطلبات: متوقف', 'Order sound: off')}
+            </button>
             <div className="flex items-center justify-center gap-3 rounded-xl bg-bg-paper px-4 py-3">
               <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shrink-0" />
               <span className="text-[10px] font-bold text-brand-primary uppercase tracking-widest">{tr('تحديث ومزامنة فورية حية', 'Live sync')}</span>

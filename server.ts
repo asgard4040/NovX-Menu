@@ -435,7 +435,7 @@ app.use(express.json({ limit: "256kb" }));
     if (!location) return res.status(400).json({ error: "invalid_location" });
     const trackingToken = String(body.trackingToken || "");
     if (trackingToken.length < 20 || trackingToken.length > 200) return res.status(400).json({ error: "invalid_tracking_token" });
-    const customerName = String(body.customerName || "").trim();
+    const customerName = String(body.customerName || "").trim() || "Guest";
     const tableNumber = String(body.tableNumber || "").trim();
     const idempotencyKey = String(body.idempotencyKey || "");
     if (!body.restaurantId || !customerName || !tableNumber || idempotencyKey.length < 20 || idempotencyKey.length > 200

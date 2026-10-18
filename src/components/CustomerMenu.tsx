@@ -52,6 +52,7 @@ interface CustomerMenuProps {
 
 export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
   const { dir, language, isEnglish, toggleLanguage, tr } = useLanguage();
+  const qrTableNumber = tableFromQrSearch(window.location.search);
   const systemLogo = usePublicSystemLogo();
   const [restaurant, setRestaurant] = useState<Restaurant | null>(() => {
     try {
@@ -126,7 +127,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
   // Checkout fields
   const [customerName, setCustomerName] = useState(() => localStorage.getItem("customer_name") || "");
   const [tableNumber, setTableNumber] = useState(() => {
-    return tableFromQrSearch(window.location.search) || localStorage.getItem("table_number") || "";
+    return qrTableNumber || localStorage.getItem("table_number") || "";
   });
   const [notes, setNotes] = useState("");
   const [showOrderTrackingModal, setShowOrderTrackingModal] = useState(false);
@@ -448,6 +449,39 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
   }, [restaurantId]);
 
   useEffect(() => {
+    let active = true;
+    let inFlight = false;
+    const refreshTheme = async () => {
+      if (!active || inFlight || document.visibilityState === 'hidden' || !navigator.onLine) return;
+      inFlight = true;
+      try {
+        const response = await fetch(`/api/public/restaurants/${encodeURIComponent(restaurantId)}`, { cache: 'no-store' });
+        if (!response.ok) return;
+        const data = await response.json();
+        const next = data.restaurant as Restaurant;
+        if (active && next) {
+          setRestaurant((previous) => {
+            if (!previous || (previous.themeId === next.themeId && previous.logoUrl === next.logoUrl
+              && JSON.stringify(previous.themeColors) === JSON.stringify(next.themeColors))) return previous;
+            return { ...previous, themeId: next.themeId, themeColors: next.themeColors, logoUrl: next.logoUrl };
+          });
+        }
+      } catch (error) {
+        if (active) console.warn('Could not refresh menu branding', error);
+      } finally { inFlight = false; }
+    };
+    const timer = window.setInterval(() => { void refreshTheme(); }, 30_000);
+    window.addEventListener('focus', refreshTheme);
+    document.addEventListener('visibilitychange', refreshTheme);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refreshTheme);
+      document.removeEventListener('visibilitychange', refreshTheme);
+    };
+  }, [restaurantId]);
+
+  useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
@@ -554,7 +588,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
 
   const handleWaiterCallSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!tableNumber.trim() || !waiterCallReason.trim()) {
+    if (!(qrTableNumber || tableNumber.trim()) || !waiterCallReason.trim()) {
       alert(tr("الرجاء ملء جميع الحقول المطلوبة.", "Please complete all required fields."));
       return;
     }
@@ -570,7 +604,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           restaurantId,
-          tableNumber: tableNumber.trim(),
+          tableNumber: qrTableNumber || tableNumber.trim(),
           reason: waiterCallReason.trim(),
           idempotencyKey: waiterIdempotencyKeyRef.current,
           location: { latitude: customerCoords.lat, longitude: customerCoords.lng, accuracy: locationAccuracy },
@@ -594,8 +628,8 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
 
   const handlePlaceOrder = async () => {
     if (submittingOrder) return;
-    if (!customerName.trim() || !tableNumber.trim()) {
-      alert(tr("الرجاء إدخال اسمك ورقم الطاولة", "Enter your name and table number."));
+    if (!(qrTableNumber || tableNumber.trim())) {
+      alert(tr("الرجاء إدخال رقم الطاولة", "Enter your table number."));
       return;
     }
 
@@ -632,7 +666,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       orderTrackingTokenRef.current ||= crypto.randomUUID();
       const response = await fetch('/api/orders', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ restaurantId, customerName: customerName.trim(), tableNumber: tableNumber.trim(), notes, items: orderItems, idempotencyKey: orderIdempotencyKeyRef.current,
+        body: JSON.stringify({ restaurantId, tableNumber: qrTableNumber || tableNumber.trim(), notes, items: orderItems, idempotencyKey: orderIdempotencyKeyRef.current,
           trackingToken: orderTrackingTokenRef.current,
           fingerprint: getDeviceFingerprint(), location: { latitude: customerCoords.lat, longitude: customerCoords.lng, accuracy: locationAccuracy } }),
       });
@@ -692,7 +726,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       orderTrackingTokenRef.current ||= crypto.randomUUID();
       const response = await fetch('/api/orders', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ restaurantId, customerName: orderInfo.customerName, tableNumber: orderInfo.tableNumber,
+        body: JSON.stringify({ restaurantId, tableNumber: qrTableNumber || orderInfo.tableNumber || tableNumber.trim(),
           notes: orderInfo.notes || "", items: orderItems, fingerprint: getDeviceFingerprint(), idempotencyKey: orderIdempotencyKeyRef.current,
           trackingToken: orderTrackingTokenRef.current,
           location: { latitude: customerCoords.lat, longitude: customerCoords.lng, accuracy: locationAccuracy } }),
@@ -706,8 +740,8 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       setOrderComplete(orderData as Order);
       setShowOrderTrackingModal(true);
       
-      setCustomerName(orderInfo.customerName);
-      setTableNumber(orderInfo.tableNumber);
+      setCustomerName(orderInfo.customerName || '');
+      setTableNumber(qrTableNumber || orderInfo.tableNumber);
       setNotes(orderInfo.notes || "");
       
       setCart({});
@@ -1131,7 +1165,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
             </p>
           </div>
         ) : (
-          <div className="menu-preview-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-5">
+          <div className="menu-preview-grid grid grid-cols-2 gap-2 sm:gap-5">
             {filteredMenuItems.map((item) => (
               <article
                 key={item.id}
@@ -1166,7 +1200,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                     )}
                   </div>
 
-                  <div className="menu-dish-copy p-4 space-y-2 text-right">
+                  <div className="menu-dish-copy p-2.5 sm:p-4 space-y-2 text-right">
                     {item.category && (
                       <p className="text-[8px] sm:text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
                         {localizeCategory(item.category, language)}
@@ -1188,7 +1222,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                   </div>
                 </div>
 
-                <div className="menu-dish-actions p-4 pt-0">
+                <div className="menu-dish-actions p-2.5 pt-0 sm:p-4 sm:pt-0">
                   <div className="pt-2 sm:pt-3 border-t border-border-delicate/50 flex items-center justify-between gap-2">
                     {item.isAvailable === false ? (
                       <div className="w-full text-center bg-gray-100 border border-gray-200 text-gray-400 text-[10px] sm:text-xs font-bold py-2 px-3 cursor-not-allowed select-none">
@@ -1212,13 +1246,13 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                         )}
                       </div>
                     ) : cart[item.id] ? (
-                      <div className="flex items-center justify-between w-full bg-brand-primary text-white py-1.5 px-3 rounded-full text-xs font-bold transition-all">
+                      <div className="flex items-center justify-between w-full bg-brand-primary text-white py-1 px-1 sm:py-1.5 sm:px-3 rounded-full text-xs font-bold transition-all">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             removeFromCart(item.id);
                           }}
-                          className="hover:opacity-75 p-2 min-w-10 min-h-10 flex items-center justify-center"
+                          className="hover:opacity-75 p-1.5 min-w-8 min-h-9 sm:p-2 sm:min-w-10 sm:min-h-10 flex items-center justify-center"
                           aria-label={tr('تقليل الكمية', 'Decrease quantity')}
                         >
                           <Minus className="w-3 h-3" />
@@ -1231,7 +1265,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                             e.stopPropagation();
                             addToCart(item.id);
                           }}
-                          className="hover:opacity-75 p-2 min-w-10 min-h-10 flex items-center justify-center"
+                          className="hover:opacity-75 p-1.5 min-w-8 min-h-9 sm:p-2 sm:min-w-10 sm:min-h-10 flex items-center justify-center"
                           aria-label={tr('زيادة الكمية', 'Increase quantity')}
                         >
                           <Plus className="w-3 h-3" />
@@ -1422,21 +1456,8 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                     </div>
 
                     <div className="pt-5 border-t border-border-delicate space-y-4 pb-6">
-                      <div><h3 className="text-base font-bold text-brand-primary">{tr('تفاصيل الطاولة', 'Table details')}</h3><p className="text-xs text-text-muted">{tr('أدخل اسمك ورقم الطاولة ليصل الطلب إليك.', 'Add your name and table so staff can find you.')}</p></div>
-                      <div className="space-y-2">
-                        <label className="text-xs font-bold text-brand-primary block">
-                          {tr('اسمك', 'Your name')}
-                        </label>
-                        <input
-                          required
-                          value={customerName}
-                          onChange={(e) => setCustomerName(e.target.value)}
-                          type="text"
-                          placeholder={tr('الرجاء إدخال الاسم الكامل', 'Enter your full name')}
-                          className="w-full bg-bg-paper border border-border-delicate rounded-xl py-3 px-4 focus:outline-none focus:border-brand-primary transition-colors text-sm text-brand-primary text-right"
-                        />
-                      </div>
-                      <div className="space-y-2">
+                      <div><h3 className="text-base font-bold text-brand-primary">{tr('تفاصيل الطاولة', 'Table details')}</h3><p className="text-xs text-text-muted">{qrTableNumber ? tr('تم تحديد طاولتك تلقائياً من رمز QR.', 'Your table was selected automatically from the QR code.') : tr('أدخل رقم الطاولة ليصل الطلب إليك.', 'Enter your table number so staff can find you.')}</p></div>
+                      {qrTableNumber ? <div className="rounded-xl border border-brand-gold/30 bg-brand-gold/10 px-4 py-3 text-sm font-bold text-brand-primary">{tr('طاولة', 'Table')} {qrTableNumber}</div> : <div className="space-y-2">
                         <label className="text-xs font-bold text-brand-primary block">
                           {tr('رقم الطاولة', 'Table number')}
                         </label>
@@ -1448,7 +1469,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                           placeholder={tr('أدخل رقم طاولة جلوسك', 'Enter your table number')}
                           className="w-full bg-bg-paper border border-border-delicate rounded-xl py-3 px-4 focus:outline-none focus:border-brand-primary transition-colors text-sm text-brand-primary text-right"
                         />
-                      </div>
+                      </div>}
                       <div className="space-y-2">
                         <label className="text-xs font-bold text-brand-primary block">
                           {tr('ملاحظات (اختياري)', 'Notes (optional)')}
@@ -1859,14 +1880,14 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                     {/* Table Number */}
                     <div className="space-y-1.5">
                       <label className="block text-[10px] font-bold text-brand-gold uppercase tracking-wider">{tr('رقم الطاولة', 'Table number')}</label>
-                      <input
+                      {qrTableNumber ? <div className="rounded-xl border border-brand-gold/30 bg-brand-gold/10 px-4 py-3 text-sm font-bold text-brand-primary">{tr('طاولة', 'Table')} {qrTableNumber}</div> : <input
                         type="text"
                         required
                         placeholder={tr('أدخل رقم طاولتك', 'Enter your table number')}
                         value={tableNumber}
                         onChange={(e) => setTableNumber(e.target.value)}
                         className="w-full bg-slate-50 border border-border-delicate px-4 py-3 text-sm font-bold focus:outline-none focus:border-brand-primary focus:bg-white text-right font-mono"
-                      />
+                      />}
                     </div>
 
                     {/* Call Reason / Need */}
