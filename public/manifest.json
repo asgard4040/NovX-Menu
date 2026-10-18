@@ -2,7 +2,7 @@
   "name": "ORDOVA Admin",
   "short_name": "ORDOVA",
   "id": "/home/admin",
-  "start_url": "/",
+  "start_url": "/app",
   "scope": "/",
   "display": "standalone",
   "background_color": "#081220",
