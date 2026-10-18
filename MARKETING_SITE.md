@@ -6,7 +6,7 @@ Marketing copy, phone/WhatsApp destination, social links, testimonials, FAQ answ
 
 ## Product screenshots
 
-The gallery includes five real interface captures from the ORDOVA demonstration restaurant: owner menu management, waiter dashboard, table calls, waiter order entry, and kitchen dashboard. Captures were limited to views without visible customer names, phone numbers, staff passcodes, or location coordinates. Remaining slots are labeled with recommended dimensions. To replace a slot:
+The gallery includes five real interface captures from the ORDOVA demonstration restaurant: owner menu management, waiter dashboard, table calls, waiter order entry, and kitchen dashboard. Captures were limited to views without visible customer names, phone numbers, staff passcodes, or location coordinates. Only captured screens appear publicly; uncaptured slots remain in the content inventory for future updates. To add a capture:
 
 1. Capture the matching screen from a demonstration restaurant in the running application.
 2. Remove customer names, phone numbers, staff credentials, private restaurant information, and secrets. Use demonstration menu items and accounts.

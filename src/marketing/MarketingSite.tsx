@@ -16,8 +16,8 @@ const copy = {
   how: { ar: 'من الطاولة إلى التقديم، بخطوات واضحة', en: 'From table to service, in four clear steps' },
   howText: { ar: 'تجربة بسيطة للضيف، ومعلومات تصل للفريق في وقتها.', en: 'Simple for guests. Clear and timely for the whole team.' },
   screens: { ar: 'شاهد أوردوفا أثناء العمل', en: 'See ORDOVA in Action' },
-  screensText: { ar: 'تعرّف على تجربة أوردوفا الحقيقية، من لحظة مسح رمز QR على الطاولة وحتى وصول الطلب إلى المطبخ وتقديمه للزبون.', en: 'Explore the real ORDOVA experience—from scanning the table QR code to preparing and serving the customer’s order.' },
-  screenshotNotice: { ar: 'الصور المتاحة ملتقطة من نظام أوردوفا الحقيقي. تظهر الشاشات غير الملتقطة كمساحات محددة بوضوح.', en: 'Available images are captured from the real ORDOVA system. Screens not yet captured remain clearly labeled.' },
+  screensText: { ar: 'شاهد لقطات حقيقية من واجهات إدارة المطعم والويتر والمطبخ في نظام أوردوفا.', en: 'See real ORDOVA screens for restaurant management, waiters, and the kitchen.' },
+  screenshotNotice: { ar: 'اللقطات المعروضة مأخوذة من نظام أوردوفا الحقيقي في مطعم تجريبي.', en: 'Every screenshot shown here comes from the real ORDOVA system at a demo restaurant.' },
   features: { ar: 'كل ما يحتاجه المطعم، في تدفق عمل واحد', en: 'One flow for the whole restaurant' },
   benefits: { ar: 'خدمة أوضح. تشغيل أكثر انسيابية.', en: 'Clearer service. Smoother operations.' },
   solutions: { ar: 'مصمم لإيقاع ضيافتك', en: 'Built around your kind of hospitality' },
@@ -31,6 +31,8 @@ const groups = [
   { id: 'waiter', label: { ar: 'الويتر', en: 'Waiter' } },
   { id: 'kitchen', label: { ar: 'المطبخ', en: 'Kitchen' } },
 ] as const;
+const capturedScreenshots = screenshots.filter((item): item is Screenshot & { src: string } => Boolean(item.src));
+const capturedGroups = groups.filter(group => capturedScreenshots.some(item => item.group === group.id));
 
 const benefits: Bilingual[] = [
   { ar: 'طلب أسرع من الطاولة', en: 'Faster ordering from the table' },
@@ -55,26 +57,19 @@ const icon = (name: string, size = 22) => {
   return <Item size={size} strokeWidth={1.75} aria-hidden />;
 };
 
-function Placeholder({ item, language }: { item: Screenshot; language: Language }) {
+function ScreenDevice({ item, language }: { item: Screenshot & { src: string }; language: Language }) {
   return <div className={`ms-device ms-device-${item.device}`}>
     <div className="ms-device-bar"><span/><span/><span/></div>
-    {item.src ? <img src={item.src} alt={`${t(item.title, language)} — ORDOVA`} loading="lazy" /> :
-      <div className="ms-screenshot-placeholder" role="img" aria-label={`${t(item.title, language)} — ${language === 'ar' ? 'لقطة شاشة مطلوبة' : 'Screenshot needed'}`}>
-        <img src="/ordova-mark.png" alt="" />
-        <span className="ms-placeholder-kicker">{language === 'ar' ? 'مكان لقطة حقيقية' : 'REAL SCREENSHOT SLOT'}</span>
-        <strong>{t(item.title, language)}</strong>
-        <small>{language === 'ar' ? 'المقاس المقترح' : 'Recommended size'}: {item.dimensions}</small>
-        <small>{language === 'ar' ? 'استبدلها بصورة حقيقية من النظام' : 'Replace with a real ORDOVA capture'}</small>
-      </div>}
+    <img src={item.src} alt={`${t(item.title, language)} — ORDOVA`} loading="lazy" />
   </div>;
 }
 
 function ScreenshotShowcase({ language }: { language: Language }) {
-  const [group, setGroup] = useState<Screenshot['group']>('manager');
+  const [group, setGroup] = useState<Screenshot['group']>(capturedGroups[0]?.id ?? 'manager');
   const [index, setIndex] = useState(0);
-  const [open, setOpen] = useState<Screenshot | null>(null);
+  const [open, setOpen] = useState<(Screenshot & { src: string }) | null>(null);
   const touchX = useRef<number | null>(null);
-  const items = screenshots.filter(s => s.group === group).sort((a, b) => Number(Boolean(b.src)) - Number(Boolean(a.src)));
+  const items = capturedScreenshots.filter(s => s.group === group);
   const selected = items[Math.min(index, items.length - 1)];
   useEffect(() => {
     if (!open) return;
@@ -87,18 +82,19 @@ function ScreenshotShowcase({ language }: { language: Language }) {
     document.body.style.overflow = 'hidden';
     return () => { document.removeEventListener('keydown', close); document.body.style.overflow = ''; previous?.focus(); };
   }, [open]);
+  if (!selected) return null;
   const next = (delta: number) => setIndex(v => (v + delta + items.length) % items.length);
   return <section className="ms-section ms-screens" id="screens" aria-labelledby="screens-title">
     <div className="ms-container"><div className="ms-section-heading"><span className="ms-kicker">PRODUCT / المنتج</span><h2 id="screens-title">{t(copy.screens, language)}</h2><p>{t(copy.screensText, language)}</p></div>
       <div className="ms-screen-notice">{icon('Info', 18)}<span>{t(copy.screenshotNotice, language)}</span></div>
-      <div className="ms-tabs" role="tablist" aria-label={language === 'ar' ? 'واجهات أوردوفا' : 'ORDOVA workspaces'}>{groups.map(g => <button key={g.id} id={`tab-${g.id}`} type="button" role="tab" aria-selected={group === g.id} aria-controls="screen-panel" onClick={() => { setGroup(g.id); setIndex(0); }}>{t(g.label, language)}</button>)}</div>
+      <div className="ms-tabs" role="tablist" aria-label={language === 'ar' ? 'واجهات أوردوفا' : 'ORDOVA workspaces'}>{capturedGroups.map(g => <button key={g.id} id={`tab-${g.id}`} type="button" role="tab" aria-selected={group === g.id} aria-controls="screen-panel" onClick={() => { setGroup(g.id); setIndex(0); }}>{t(g.label, language)}</button>)}</div>
       <div className="ms-screen-stage" id="screen-panel" role="tabpanel" aria-labelledby={`tab-${group}`} onTouchStart={e => { touchX.current = e.touches[0].clientX; }} onTouchEnd={e => { if (touchX.current === null) return; const diff = e.changedTouches[0].clientX - touchX.current; if (Math.abs(diff) > 45) next(diff > 0 ? -1 : 1); touchX.current = null; }}>
-        <button className="ms-screen-main" type="button" onClick={() => setOpen(selected)} aria-label={`${language === 'ar' ? 'تكبير' : 'Open'} ${t(selected.title, language)}`}><Placeholder item={selected} language={language} /></button>
-        <div className="ms-screen-description"><span className="ms-kicker">{String(index + 1).padStart(2,'0')} / {String(items.length).padStart(2,'0')}</span><h3>{t(selected.title, language)}</h3><p>{t(selected.description, language)}</p><div className="ms-screen-controls"><button type="button" onClick={() => next(-1)} aria-label={language === 'ar' ? 'اللقطة السابقة' : 'Previous screenshot'}>{icon(language === 'ar' ? 'ArrowRight' : 'ArrowLeft')}</button><button type="button" onClick={() => next(1)} aria-label={language === 'ar' ? 'اللقطة التالية' : 'Next screenshot'}>{icon(language === 'ar' ? 'ArrowLeft' : 'ArrowRight')}</button></div></div>
+        <button className="ms-screen-main" type="button" onClick={() => setOpen(selected)} aria-label={`${language === 'ar' ? 'تكبير' : 'Open'} ${t(selected.title, language)}`}><ScreenDevice item={selected} language={language} /></button>
+        <div className="ms-screen-description"><span className="ms-kicker">{String(index + 1).padStart(2,'0')} / {String(items.length).padStart(2,'0')}</span><h3>{t(selected.title, language)}</h3><p>{t(selected.description, language)}</p>{items.length > 1 && <div className="ms-screen-controls"><button type="button" onClick={() => next(-1)} aria-label={language === 'ar' ? 'اللقطة السابقة' : 'Previous screenshot'}>{icon(language === 'ar' ? 'ArrowRight' : 'ArrowLeft')}</button><button type="button" onClick={() => next(1)} aria-label={language === 'ar' ? 'اللقطة التالية' : 'Next screenshot'}>{icon(language === 'ar' ? 'ArrowLeft' : 'ArrowRight')}</button></div>}</div>
       </div>
-      <div className="ms-screen-strip" aria-label={language === 'ar' ? 'كل الشاشات المطلوبة' : 'All requested screens'}>{items.map((item, position) => <button type="button" key={item.id} className={position === index ? 'active' : ''} onClick={() => setIndex(position)}>{String(position + 1).padStart(2,'0')} <span>{t(item.title, language)}</span></button>)}</div>
+      {items.length > 1 && <div className="ms-screen-strip" aria-label={language === 'ar' ? 'اللقطات الحقيقية' : 'Real screenshots'}>{items.map((item, position) => <button type="button" key={item.id} className={position === index ? 'active' : ''} onClick={() => setIndex(position)}>{String(position + 1).padStart(2,'0')} <span>{t(item.title, language)}</span></button>)}</div>}
     </div>
-    {open && <div className="ms-lightbox" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setOpen(null); }}><div className="ms-lightbox-dialog" role="dialog" aria-modal="true" aria-label={t(open.title, language)}><button autoFocus className="ms-lightbox-close" type="button" onClick={() => setOpen(null)} aria-label={language === 'ar' ? 'إغلاق' : 'Close'}>{icon('X')}</button><Placeholder item={open} language={language} /><p>{t(open.title, language)} · {open.dimensions}</p></div></div>}
+    {open && <div className="ms-lightbox" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setOpen(null); }}><div className="ms-lightbox-dialog" role="dialog" aria-modal="true" aria-label={t(open.title, language)}><button autoFocus className="ms-lightbox-close" type="button" onClick={() => setOpen(null)} aria-label={language === 'ar' ? 'إغلاق' : 'Close'}>{icon('X')}</button><ScreenDevice item={open} language={language} /><p>{t(open.title, language)} · {open.dimensions}</p></div></div>}
   </section>;
 }
 
