@@ -3,6 +3,7 @@ import express from "express";
 import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 import ws from "ws";
+import { createHmac as createHmac2, randomBytes as randomBytes2, randomUUID } from "node:crypto";
 
 // src/lib/ai-models.ts
 var DEFAULT_AI_MODEL = "gemini-3.8-flash";
@@ -23,6 +24,42 @@ function openAIResponseText(response) {
   return (data.output || []).filter((item) => item.type === "message").flatMap((item) => item.content || []).filter((content) => content.type === "output_text" && typeof content.text === "string").map((content) => content.text.trim()).filter(Boolean).join("\n");
 }
 
+// passcodes.ts
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomInt } from "node:crypto";
+var isPasscode = (value) => typeof value === "string" && /^[0-9]{4}$/.test(value);
+var isWeakPasscode = (code) => /^([0-9])\1{3}$/.test(code) || ["0123", "1234", "2345", "3456", "4567", "5678", "6789", "9876", "8765", "7654", "6543", "5432", "4321", "3210", "1212", "2580"].includes(code);
+function passcodeKey(secret) {
+  if (!/^[a-f0-9]{64}$/i.test(secret)) throw new Error("passcode_secret_not_configured");
+  return createHash("sha256").update(Buffer.from(secret, "hex")).digest();
+}
+function passcodeDigest(code, key) {
+  if (!isPasscode(code)) throw new Error("invalid_passcode");
+  return createHmac("sha256", key).update(`lookup:${code}`).digest("hex");
+}
+function encryptPasscode(code, key) {
+  if (!isPasscode(code)) throw new Error("invalid_passcode");
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const encrypted = Buffer.concat([cipher.update(code, "utf8"), cipher.final()]);
+  return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString("base64url")).join(".");
+}
+function decryptPasscode(value, key) {
+  const parts = value.split(".");
+  if (parts.length !== 3) throw new Error("invalid_passcode_record");
+  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(parts[0], "base64url"));
+  decipher.setAuthTag(Buffer.from(parts[1], "base64url"));
+  const code = Buffer.concat([decipher.update(Buffer.from(parts[2], "base64url")), decipher.final()]).toString("utf8");
+  if (!isPasscode(code)) throw new Error("invalid_passcode_record");
+  return code;
+}
+function generatePasscode() {
+  let code;
+  do {
+    code = randomInt(0, 1e4).toString().padStart(4, "0");
+  } while (isWeakPasscode(code));
+  return code;
+}
+
 // server.ts
 import dotenv from "dotenv";
 if (!globalThis.WebSocket) {
@@ -35,6 +72,64 @@ if (!supabaseUrl || !supabaseAnonKey) console.warn("Supabase server configuratio
 var supabase = createClient(supabaseUrl || "http://127.0.0.1:54321", supabaseAnonKey || "missing", { auth: { persistSession: false } });
 var serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 var supabaseAdmin = serviceRoleKey ? createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
+var configuredPasscodeSecret = process.env.PASSCODE_SECRET || "";
+function getPasscodeKey() {
+  return passcodeKey(configuredPasscodeSecret);
+}
+async function setMemberPasscode(userId, restaurantId, role, requested) {
+  if (!supabaseAdmin) throw new Error("service_role_not_configured");
+  const key = getPasscodeKey();
+  if (requested !== void 0 && !isPasscode(requested)) throw new Error("invalid_passcode");
+  if (requested && isWeakPasscode(requested)) throw new Error("weak_passcode");
+  for (let attempt = 0; attempt < (requested ? 1 : 100); attempt++) {
+    const code = requested || generatePasscode();
+    const { error } = await supabaseAdmin.from("staff_passcodes").upsert({
+      user_id: userId,
+      restaurant_id: restaurantId,
+      role,
+      code_digest: passcodeDigest(code, key),
+      code_ciphertext: encryptPasscode(code, key),
+      updated_at: (/* @__PURE__ */ new Date()).toISOString()
+    }, { onConflict: "restaurant_id,user_id" });
+    if (error?.code === "23505") {
+      if (requested) throw new Error("passcode_taken");
+      continue;
+    }
+    if (error) throw new Error(`passcode_save_failed:${error.message}`);
+    const rotated = await supabaseAdmin.auth.admin.updateUserById(userId, { password: randomBytes2(48).toString("base64url") });
+    if (rotated.error) throw new Error("passcode_account_update_failed");
+    return code;
+  }
+  throw new Error("passcode_space_exhausted");
+}
+async function getOrCreateMemberPasscode(userId, restaurantId, role) {
+  if (!supabaseAdmin) throw new Error("service_role_not_configured");
+  const { data, error } = await supabaseAdmin.from("staff_passcodes").select("code_ciphertext,role").eq("user_id", userId).eq("restaurant_id", restaurantId).maybeSingle();
+  if (error) throw new Error(`passcode_read_failed:${error.message}`);
+  if (data?.role === role) return decryptPasscode(data.code_ciphertext, getPasscodeKey());
+  if (data) return setMemberPasscode(userId, restaurantId, role);
+  const key = getPasscodeKey();
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const code = generatePasscode();
+    const inserted = await supabaseAdmin.from("staff_passcodes").insert({
+      user_id: userId,
+      restaurant_id: restaurantId,
+      role,
+      code_digest: passcodeDigest(code, key),
+      code_ciphertext: encryptPasscode(code, key)
+    });
+    if (inserted.error?.code === "23505") {
+      const winner = await supabaseAdmin.from("staff_passcodes").select("code_ciphertext").eq("user_id", userId).eq("restaurant_id", restaurantId).maybeSingle();
+      if (winner.data) return decryptPasscode(winner.data.code_ciphertext, key);
+      continue;
+    }
+    if (inserted.error) throw new Error(`passcode_save_failed:${inserted.error.message}`);
+    const rotated = await supabaseAdmin.auth.admin.updateUserById(userId, { password: randomBytes2(48).toString("base64url") });
+    if (rotated.error) throw new Error("passcode_account_update_failed");
+    return code;
+  }
+  throw new Error("passcode_space_exhausted");
+}
 function getGeminiClient() {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return null;
@@ -129,30 +224,69 @@ app.post("/api/security-alerts", rateLimit, async (req, res) => {
 });
 app.post("/api/auth/login", rateLimit, async (req, res) => {
   if (!supabaseUrl || !supabaseAnonKey) return res.status(503).json({ error: "server_config_missing" });
-  const username = String(req.body?.username || "").trim().toLowerCase();
-  const email = username.includes("@") ? username : `${username.replace(/[^a-z0-9._-]/g, "")}@accounts.novx.invalid`;
+  const requestedRole = req.body?.role;
   const authClient = createClient(supabaseUrl, supabaseAnonKey, { auth: { persistSession: false, autoRefreshToken: false } });
-  let authResult;
+  if (requestedRole === "admin") {
+    const username = String(req.body?.username || "").trim().toLowerCase();
+    const email = username.includes("@") ? username : `${username.replace(/[^a-z0-9._-]/g, "")}@accounts.novx.invalid`;
+    try {
+      const { data, error } = await authClient.auth.signInWithPassword({ email, password: String(req.body?.password || "") });
+      if (error || !data.session) return res.status(401).json({ error: "invalid_credentials" });
+      if (data.user.app_metadata?.system_role !== "admin") return res.status(403).json({ error: "role_mismatch" });
+      return res.json({ accessToken: data.session.access_token, refreshToken: data.session.refresh_token, session: { role: "admin", id: data.user.id, name: data.user.user_metadata?.name || username } });
+    } catch (error) {
+      console.error("Supabase sign-in service unavailable:", error);
+      return res.status(503).json({ error: "auth_service_unavailable" });
+    }
+  }
+  if (!["restaurant", "waiter", "kitchen"].includes(requestedRole)) return res.status(400).json({ error: "invalid_role" });
+  if (!supabaseAdmin) return res.status(503).json({ error: "service_role_not_configured" });
+  const code = req.body?.passcode;
+  if (!isPasscode(code)) return res.status(400).json({ error: "invalid_passcode" });
+  const requestedRestaurantId = await resolveRestaurantId(String(req.body?.restaurantId || ""));
+  if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(requestedRestaurantId)) return res.status(401).json({ error: "invalid_credentials" });
+  let digest;
+  let key;
   try {
-    authResult = await authClient.auth.signInWithPassword({ email, password: String(req.body?.password || "") });
-  } catch (error2) {
-    console.error("Supabase sign-in service unavailable:", error2);
+    key = getPasscodeKey();
+    digest = passcodeDigest(code, key);
+  } catch {
+    return res.status(503).json({ error: "passcode_secret_not_configured" });
+  }
+  const ipKey = createHmac2("sha256", key).update(`ip:${req.ip || req.socket.remoteAddress || "unknown"}`).digest("hex");
+  const globalKey = createHmac2("sha256", key).update(`restaurant:${requestedRestaurantId}`).digest("hex");
+  const [ipLimit, restaurantLimit] = await Promise.all([
+    supabaseAdmin.rpc("claim_passcode_attempt", { p_restaurant_id: requestedRestaurantId, p_client_key: ipKey, p_limit: 8, p_window_seconds: 600 }),
+    supabaseAdmin.rpc("claim_passcode_attempt", { p_restaurant_id: requestedRestaurantId, p_client_key: globalKey, p_limit: 80, p_window_seconds: 3600 })
+  ]);
+  if (ipLimit.error || restaurantLimit.error) return res.status(503).json({ error: "passcode_store_unavailable" });
+  if (!ipLimit.data || !restaurantLimit.data) return res.status(429).json({ error: "too_many_requests" });
+  const allowedRoles = requestedRole === "restaurant" ? ["owner", "manager"] : [requestedRole];
+  const { data: record, error: lookupError } = await supabaseAdmin.from("staff_passcodes").select("user_id,restaurant_id,role").eq("code_digest", digest).eq("restaurant_id", requestedRestaurantId).in("role", allowedRoles).maybeSingle();
+  if (lookupError) return res.status(503).json({ error: "passcode_store_unavailable" });
+  if (!record) return res.status(401).json({ error: "invalid_credentials" });
+  const { data: membership } = await supabaseAdmin.from("restaurant_members").select("role,active").eq("user_id", record.user_id).eq("restaurant_id", requestedRestaurantId).maybeSingle();
+  if (!membership?.active || membership.role !== record.role) return res.status(401).json({ error: "invalid_credentials" });
+  if (requestedRole !== "restaurant") {
+    const { data: staff } = await supabaseAdmin.from("staff").select("status").eq("auth_user_id", record.user_id).eq("restaurant_id", requestedRestaurantId).eq("role", requestedRole).maybeSingle();
+    if (staff?.status !== "active") return res.status(401).json({ error: "invalid_credentials" });
+  }
+  const { data: account, error: accountError } = await supabaseAdmin.auth.admin.getUserById(record.user_id);
+  if (accountError || !account.user?.email) return res.status(503).json({ error: "auth_service_unavailable" });
+  try {
+    const link = await supabaseAdmin.auth.admin.generateLink({ type: "magiclink", email: account.user.email });
+    if (link.error || !link.data.properties?.hashed_token) return res.status(503).json({ error: "auth_service_unavailable" });
+    const { data, error } = await authClient.auth.verifyOtp({ token_hash: link.data.properties.hashed_token, type: "magiclink" });
+    if (error || !data.session || data.user?.id !== record.user_id) return res.status(503).json({ error: "auth_service_unavailable" });
+    return res.json({
+      accessToken: data.session.access_token,
+      refreshToken: data.session.refresh_token,
+      session: { role: requestedRole, id: record.user_id, restaurantId: requestedRestaurantId, name: data.user.user_metadata?.name || requestedRole }
+    });
+  } catch (error) {
+    console.error("Passcode session creation failed:", error);
     return res.status(503).json({ error: "auth_service_unavailable" });
   }
-  const { data, error } = authResult;
-  if (error || !data.session) return res.status(401).json({ error: "invalid_credentials" });
-  const metadata = data.user.app_metadata || {};
-  const requestedRole = req.body?.role;
-  if (requestedRole === "admin") {
-    if (metadata.system_role !== "admin") return res.status(403).json({ error: "role_mismatch" });
-    return res.json({ accessToken: data.session.access_token, refreshToken: data.session.refresh_token, session: { role: "admin", id: data.user.id, name: data.user.user_metadata?.name || username } });
-  }
-  const requestedRestaurantId = await resolveRestaurantId(String(req.body?.restaurantId || ""));
-  const { data: membership } = await authClient.from("restaurant_members").select("role,restaurant_id").eq("user_id", data.user.id).eq("restaurant_id", requestedRestaurantId).eq("active", true).maybeSingle();
-  const role = membership?.role === "owner" || membership?.role === "manager" ? "restaurant" : membership?.role;
-  const restaurantId = membership?.restaurant_id;
-  if (!membership || role !== requestedRole) return res.status(403).json({ error: "role_mismatch" });
-  return res.json({ accessToken: data.session.access_token, refreshToken: data.session.refresh_token, session: { role, id: data.user.id, restaurantId, name: data.user.user_metadata?.name || username } });
 });
 app.get("/api/auth/session", async (req, res) => {
   const bearer = req.headers.authorization?.replace(/^Bearer /, "");
@@ -170,6 +304,41 @@ app.get("/api/auth/session", async (req, res) => {
   const role = membership.role === "owner" || membership.role === "manager" ? "restaurant" : membership.role;
   return res.json({ role, id: identity.user.id, restaurantId: membership.restaurant_id, name: identity.user.user_metadata?.name || "user" });
 });
+app.get("/api/admin/restaurants/:restaurantId/passcode", async (req, res) => {
+  if (!supabaseAdmin) return res.status(503).json({ error: "service_role_not_configured" });
+  const bearer = req.headers.authorization?.replace(/^Bearer /, "") || "";
+  const { data: identity } = await supabaseAdmin.auth.getUser(bearer);
+  if (identity.user?.app_metadata?.system_role !== "admin") return res.status(403).json({ error: "admin_required" });
+  const { data: owner } = await supabaseAdmin.from("restaurant_members").select("user_id,role").eq("restaurant_id", req.params.restaurantId).eq("role", "owner").maybeSingle();
+  if (!owner) return res.status(404).json({ error: "restaurant_owner_not_found" });
+  try {
+    const passcode = await getOrCreateMemberPasscode(owner.user_id, req.params.restaurantId, "owner");
+    res.setHeader("Cache-Control", "private, no-store");
+    return res.json({ passcode });
+  } catch (error) {
+    console.error("Owner passcode retrieval failed:", error);
+    return res.status(503).json({ error: "passcode_unavailable" });
+  }
+});
+app.get("/api/staff/:staffId/passcode", async (req, res) => {
+  if (!supabaseAdmin) return res.status(503).json({ error: "service_role_not_configured" });
+  const bearer = req.headers.authorization?.replace(/^Bearer /, "") || "";
+  const { data: identity } = await supabaseAdmin.auth.getUser(bearer);
+  if (!identity.user) return res.status(401).json({ error: "authentication_required" });
+  const restaurantId = String(req.query.restaurantId || "");
+  const { data: owner } = await supabaseAdmin.from("restaurant_members").select("role").eq("restaurant_id", restaurantId).eq("user_id", identity.user.id).eq("active", true).maybeSingle();
+  if (!owner || !["owner", "manager"].includes(owner.role)) return res.status(403).json({ error: "owner_required" });
+  const { data: staff } = await supabaseAdmin.from("staff").select("auth_user_id,role").eq("id", req.params.staffId).eq("restaurant_id", restaurantId).maybeSingle();
+  if (!staff?.auth_user_id) return res.status(404).json({ error: "staff_not_found" });
+  try {
+    const passcode = await getOrCreateMemberPasscode(staff.auth_user_id, restaurantId, staff.role);
+    res.setHeader("Cache-Control", "private, no-store");
+    return res.json({ passcode });
+  } catch (error) {
+    console.error("Staff passcode retrieval failed:", error);
+    return res.status(503).json({ error: "passcode_unavailable" });
+  }
+});
 app.post("/api/staff", async (req, res) => {
   if (!supabaseAdmin) return res.status(503).json({ error: "service_role_not_configured" });
   const bearer = req.headers.authorization?.replace(/^Bearer /, "");
@@ -178,13 +347,15 @@ app.post("/api/staff", async (req, res) => {
   const body = req.body || {};
   const restaurantId = String(body.restaurantId || "");
   const role = body.role === "kitchen" ? "kitchen" : body.role === "waiter" ? "waiter" : null;
-  const username = String(body.username || "").trim();
-  const normalizedUsername = username.toLowerCase().replace(/[^a-z0-9._-]/g, "");
-  const password = String(body.password || "");
-  const passwordIsStrong = password.length >= 8 && /[A-Za-z]/.test(password) && /\d/.test(password);
+  const requestedPasscode = body.passcode === "" || body.passcode == null ? void 0 : body.passcode;
   if (!role) return res.status(400).json({ error: "invalid_staff_role" });
-  if (!normalizedUsername || normalizedUsername !== username.toLowerCase()) return res.status(400).json({ error: "invalid_username" });
-  if ((!body.id || password) && !passwordIsStrong) return res.status(400).json({ error: "password_too_weak" });
+  if (requestedPasscode !== void 0 && !isPasscode(requestedPasscode)) return res.status(400).json({ error: "invalid_passcode" });
+  if (requestedPasscode && isWeakPasscode(requestedPasscode)) return res.status(400).json({ error: "weak_passcode" });
+  try {
+    getPasscodeKey();
+  } catch {
+    return res.status(503).json({ error: "passcode_secret_not_configured" });
+  }
   const { data: membership } = await supabaseAdmin.from("restaurant_members").select("role").eq("restaurant_id", restaurantId).eq("user_id", identity.user.id).eq("active", true).maybeSingle();
   if (!membership || !["owner", "manager"].includes(membership.role)) return res.status(403).json({ error: "owner_required" });
   const { data: restaurant } = await supabaseAdmin.from("restaurants").select("status,start_date,end_date,grace_period_days").eq("id", restaurantId).single();
@@ -192,24 +363,29 @@ app.post("/api/staff", async (req, res) => {
   const starts = Date.parse(restaurant?.start_date || "");
   const graceEnd = Date.parse(restaurant?.end_date || "") + Number(restaurant?.grace_period_days || 0) * 864e5;
   if (!restaurant || restaurant.status !== "active" || now < starts || now >= graceEnd) return res.status(403).json({ error: "subscription_inactive" });
-  const email = `${normalizedUsername}@accounts.novx.invalid`;
   if (body.id) {
     const { data: staff } = await supabaseAdmin.from("staff").select("auth_user_id,username,name,phone").eq("id", body.id).eq("restaurant_id", restaurantId).single();
     if (!staff) return res.status(404).end();
     if (!staff.auth_user_id) return res.status(409).json({ error: "staff_auth_account_missing" });
     const authUpdate = await supabaseAdmin.auth.admin.updateUserById(staff.auth_user_id, {
-      email,
-      email_confirm: true,
       user_metadata: { name: body.name },
-      app_metadata: { role, restaurant_id: restaurantId },
-      ...password ? { password } : {}
+      app_metadata: { role, restaurant_id: restaurantId }
     });
     if (authUpdate.error) return res.status(400).json({ error: "staff_auth_update_failed", details: authUpdate.error.message });
-    const { error } = await supabaseAdmin.from("staff").update({ name: body.name, phone: body.phone, username, role }).eq("id", body.id).eq("restaurant_id", restaurantId);
+    if (requestedPasscode) {
+      try {
+        await setMemberPasscode(staff.auth_user_id, restaurantId, role, requestedPasscode);
+      } catch (error2) {
+        return res.status(error2 instanceof Error && error2.message === "passcode_taken" ? 409 : 503).json({ error: error2 instanceof Error ? error2.message : "passcode_save_failed" });
+      }
+    }
+    const { error } = await supabaseAdmin.from("staff").update({ name: body.name, phone: body.phone, role }).eq("id", body.id).eq("restaurant_id", restaurantId);
     if (error) return res.status(400).json({ error: error.message });
     return res.status(204).end();
   }
-  const { data: created, error: authError } = await supabaseAdmin.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: { name: body.name }, app_metadata: { role, restaurant_id: restaurantId } });
+  const username = `staff-${randomUUID()}`;
+  const email = `${username}@accounts.novx.invalid`;
+  const { data: created, error: authError } = await supabaseAdmin.auth.admin.createUser({ email, password: randomBytes2(48).toString("base64url"), email_confirm: true, user_metadata: { name: body.name }, app_metadata: { role, restaurant_id: restaurantId } });
   if (authError || !created.user) return res.status(400).json({ error: authError?.message });
   const staffInsert = await supabaseAdmin.from("staff").insert({ restaurant_id: restaurantId, auth_user_id: created.user.id, role, name: body.name, phone: body.phone, username }).select().single();
   if (staffInsert.error) {
@@ -222,7 +398,14 @@ app.post("/api/staff", async (req, res) => {
     await supabaseAdmin.auth.admin.deleteUser(created.user.id);
     return res.status(400).json({ error: "staff_membership_failed", details: membershipInsert.error.message });
   }
-  return res.status(201).json(camelRow(staffInsert.data));
+  try {
+    const passcode = await setMemberPasscode(created.user.id, restaurantId, role, requestedPasscode);
+    return res.status(201).json({ ...camelRow(staffInsert.data), passcode });
+  } catch (error) {
+    await supabaseAdmin.from("staff").delete().eq("id", staffInsert.data.id).eq("restaurant_id", restaurantId);
+    await supabaseAdmin.auth.admin.deleteUser(created.user.id);
+    return res.status(error instanceof Error && error.message === "passcode_taken" ? 409 : 503).json({ error: error instanceof Error ? error.message : "passcode_save_failed" });
+  }
 });
 app.patch("/api/staff/:staffId/status", async (req, res) => {
   if (!supabaseAdmin) return res.status(503).json({ error: "service_role_not_configured" });
@@ -265,24 +448,33 @@ app.post("/api/admin/restaurants", async (req, res) => {
   const { data: identity } = await supabaseAdmin.auth.getUser(bearer || "");
   if (identity.user?.app_metadata?.system_role !== "admin") return res.status(403).json({ error: "admin_required" });
   const body = req.body || {};
-  const password = String(body.password || "");
-  const passwordIsStrong = password.length >= 8 && /[A-Za-z]/.test(password) && /\d/.test(password);
-  if ((!body.id || password) && !passwordIsStrong) return res.status(400).json({ error: "password_too_weak" });
-  const row = { manager_name: body.managerName, manager_phone: body.managerPhone, restaurant_name: body.restaurantName, username: body.username, province: body.province, area: body.area, landmark: body.landmark, subscription_type: body.subscriptionType, subscription_duration: body.subscriptionDuration, start_date: body.startDate, end_date: body.endDate, monthly_cost: body.monthlyCost, total_cost: body.totalCost, logo_url: body.logoUrl, status: body.status || "active" };
+  const requestedPasscode = !body.id || body.passcode === "" || body.passcode == null ? void 0 : body.passcode;
+  if (requestedPasscode !== void 0 && !isPasscode(requestedPasscode)) return res.status(400).json({ error: "invalid_passcode" });
+  if (requestedPasscode && isWeakPasscode(requestedPasscode)) return res.status(400).json({ error: "weak_passcode" });
+  try {
+    getPasscodeKey();
+  } catch {
+    return res.status(503).json({ error: "passcode_secret_not_configured" });
+  }
+  const username = body.id ? String(body.username || "") : `restaurant-${randomUUID()}`;
+  const row = { manager_name: body.managerName, manager_phone: body.managerPhone, restaurant_name: body.restaurantName, username, province: body.province, area: body.area, landmark: body.landmark, subscription_type: body.subscriptionType, subscription_duration: body.subscriptionDuration, start_date: body.startDate, end_date: body.endDate, monthly_cost: body.monthlyCost, total_cost: body.totalCost, logo_url: body.logoUrl, status: body.status || "active" };
   if (body.id) {
-    if (password) {
+    if (requestedPasscode) {
       const owner = await supabaseAdmin.from("restaurant_members").select("user_id").eq("restaurant_id", body.id).eq("role", "owner").single();
       if (owner.error || !owner.data) return res.status(404).json({ error: "restaurant_owner_not_found" });
-      const passwordUpdate = await supabaseAdmin.auth.admin.updateUserById(owner.data.user_id, { password });
-      if (passwordUpdate.error) return res.status(400).json({ error: "password_rejected", details: passwordUpdate.error.message });
+      try {
+        await setMemberPasscode(owner.data.user_id, body.id, "owner", requestedPasscode);
+      } catch (error2) {
+        return res.status(error2 instanceof Error && error2.message === "passcode_taken" ? 409 : 503).json({ error: error2 instanceof Error ? error2.message : "passcode_save_failed" });
+      }
     }
     const { error } = await supabaseAdmin.from("restaurants").update(row).eq("id", body.id);
     if (error) return res.status(400).json({ error: error.message });
     return res.status(204).end();
   }
-  const email = `${String(body.username).toLowerCase().replace(/[^a-z0-9._-]/g, "")}@accounts.novx.invalid`;
-  const authResult = await supabaseAdmin.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: { name: body.restaurantName }, app_metadata: { role: "restaurant" } });
-  if (authResult.error || !authResult.data.user) return res.status(400).json({ error: "password_or_account_rejected", details: authResult.error?.message });
+  const email = `${username}@accounts.novx.invalid`;
+  const authResult = await supabaseAdmin.auth.admin.createUser({ email, password: randomBytes2(48).toString("base64url"), email_confirm: true, user_metadata: { name: body.restaurantName }, app_metadata: { role: "restaurant" } });
+  if (authResult.error || !authResult.data.user) return res.status(400).json({ error: "account_creation_failed", details: authResult.error?.message });
   const restaurant = await supabaseAdmin.from("restaurants").insert({ ...row, theme_id: "ordova" }).select().single();
   if (restaurant.error) {
     await supabaseAdmin.auth.admin.deleteUser(authResult.data.user.id);
@@ -300,7 +492,14 @@ app.post("/api/admin/restaurants", async (req, res) => {
     await supabaseAdmin.auth.admin.deleteUser(authResult.data.user.id);
     return res.status(400).json({ error: "owner_account_setup_failed", details: ownerMetadata.error.message });
   }
-  return res.status(201).json(camelRow(restaurant.data));
+  try {
+    const passcode = await setMemberPasscode(authResult.data.user.id, restaurant.data.id, "owner", requestedPasscode);
+    return res.status(201).json({ ...camelRow(restaurant.data), passcode });
+  } catch (error) {
+    await supabaseAdmin.from("restaurants").delete().eq("id", restaurant.data.id).eq("username", row.username);
+    await supabaseAdmin.auth.admin.deleteUser(authResult.data.user.id);
+    return res.status(error instanceof Error && error.message === "passcode_taken" ? 409 : 503).json({ error: error instanceof Error ? error.message : "passcode_save_failed" });
+  }
 });
 app.post("/api/waiter-requests", rateLimit, async (req, res) => {
   const body = req.body || {};

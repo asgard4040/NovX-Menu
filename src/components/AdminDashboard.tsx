@@ -1002,7 +1002,6 @@ function RestaurantModal({
       : format(new Date(), "yyyy-MM-dd"),
     monthlyCost: restaurant?.monthlyCost || 0,
     username: restaurant?.username || "",
-    password: restaurant?.password || "",
     logoUrl: restaurant?.logoUrl || "",
   });
 
@@ -1014,28 +1013,14 @@ function RestaurantModal({
   );
   const [isEndDateOverridden, setIsEndDateOverridden] = useState(!!restaurant?.endDate);
   const [showPassword, setShowPassword] = useState(false);
+  const [ownerPasscode, setOwnerPasscode] = useState("");
+  const [passcodeDirty, setPasscodeDirty] = useState(false);
+  const [passcodeLoadError, setPasscodeLoadError] = useState(false);
+  const [createdPasscode, setCreatedPasscode] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    // Only auto-generate credentials if we are NOT editing
-    if (!restaurant) {
-      if (!formData.username && formData.restaurantName) {
-        setFormData((prev) => ({
-          ...prev,
-          username:
-            Math.random().toString(36).substring(2, 6) +
-            Math.floor(Math.random() * 100),
-        }));
-      }
-      if (!formData.password) {
-        setFormData((prev) => ({
-          ...prev,
-          password: `Nx${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}9!`,
-        }));
-      }
-    }
-
     const start = new Date(formData.startDate);
     let end = new Date();
     let multiplier = 1;
@@ -1077,18 +1062,36 @@ function RestaurantModal({
     isEndDateOverridden,
   ]);
 
+  useEffect(() => {
+    if (!restaurant?.id) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) return;
+      const response = await fetch(`/api/admin/restaurants/${encodeURIComponent(restaurant.id)}/passcode`, {
+        headers: { Authorization: `Bearer ${data.session.access_token}` },
+      });
+      if (cancelled) return;
+      if (!response.ok) { setPasscodeLoadError(true); return; }
+      const result = await response.json();
+      setOwnerPasscode((current) => current || result.passcode);
+    })().catch(() => { if (!cancelled) setPasscodeLoadError(true); });
+    return () => { cancelled = true; };
+  }, [restaurant?.id]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const collectionPath = "restaurants";
     setFormError(null);
-    if ((!restaurant || formData.password) && (formData.password.length < 8 || !/[A-Za-z]/.test(formData.password) || !/\d/.test(formData.password))) {
-      setFormError(tr('كلمة المرور يجب أن تكون 8 أحرف على الأقل وتحتوي على حرف ورقم. تجنب كلمات المرور الشائعة مثل 123456.', 'Password must have at least 8 characters, including a letter and number. Avoid common passwords.'));
+    if ((ownerPasscode || (restaurant && passcodeDirty)) && !/^[0-9]{4}$/.test(ownerPasscode)) {
+      setFormError(tr('رمز الدخول يجب أن يتكون من أربعة أرقام.', 'Passcode must be exactly four digits.'));
       return;
     }
     try {
       setSaving(true);
       const payload = {
         ...formData,
+        passcode: restaurant && passcodeDirty ? ownerPasscode : undefined,
         endDate: new Date(endDate).toISOString(),
         startDate: new Date(formData.startDate).toISOString(),
         totalCost: finalCost,
@@ -1101,8 +1104,14 @@ function RestaurantModal({
       const response = await fetch('/api/admin/restaurants', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session.access_token}` }, body: JSON.stringify({ ...payload, id: restaurant?.id }) });
       if (!response.ok) {
         const result = await response.json();
-        if (["password_too_weak", "password_rejected", "password_or_account_rejected"].includes(result.error)) throw new Error(result.details || tr('كلمة المرور ضعيفة أو مرفوضة. استخدم كلمة أقوى وغير شائعة.', 'Password rejected. Use a stronger, uncommon password.'));
+        if (result.error === 'passcode_taken') throw new Error(tr('هذا الرمز مستخدم بالفعل. اختر رمزاً آخر.', 'That passcode is already in use. Choose another.'));
+        if (result.error === 'weak_passcode') throw new Error(tr('اختر رمزاً أقل قابلية للتخمين.', 'Choose a less predictable passcode.'));
         throw new Error(result.error || 'restaurant_save_failed');
+      }
+      if (!restaurant) {
+        const result = await response.json();
+        setCreatedPasscode(result.passcode);
+        return;
       }
       onSuccess();
     } catch (err) {
@@ -1112,6 +1121,17 @@ function RestaurantModal({
       setSaving(false);
     }
   };
+
+  if (createdPasscode) return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" dir={dir}>
+      <div className="w-full max-w-md rounded-3xl bg-white p-8 text-center shadow-2xl space-y-5">
+        <h2 className="text-2xl font-bold text-brand-primary">{tr('تم إنشاء المطعم', 'Restaurant created')}</h2>
+        <p className="text-sm text-text-muted">{tr('رمز دخول المالك. يمكنك عرضه أو تغييره لاحقاً من تعديل المطعم.', 'Owner passcode. You can view or change it later in restaurant settings.')}</p>
+        <p className="text-4xl font-bold tracking-[.3em] text-brand-primary" dir="ltr">{createdPasscode}</p>
+        <button type="button" onClick={onSuccess} className="w-full rounded-xl bg-brand-primary py-4 font-bold text-white">{tr('تم', 'Done')}</button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[60] flex items-center justify-center p-2 sm:p-6" dir={dir}>
@@ -1277,44 +1297,30 @@ function RestaurantModal({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="relative">
+                <div className="max-w-sm">
+                  {restaurant ? <div className="relative">
                     <label className="text-[9px] font-bold text-brand-gold uppercase tracking-[0.3em] mb-3 block opacity-60">
-                      {tr('اسم مستخدم بوابة لوحة التحكم', 'Dashboard username')}
-                    </label>
-                    <input
-                      type="text"
-                      className="w-full bg-white border border-border-delicate px-6 py-4 text-xs font-bold tracking-widest text-brand-primary focus:border-brand-primary outline-none text-left"
-                      readOnly={!!restaurant}
-                      value={formData.username}
-                      onChange={(e) =>
-                        setFormData({ ...formData, username: e.target.value })
-                      }
-                    />
-                  </div>
-                  <div className="relative">
-                    <label className="text-[9px] font-bold text-brand-gold uppercase tracking-[0.3em] mb-3 block opacity-60">
-                      {tr('كلمة المرور الإدارية (رمز الدخول السري)', 'Owner password')}
+                      {tr('رمز دخول المالك (٤ أرقام)', 'Owner passcode (4 digits)')}
                     </label>
                     <div className="relative">
                     <input
                       type={showPassword ? "text" : "password"}
                       className="w-full bg-white border border-border-delicate px-12 py-4 text-xs font-bold tracking-widest text-brand-primary focus:border-brand-primary outline-none text-left"
-                      required={!restaurant}
-                      minLength={8}
-                      autoComplete="new-password"
-                      placeholder={restaurant ? tr('اتركها فارغة للإبقاء على كلمة المرور الحالية', 'Leave blank to keep the current password') : tr('8 أحرف على الأقل، تتضمن حرفاً ورقماً', 'At least 8 characters, with a letter and number')}
-                      value={formData.password}
-                      onChange={(e) =>
-                        setFormData({ ...formData, password: e.target.value })
-                      }
+                      inputMode="numeric"
+                      maxLength={4}
+                      autoComplete="off"
+                      placeholder={tr('جارٍ تحميل الرمز...', 'Loading passcode...')}
+                      value={ownerPasscode}
+                      onChange={(e) => { setOwnerPasscode(e.target.value.replace(/\D/g, '').slice(0, 4)); setPasscodeDirty(true); }}
                     />
-                    <button type="button" onClick={() => setShowPassword((value) => !value)} className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-gold" aria-label={showPassword ? tr('إخفاء كلمة المرور', 'Hide password') : tr('إظهار كلمة المرور', 'Show password')}>
+                    <button type="button" onClick={() => setShowPassword((value) => !value)} className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-gold" aria-label={showPassword ? tr('إخفاء رمز الدخول', 'Hide passcode') : tr('إظهار رمز الدخول', 'Show passcode')}>
                       {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                     </div>
-                    <p className="mt-2 text-[9px] text-text-muted">{restaurant ? tr('أدخل كلمة جديدة لتغييرها، أو اترك الحقل فارغاً دون تغيير.', 'Enter a new password to change it, or leave this blank.') : tr('استخدم كلمة قوية وغير شائعة.', 'Use a strong, uncommon password.')}</p>
-                  </div>
+                    <p className="mt-2 text-[10px] text-text-muted">{passcodeLoadError ? tr('تعذر تحميل الرمز الحالي. تحقق من إعدادات الخادم.', 'Could not load the current passcode. Check server setup.') : tr('الرمز فريد لجميع الحسابات. شاركه مع المالك فقط.', 'This code is unique across all accounts. Share it only with the owner.')}</p>
+                  </div> : <p className="rounded-xl border border-border-delicate bg-bg-paper px-4 py-3 text-xs text-text-muted">
+                    {tr('سيتم إنشاء رمز دخول فريد من ٤ أرقام تلقائياً عند حفظ المطعم، وسيظهر لك بعد إنشائه.', 'A unique 4-digit owner passcode will be generated automatically and shown after the restaurant is created.')}
+                  </p>}
                 </div>
               </div>
             </section>

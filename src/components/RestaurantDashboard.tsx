@@ -2558,13 +2558,7 @@ function StaffCard({
         </p>
       </div>
       <div className="bg-bg-paper p-6 sm:p-8 border border-border-delicate space-y-3">
-        <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest text-text-muted gap-2">
-          <span>{tr('اسم مستخدم الدخول', 'Username')}</span>
-          <span className="text-brand-primary truncate max-w-[120px]">
-            {staff.username}
-          </span>
-        </div>
-        <p className="text-[10px] text-text-muted">{tr('لا تُعرض كلمات المرور بعد إنشاء الحساب. يمكن تعيين كلمة جديدة من شاشة التعديل.', 'Passwords are not displayed after account creation. Set a new password from Edit.')}</p>
+        <p className="text-xs text-text-muted">{tr('افتح التعديل لعرض رمز الدخول المكوّن من ٤ أرقام أو تغييره.', 'Open Edit to view or change this staff member’s four-digit passcode.')}</p>
       </div>
     </div>
   );
@@ -2740,54 +2734,59 @@ function StaffModal({
   const [formData, setFormData] = useState({
     name: existingStaff?.name || "",
     phone: existingStaff?.phone || "",
-    username: existingStaff?.username || "",
-    password: existingStaff?.password || "",
   });
+  const [passcode, setPasscode] = useState("");
+  const [passcodeDirty, setPasscodeDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [createdCredentials, setCreatedCredentials] = useState<{ username: string; password: string } | null>(null);
+  const [createdPasscode, setCreatedPasscode] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!existingStaff) {
-      const prefix = role === "waiter" ? "WTR" : "CHEF";
-      if (!formData.username)
-        setFormData((p) => ({
-          ...p,
-          username: `${prefix}-${Math.floor(1000 + Math.random() * 9000)}`,
-        }));
-      if (!formData.password)
-        setFormData((p) => ({
-          ...p,
-          password: `Nx${Math.random().toString(36).slice(2, 8)}${Math.floor(10 + Math.random() * 90)}`,
-        }));
-    }
-  }, [role, existingStaff]);
+    if (!existingStaff?.id) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) return;
+      const response = await fetch(`/api/staff/${encodeURIComponent(existingStaff.id)}/passcode?restaurantId=${encodeURIComponent(restaurantId)}`, {
+        headers: { Authorization: `Bearer ${data.session.access_token}` },
+      });
+      if (cancelled) return;
+      if (!response.ok) throw new Error('passcode_unavailable');
+      const result = await response.json();
+      setPasscode((current) => current || result.passcode);
+    })().catch(() => { if (!cancelled) setSaveError(tr('تعذر عرض رمز الدخول الحالي. تحقق من إعدادات الخادم.', 'Could not load this passcode. Check server setup.')); });
+    return () => { cancelled = true; };
+  }, [existingStaff?.id, restaurantId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setSaveError(null);
     try {
+      if ((passcode || (existingStaff && passcodeDirty)) && !/^[0-9]{4}$/.test(passcode)) throw new Error('invalid_passcode');
       const { data } = await supabase.auth.getSession();
       if (!data.session) throw new Error("authentication_required");
-      const response = await fetch('/api/staff', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session.access_token}` }, body: JSON.stringify({ ...formData, id: existingStaff?.id, restaurantId, role }) });
+      const response = await fetch('/api/staff', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session.access_token}` }, body: JSON.stringify({ ...formData, passcode: (!existingStaff || passcodeDirty) ? passcode : undefined, id: existingStaff?.id, restaurantId, role }) });
       if (!response.ok) {
         const result = await response.json();
         throw new Error(result.error || 'staff_save_failed');
       }
       if (existingStaff) {
-        alert(tr('تم تحديث بيانات الدخول بنجاح.', 'Login details updated successfully.'));
         onClose();
       } else {
-        setCreatedCredentials({ username: formData.username, password: formData.password });
+        setCreatedPasscode((await response.json()).passcode);
       }
     } catch (err) {
       const code = err instanceof Error ? err.message : 'staff_save_failed';
-      setSaveError(code === 'password_too_weak'
-        ? tr('كلمة المرور يجب أن تكون 8 أحرف على الأقل وتحتوي حرفاً ورقماً.', 'Password must be at least 8 characters and include a letter and number.')
+      setSaveError(code === 'invalid_passcode'
+        ? tr('رمز الدخول يجب أن يتكون من أربعة أرقام.', 'Passcode must be exactly four digits.')
+        : code === 'weak_passcode'
+          ? tr('اختر رمزاً أقل قابلية للتخمين.', 'Choose a less predictable passcode.')
+        : code === 'passcode_taken'
+          ? tr('هذا الرمز مستخدم بالفعل. اختر رمزاً آخر.', 'That passcode is already in use. Choose another.')
         : code === 'staff_auth_update_failed'
-          ? tr('رفض نظام الدخول تحديث البيانات. قد يكون اسم المستخدم مستخدماً بالفعل.', 'Authentication could not update this account. The username may already be in use.')
-          : tr('تعذر حفظ حساب الموظف. تحقق من اسم المستخدم وكلمة المرور.', 'Could not save the staff account. Check the username and password.'));
+          ? tr('تعذر تحديث حساب الموظف.', 'Could not update the staff account.')
+          : tr('تعذر حفظ حساب الموظف. تحقق من إعدادات رموز الدخول.', 'Could not save the staff account. Check passcode setup.'));
     } finally {
       setSaving(false);
     }
@@ -2801,18 +2800,15 @@ function StaffModal({
         className="bg-white max-w-md w-full p-6 sm:p-12 border border-border-delicate relative my-8"
       >
         <div className="absolute top-0 right-0 w-full h-1 bg-brand-gold" />
-        {createdCredentials ? (
+        {createdPasscode ? (
           <div className="space-y-6 text-center">
             <CheckCircle2 className="w-14 h-14 text-emerald-600 mx-auto" />
             <div>
               <h2 className="text-2xl font-display text-brand-primary">{tr('تم إنشاء حساب الموظف', 'Staff account created')}</h2>
-              <p className="text-xs text-text-muted mt-2">{tr('احفظ بيانات الدخول الآن؛ كلمة المرور لا تُخزن كنص داخل قاعدة البيانات.', 'Save these credentials now. The password is not stored as plain text.')}</p>
+              <p className="text-xs text-text-muted mt-2">{tr('هذا رمز دخول الموظف. يمكنك عرضه أو تغييره لاحقاً من شاشة التعديل.', 'This is the staff passcode. You can view or change it later in Edit.')}</p>
             </div>
-            <div className="bg-bg-paper border border-border-delicate p-5 space-y-3 font-mono text-start" dir="ltr">
-              <p><strong>Username:</strong> {createdCredentials.username}</p>
-              <p><strong>Password:</strong> {createdCredentials.password}</p>
-            </div>
-            <button type="button" onClick={() => navigator.clipboard.writeText(`Username: ${createdCredentials.username}\nPassword: ${createdCredentials.password}`)} className="w-full py-3 border border-brand-primary text-brand-primary font-bold">{tr('نسخ بيانات الدخول', 'Copy credentials')}</button>
+            <p className="rounded-xl bg-bg-paper border border-border-delicate p-5 text-4xl font-bold tracking-[.3em] text-brand-primary" dir="ltr">{createdPasscode}</p>
+            <button type="button" onClick={() => navigator.clipboard.writeText(createdPasscode)} className="w-full py-3 border border-brand-primary text-brand-primary font-bold">{tr('نسخ رمز الدخول', 'Copy passcode')}</button>
             <button type="button" onClick={onClose} className="w-full py-4 bg-brand-primary text-white font-bold">{tr('تم، إغلاق', 'Done')}</button>
           </div>
         ) : <>
@@ -2858,34 +2854,22 @@ function StaffModal({
                 }
               />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+            <div className="pt-2">
               <div className="space-y-1 text-right">
                 <label className="text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
-                  {tr('اسم كود التعريف (ID)', 'Username')}
+                  {tr('رمز دخول الموظف (٤ أرقام)', 'Staff passcode (4 digits)')}
                 </label>
                 <input
-                  className="w-full bg-bg-paper border border-border-delicate p-3 text-xs font-bold tracking-widest text-brand-primary focus:outline-none focus:border-brand-primary text-right"
-                  value={formData.username}
-                  onChange={(e) =>
-                    setFormData({ ...formData, username: e.target.value })
-                  }
-                />
-              </div>
-              <div className="space-y-1 text-right">
-                <label className="text-[9px] font-bold text-brand-gold uppercase tracking-widest block">
-                  {existingStaff ? tr('كلمة مرور جديدة (اتركها فارغة للإبقاء على الحالية)', 'New password (leave blank to keep current)') : tr('رمز المرور السري', 'Password')}
-                </label>
-                <input
-                  type="password"
-                  required={!existingStaff}
-                  minLength={existingStaff && !formData.password ? undefined : 8}
-                  autoComplete="new-password"
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={4}
+                  autoComplete="off"
+                  placeholder={existingStaff ? tr('جارٍ تحميل الرمز...', 'Loading passcode...') : tr('اتركه فارغاً للتوليد تلقائياً', 'Leave blank to generate automatically')}
                   className="w-full bg-bg-paper border border-border-delicate p-3 text-xs font-bold tracking-widest text-brand-primary focus:outline-none focus:border-brand-primary"
-                  value={formData.password}
-                  onChange={(e) =>
-                    setFormData({ ...formData, password: e.target.value })
-                  }
+                  value={passcode}
+                  onChange={(e) => { setPasscode(e.target.value.replace(/\D/g, '').slice(0, 4)); setPasscodeDirty(true); }}
                 />
+                <p className="text-xs text-text-muted">{tr('الرمز فريد لجميع الحسابات. شاركه مع الموظف فقط.', 'The passcode is unique across all accounts. Share it only with this staff member.')}</p>
               </div>
             </div>
           </div>

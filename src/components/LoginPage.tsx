@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Lock, User, Eye, EyeOff, AlertCircle, ChevronRight } from 'lucide-react';
+import { Lock, User, Eye, EyeOff, AlertCircle, ChevronRight, Delete } from 'lucide-react';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { UserSession } from '../types';
 import { useLanguage } from '../lib/i18n';
@@ -18,6 +18,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   const [role, setRole] = useState<'admin' | 'restaurant' | 'waiter' | 'kitchen'>('admin');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [passcode, setPasscode] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +74,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     try {
       if (!supabaseConfigured) throw new Error('client_config_missing');
       if (role !== 'admin' && !loginRestaurantId) throw new Error('restaurant_required');
+      if (role !== 'admin' && !/^[0-9]{4}$/.test(passcode)) throw new Error('invalid_passcode');
 
       let sessionData: UserSession | null = null;
 
@@ -80,7 +82,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         const response = await fetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ role, username, password, restaurantId: loginRestaurantId }),
+          body: JSON.stringify(role === 'admin' ? { role, username, password } : { role, passcode, restaurantId: loginRestaurantId }),
         });
 
         if (response.headers.get('content-type')?.includes('application/json')) {
@@ -99,7 +101,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         // If the serverless/backend API is unreachable or returns an HTML gateway error,
         // fall back directly to Supabase client authentication so sign-in never fails unnecessarily.
         const isApiUnavailable = apiErr instanceof TypeError || apiErr?.message === 'api_unavailable';
-        if (isApiUnavailable && supabaseConfigured) {
+        if (role === 'admin' && isApiUnavailable && supabaseConfigured) {
           const email = username.includes('@')
             ? username.trim().toLowerCase()
             : `${username.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '')}@accounts.novx.invalid`;
@@ -159,7 +161,13 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       console.error(err);
       const code = err instanceof TypeError ? 'api_unavailable' : err instanceof Error ? err.message : 'invalid_credentials';
       setError(code === 'invalid_credentials'
-        ? tr('اسم المستخدم أو كلمة المرور غير صحيحة.', 'Incorrect username or password.')
+        ? role === 'admin' ? tr('اسم المستخدم أو كلمة المرور غير صحيحة.', 'Incorrect username or password.') : tr('رمز الدخول غير صحيح.', 'Incorrect passcode.')
+        : code === 'invalid_passcode'
+          ? tr('أدخل رمزاً من أربعة أرقام.', 'Enter a four-digit passcode.')
+        : code === 'passcode_secret_not_configured' || code === 'passcode_store_unavailable' || code === 'service_role_not_configured'
+          ? tr('خدمة رموز الدخول غير مهيأة. تواصل مع المسؤول.', 'Passcode sign-in is not configured. Contact the administrator.')
+        : code === 'too_many_requests'
+          ? tr('محاولات كثيرة. انتظر قليلاً ثم حاول مجدداً.', 'Too many attempts. Wait a while and try again.')
         : code === 'client_config_missing' || code === 'server_config_missing'
           ? tr('إعدادات Supabase ناقصة في النشر. أضف متغيرات البيئة ثم أعد النشر.', 'Supabase deployment settings are missing. Add the environment variables and redeploy.')
         : code === 'auth_service_unavailable'
@@ -187,7 +195,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       ] as const);
 
   return (
-    <div className="min-h-screen bg-bg-paper flex items-center justify-center p-6 relative overflow-hidden font-sans selection:bg-brand-primary/10" dir={dir}>
+    <div className="min-h-screen bg-bg-paper flex items-center justify-center p-3 sm:p-6 relative font-sans selection:bg-brand-primary/10" dir={dir}>
       {/* Background Image with Overlay */}
       <div className="absolute inset-0 z-0">
         <img 
@@ -203,7 +211,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         initial={{ opacity: 0, y: 40 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
-        className="w-full max-w-xl bg-white rounded-none p-12 sm:p-20 shadow-[0_40px_100px_rgba(0,0,0,0.3)] z-10 relative overflow-hidden"
+        className={`w-full max-w-xl bg-white rounded-3xl shadow-[0_40px_100px_rgba(0,0,0,0.3)] z-10 relative overflow-hidden ${role === 'admin' ? 'p-8 sm:p-16' : 'p-6 sm:p-10'}`}
       >
         {/* Decorative Texture */}
         <div className="absolute inset-0 pointer-events-none opacity-[0.04] bg-[url('https://www.transparenttextures.com/patterns/natural-paper.png')]" />
@@ -216,22 +224,22 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         ) : (
           <>
             {/* Branding Header */}
-            <div className="relative z-10 flex flex-col items-center mb-12 text-center">
+            <div className={`relative z-10 flex flex-col items-center text-center ${role === 'admin' ? 'mb-10' : 'mb-5'}`}>
               {loginRestaurantId && customRestaurant ? (
                 <>
                   {customRestaurant.logoUrl ? (
                     <img 
                       src={customRestaurant.logoUrl} 
                       alt="Restaurant Logo" 
-                      className="w-24 h-24 rounded-full object-cover border-2 border-brand-gold p-1 shadow-lg mb-6 max-h-24 max-w-24"
+                      className="w-20 h-20 rounded-full object-cover border-2 border-brand-gold p-1 shadow-lg mb-3 max-h-20 max-w-20"
                     />
                   ) : (
-                    <div className="w-24 h-24 bg-bg-paper rounded-full border-2 border-brand-gold flex items-center justify-center text-brand-primary shadow-lg mb-6">
+                    <div className="w-20 h-20 bg-bg-paper rounded-full border-2 border-brand-gold flex items-center justify-center text-brand-primary shadow-lg mb-3">
                       <img src={systemLogo} alt="" className="w-14 h-14 object-contain" />
                     </div>
                   )}
                   <p className="text-brand-gold text-[10px] font-bold uppercase tracking-widest leading-none mb-3">{tr('البوابة الأمنية المخصصة', 'Secure staff portal')}</p>
-                  <h1 className="text-4xl font-display text-brand-primary italic tracking-tight font-bold mb-2">
+                  <h1 className="text-2xl sm:text-3xl font-display text-brand-primary tracking-tight font-bold mb-1">
                     {customRestaurant.restaurantName}
                   </h1>
                   <p className="text-text-muted text-[10px] uppercase font-sans font-medium tracking-tight">{tr('نظام الموظفين والشركاء المعتمد', 'Authorized staff access')}</p>
@@ -246,13 +254,15 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             </div>
 
             {/* Login Role Tabs Selector */}
-            <div className="flex border-b border-border-delicate mb-10 relative z-10 overflow-x-auto no-scrollbar">
+            <div className={`flex border-b border-border-delicate relative z-10 overflow-x-auto no-scrollbar ${role === 'admin' ? 'mb-8' : 'mb-4'}`}>
               {currentRoles.map((r) => (
                 <button
                   type="button"
                   key={r.id}
                   onClick={() => {
                     setRole(r.id as any);
+                    setPasscode('');
+                    setError(null);
                     if (loginRestaurantId && r.id !== 'admin') selectStaffPortal(r.id, loginRestaurantId);
                   }}
                   className={`flex-1 min-w-[70px] py-4 text-sm font-bold tracking-wider transition-all relative cursor-pointer ${
@@ -267,7 +277,8 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
               ))}
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-8 relative z-10">
+            <form onSubmit={handleSubmit} className={`relative z-10 ${role === 'admin' ? 'space-y-8' : 'space-y-4'}`}>
+              {role === 'admin' ? <>
               <div className="space-y-4">
                 <label className="text-xs font-bold text-brand-gold uppercase block">{tr('اسم المستخدم / الهوية', 'Username')}</label>
                 <div className="relative group">
@@ -305,6 +316,29 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                   </button>
                 </div>
               </div>
+              </> : <div className="space-y-5">
+                <div className="text-center space-y-2">
+                  <p className="text-sm font-bold text-brand-primary">{tr('رمز الدخول المكوّن من ٤ أرقام', 'Your four-digit passcode')}</p>
+                  <p className="text-xs text-text-muted">{tr('اختر الأرقام أدناه للدخول إلى قسمك.', 'Tap the numbers below to access your workspace.')}</p>
+                </div>
+                <div className="flex justify-center gap-4" role="status" aria-label={tr(`${passcode.length} من ٤ أرقام`, `${passcode.length} of 4 digits entered`)}>
+                  {[0, 1, 2, 3].map((index) => <span key={index} className={`h-4 w-4 rounded-full border-2 border-brand-primary ${index < passcode.length ? 'bg-brand-primary' : 'bg-transparent'}`} />)}
+                </div>
+                <div className="mx-auto grid max-w-[280px] grid-cols-3 gap-3" dir="ltr">
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => (
+                    <button key={digit} type="button" disabled={loading} onClick={() => { setPasscode((current) => current.length < 4 ? current + digit : current); setError(null); }}
+                      className="h-14 sm:h-16 rounded-2xl border border-border-delicate bg-bg-paper text-2xl font-bold text-brand-primary transition-colors hover:border-brand-gold hover:bg-white active:bg-brand-primary active:text-white disabled:opacity-50">
+                      {digit}
+                    </button>
+                  ))}
+                  <span aria-hidden="true" />
+                  <button type="button" disabled={loading} onClick={() => { setPasscode((current) => current.length < 4 ? current + '0' : current); setError(null); }}
+                    className="h-14 sm:h-16 rounded-2xl border border-border-delicate bg-bg-paper text-2xl font-bold text-brand-primary transition-colors hover:border-brand-gold hover:bg-white active:bg-brand-primary active:text-white disabled:opacity-50">0</button>
+                  <button type="button" disabled={loading || passcode.length === 0} onClick={() => { setPasscode((current) => current.slice(0, -1)); setError(null); }}
+                    className="h-14 sm:h-16 rounded-2xl border border-border-delicate bg-bg-paper text-brand-primary flex items-center justify-center transition-colors hover:border-brand-gold hover:bg-white disabled:opacity-40"
+                    aria-label={tr('حذف آخر رقم', 'Delete last digit')}><Delete className="w-6 h-6" /></button>
+                </div>
+              </div>}
 
               {error && (
                 <motion.div 
@@ -320,7 +354,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
               <div className="pt-4">
                 <button
                   type="submit"
-                  disabled={loading}
+                  disabled={loading || (role !== 'admin' && passcode.length !== 4)}
                   className="w-full bg-brand-primary text-white py-5 rounded-none font-bold shadow-xl hover:bg-brand-secondary transition-all flex items-center justify-center gap-6 group overflow-hidden relative cursor-pointer"
                 >
                   <span className="relative z-10 tracking-widest font-bold text-xs uppercase">{tr('الدخول الآمن للبوابة', 'Secure sign in')}</span>
@@ -341,7 +375,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           </>
         )}
 
-        <div className="mt-16 text-center relative z-10">
+        <div className={`text-center relative z-10 ${role === 'admin' ? 'mt-12' : 'mt-6'}`}>
           <p className="text-xs text-text-muted uppercase tracking-widest italic font-medium">
              {tr('صـنـع بـأكـمـل', 'Crafted with')} <span className="text-brand-gold">{tr('أنـاقـة رقـمـيـة', 'digital elegance')}</span>
           </p>
