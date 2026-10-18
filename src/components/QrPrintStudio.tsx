@@ -34,7 +34,7 @@ function QrCard({ restaurantName, logo, url, table, design, isEnglish, showText 
     {design === 'bold' && <><path d="M0 0 H600 V186 L0 236 Z" fill={color.accent} /><path d="M0 700 L600 650 V800 H0 Z" fill={color.accent} /></>}
     <image href={logo} x="264" y="50" width="72" height="72" preserveAspectRatio="xMidYMid meet" />
     {showText && <><text x="300" y="172" fill={design === 'bold' ? '#ffffff' : color.ink} textAnchor="middle" fontFamily={font} fontWeight="700" fontSize={nameSize} direction="auto">{restaurantName}</text>
-    <text x="300" y="224" fill={design === 'bold' ? '#ffffff' : color.accent} textAnchor="middle" fontFamily={font} fontSize="22" fontWeight="700" direction="auto">{title}</text></>}
+    <text x="300" y="224" fill={design === 'bold' ? '#ffffff' : color.accent} textAnchor="middle" fontFamily={font} fontSize={table ? 38 : 22} fontWeight="700" direction="auto">{title}</text></>}
     <rect x="114" y="254" width="372" height="372" rx={design === 'minimal' ? 4 : 28} fill={color.paper} />
     <g transform="translate(150 290)">
       <QRCode value={url} size={300} level="H" bgColor={color.paper} fgColor={color.qr} />
@@ -78,7 +78,7 @@ async function drawCardText(context: CanvasRenderingContext2D, name: string, tab
     context.fillText(value, 300, y, maxWidth);
   };
   line(name, 172, name.length > 30 ? 25 : name.length > 18 ? 32 : 40, 700, design === 'bold' ? '#ffffff' : color.ink);
-  line(table ? (isEnglish ? `TABLE ${table}` : `طاولة ${table}`) : (isEnglish ? 'THE MENU' : 'القائمة'), 224, 22, 700, design === 'bold' ? '#ffffff' : color.accent);
+  line(table ? (isEnglish ? `TABLE ${table}` : `طاولة ${table}`) : (isEnglish ? 'THE MENU' : 'القائمة'), 224, table ? 38 : 22, 700, design === 'bold' ? '#ffffff' : color.accent);
   line(isEnglish ? 'Scan to explore & order' : 'امسح الرمز لتصفح القائمة والطلب', 678, 22, 500, color.ink);
   line('ORDOVA', 730, 15, 700, design === 'bold' ? '#ffffff' : color.accent);
 }

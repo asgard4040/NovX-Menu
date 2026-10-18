@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
 import { Lock, User, Eye, EyeOff, AlertCircle, ChevronRight, Delete, Languages } from 'lucide-react';
 import { supabase, supabaseConfigured } from '../lib/supabase';
@@ -22,6 +22,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loginInFlight = useRef(false);
   
   // Customized login settings
   const [loginRestaurantId, setLoginRestaurantId] = useState<string | null>(null);
@@ -66,15 +67,16 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     }
   }, []);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const signIn = async (submittedPasscode = passcode) => {
+    if (loginInFlight.current) return;
+    loginInFlight.current = true;
     setLoading(true);
     setError(null);
 
     try {
       if (!supabaseConfigured) throw new Error('client_config_missing');
       if (role !== 'admin' && !loginRestaurantId) throw new Error('restaurant_required');
-      if (role !== 'admin' && !/^[0-9]{4}$/.test(passcode)) throw new Error('invalid_passcode');
+      if (role !== 'admin' && !/^[0-9]{4}$/.test(submittedPasscode)) throw new Error('invalid_passcode');
 
       let sessionData: UserSession | null = null;
 
@@ -82,7 +84,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         const response = await fetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(role === 'admin' ? { role, username, password } : { role, passcode, restaurantId: loginRestaurantId }),
+          body: JSON.stringify(role === 'admin' ? { role, username, password } : { role, passcode: submittedPasscode, restaurantId: loginRestaurantId }),
         });
 
         if (response.headers.get('content-type')?.includes('application/json')) {
@@ -159,6 +161,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       }
     } catch (err) {
       console.error(err);
+      if (role !== 'admin') setPasscode('');
       const code = err instanceof TypeError ? 'api_unavailable' : err instanceof Error ? err.message : 'invalid_credentials';
       setError(code === 'invalid_credentials'
         ? role === 'admin' ? tr('اسم المستخدم أو كلمة المرور غير صحيحة.', 'Incorrect username or password.') : tr('رمز الدخول غير صحيح.', 'Incorrect passcode.')
@@ -180,8 +183,22 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             ? tr('استخدم رابط تسجيل الدخول الخاص بالمطعم للموظفين.', 'Staff must use the restaurant-specific login link.')
             : tr('حدث خطأ أثناء تسجيل الدخول. حاول مرة أخرى.', 'Sign-in failed. Please try again.'));
     } finally {
+      loginInFlight.current = false;
       setLoading(false);
     }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    void signIn();
+  };
+
+  const enterDigit = (digit: number) => {
+    if (loading || passcode.length >= 4) return;
+    const next = passcode + digit;
+    setPasscode(next);
+    setError(null);
+    if (next.length === 4) void signIn(next);
   };
 
   const currentRoles = loginRestaurantId && customRestaurant
@@ -337,13 +354,13 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                 </div>
                 <div className="mx-auto grid max-w-[280px] grid-cols-3 gap-3" dir="ltr">
                   {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => (
-                    <button key={digit} type="button" disabled={loading} onClick={() => { setPasscode((current) => current.length < 4 ? current + digit : current); setError(null); }}
+                    <button key={digit} type="button" disabled={loading} onClick={() => enterDigit(digit)}
                       className="h-14 sm:h-16 rounded-2xl border border-border-delicate bg-bg-paper text-2xl font-bold text-brand-primary transition-colors hover:border-brand-gold hover:bg-white active:bg-brand-primary active:text-white disabled:opacity-50">
                       {digit}
                     </button>
                   ))}
                   <span aria-hidden="true" />
-                  <button type="button" disabled={loading} onClick={() => { setPasscode((current) => current.length < 4 ? current + '0' : current); setError(null); }}
+                  <button type="button" disabled={loading} onClick={() => enterDigit(0)}
                     className="h-14 sm:h-16 rounded-2xl border border-border-delicate bg-bg-paper text-2xl font-bold text-brand-primary transition-colors hover:border-brand-gold hover:bg-white active:bg-brand-primary active:text-white disabled:opacity-50">0</button>
                   <button type="button" disabled={loading || passcode.length === 0} onClick={() => { setPasscode((current) => current.slice(0, -1)); setError(null); }}
                     className="h-14 sm:h-16 rounded-2xl border border-border-delicate bg-bg-paper text-brand-primary flex items-center justify-center transition-colors hover:border-brand-gold hover:bg-white disabled:opacity-40"
