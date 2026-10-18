@@ -17,7 +17,7 @@ const copy = {
   howText: { ar: 'تجربة بسيطة للضيف، ومعلومات تصل للفريق في وقتها.', en: 'Simple for guests. Clear and timely for the whole team.' },
   screens: { ar: 'شاهد أوردوفا أثناء العمل', en: 'See ORDOVA in Action' },
   screensText: { ar: 'تعرّف على تجربة أوردوفا الحقيقية، من لحظة مسح رمز QR على الطاولة وحتى وصول الطلب إلى المطبخ وتقديمه للزبون.', en: 'Explore the real ORDOVA experience—from scanning the table QR code to preparing and serving the customer’s order.' },
-  screenshotNotice: { ar: 'لا توجد لقطات مصدّرة في المشروع. هذه مساحات محددة للشاشات الحقيقية، وليست واجهات تجريبية.', en: 'No exported screenshots were found in the project. These are labeled slots for real captures, not fabricated interfaces.' },
+  screenshotNotice: { ar: 'الصور المتاحة ملتقطة من نظام أوردوفا الحقيقي. تظهر الشاشات غير الملتقطة كمساحات محددة بوضوح.', en: 'Available images are captured from the real ORDOVA system. Screens not yet captured remain clearly labeled.' },
   features: { ar: 'كل ما يحتاجه المطعم، في تدفق عمل واحد', en: 'One flow for the whole restaurant' },
   benefits: { ar: 'خدمة أوضح. تشغيل أكثر انسيابية.', en: 'Clearer service. Smoother operations.' },
   solutions: { ar: 'مصمم لإيقاع ضيافتك', en: 'Built around your kind of hospitality' },
@@ -70,11 +70,11 @@ function Placeholder({ item, language }: { item: Screenshot; language: Language 
 }
 
 function ScreenshotShowcase({ language }: { language: Language }) {
-  const [group, setGroup] = useState<Screenshot['group']>('customer');
+  const [group, setGroup] = useState<Screenshot['group']>('manager');
   const [index, setIndex] = useState(0);
   const [open, setOpen] = useState<Screenshot | null>(null);
   const touchX = useRef<number | null>(null);
-  const items = screenshots.filter(s => s.group === group);
+  const items = screenshots.filter(s => s.group === group).sort((a, b) => Number(Boolean(b.src)) - Number(Boolean(a.src)));
   const selected = items[Math.min(index, items.length - 1)];
   useEffect(() => {
     if (!open) return;

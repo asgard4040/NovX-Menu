@@ -10,7 +10,13 @@ export const marketingConfig = {
   canonicalUrl: 'https://ordova.cc',
   socialLinks: [] as { label: string; url: string }[],
   testimonials: [] as { quote: Bilingual; author: Bilingual; organization: Bilingual }[],
-  screenshotSources: {} as Record<string, string>, // e.g. 'menu-ar': '/marketing/screenshots/menu-ar.webp'
+  screenshotSources: {
+    'manager-menu-management': '/marketing/screenshots/owner-menu-management.png',
+    'waiter-overview': '/marketing/screenshots/waiter-dashboard.png',
+    'waiter-calls': '/marketing/screenshots/waiter-table-calls.png',
+    'waiter-create-order': '/marketing/screenshots/waiter-create-order.png',
+    'kitchen-overview': '/marketing/screenshots/kitchen-dashboard.png',
+  } as Record<string, string>,
 };
 
 export const nav = [
@@ -49,7 +55,17 @@ export const features = [
 ];
 
 export type Screenshot = { id: string; group: 'customer' | 'manager' | 'waiter' | 'kitchen'; title: Bilingual; description: Bilingual; dimensions: string; src?: string; device: 'phone' | 'desktop' | 'tablet' };
-const screen = (group: Screenshot['group'], id: string, ar: string, en: string, device: Screenshot['device'], dimensions: string): Screenshot => ({ id, group, title: { ar, en }, description: { ar: `لقطة مطلوبة من واجهة ${ar} الحقيقية، ببيانات عرض غير شخصية.`, en: `Capture the real ${en.toLowerCase()} screen with non-personal demo data.` }, device, dimensions, src: marketingConfig.screenshotSources[id] });
+const capturedDescriptions: Record<string, Bilingual> = {
+  'manager-menu-management': { ar: 'لقطة حقيقية من لوحة المالك تُظهر تنظيم الأطباق والأقسام وصورها وأسعارها.', en: 'A real owner view of dishes, categories, photos, and prices.' },
+  'waiter-overview': { ar: 'لوحة الخدمة الحقيقية تعرض ملخص الطلبات الجديدة والنداءات وأدوات التنبيه.', en: 'The real service dashboard shows new orders, table calls, and alert controls.' },
+  'waiter-calls': { ar: 'تصل طلبات المساعدة من الطاولات إلى مساحة الويتر مع نوع النداء وحالته.', en: 'Table assistance requests reach the waiter with their type and status.' },
+  'waiter-create-order': { ar: 'يستطيع الويتر اختيار الأطباق وتسجيل طلب باسم الضيف ورقم الطاولة.', en: 'Waiters can select dishes and record an order with guest and table details.' },
+  'kitchen-overview': { ar: 'واجهة المطبخ الحقيقية تلخّص الطلبات قيد التحضير والجاهزة للتقديم.', en: 'The real kitchen view summarizes preparing and ready-to-serve orders.' },
+};
+const screen = (group: Screenshot['group'], id: string, ar: string, en: string, device: Screenshot['device'], dimensions: string): Screenshot => {
+  const key = `${group}-${id}`;
+  return { id, group, title: { ar, en }, description: capturedDescriptions[key] ?? { ar: `لقطة مطلوبة من واجهة ${ar} الحقيقية، ببيانات عرض غير شخصية.`, en: `Capture the real ${en.toLowerCase()} screen with non-personal demo data.` }, device, dimensions, src: marketingConfig.screenshotSources[key] };
+};
 export const screenshots: Screenshot[] = [
   screen('customer','qr-entry','فتح المنيو عبر QR','QR entry','phone','390 × 844'),
   screen('customer','menu-ar','المنيو العربي','Arabic digital menu','phone','390 × 844'),
@@ -80,15 +96,15 @@ export const screenshots: Screenshot[] = [
   screen('manager','location','إعدادات الموقع','Restaurant location settings','desktop','1440 × 900'),
   screen('manager','gps','التحقق من GPS','GPS verification settings','desktop','1440 × 900'),
   screen('manager','branding','هوية المطعم والثيم','Branding and theme','desktop','1440 × 900'),
-  screen('waiter','overview','واجهة الويتر','Waiter dashboard','tablet','1024 × 768'),
+  screen('waiter','overview','واجهة الويتر','Waiter dashboard','tablet','1280 × 800'),
   screen('waiter','new-orders','طلبات الطاولات الجديدة','New table orders','tablet','1024 × 768'),
   screen('waiter','ready','طلبات جاهزة للتقديم','Ready-to-serve orders','tablet','1024 × 768'),
-  screen('waiter','calls','نداءات الطاولات','Table calls','tablet','1024 × 768'),
+  screen('waiter','calls','نداءات الطاولات','Table calls','tablet','1280 × 800'),
   screen('waiter','bill','طلبات الحساب','Bill requests','tablet','1024 × 768'),
   screen('waiter','assistance','طلبات المساعدة','Assistance requests','tablet','1024 × 768'),
   screen('waiter','notifications','إعدادات الإشعارات','Notification controls','tablet','1024 × 768'),
-  screen('waiter','create-order','إنشاء طلب للطاولة','Waiter-created order','tablet','1024 × 768'),
-  screen('kitchen','overview','واجهة المطبخ','Kitchen dashboard','tablet','1024 × 768'),
+  screen('waiter','create-order','إنشاء طلب للطاولة','Waiter-created order','tablet','1280 × 800'),
+  screen('kitchen','overview','واجهة المطبخ','Kitchen dashboard','tablet','1280 × 600'),
   screen('kitchen','preparing','طلبات قيد التحضير','Preparing orders','tablet','1024 × 768'),
   screen('kitchen','ready','طلبات جاهزة','Ready orders','tablet','1024 × 768'),
   screen('kitchen','order-detail','الطاولة والزبون والكميات','Table, guest, and quantities','tablet','1024 × 768'),

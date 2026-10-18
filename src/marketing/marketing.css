@@ -30,3 +30,6 @@
   .ms-hero-visual{display:none}
   .ms-hero-bottom{position:relative;z-index:1}
 }
+/* Keep captured interface labels legible in the enlarged viewer. */
+.ms-lightbox-dialog{width:min(1200px,100%);max-width:none}
+.ms-lightbox-dialog .ms-device:not(.ms-device-phone){width:min(1100px,100%)}
