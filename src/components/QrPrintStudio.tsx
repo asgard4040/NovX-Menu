@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import QRCode from 'react-qr-code';
-import { Download, Printer } from 'lucide-react';
+import { Download, Printer, Upload } from 'lucide-react';
 import { doc, updateDoc, db } from '../lib/supabase-db';
 import { DEFAULT_SYSTEM_LOGO } from '../lib/brand';
 import { useLanguage } from '../lib/i18n';
 import { menuQrUrl } from '../lib/qr-tables';
+import { persistRestaurantImage } from '../lib/storage';
 import type { Restaurant } from '../types';
 
 type QrDesign = NonNullable<Restaurant['qrDesign']>;
@@ -16,8 +17,8 @@ const palettes: Record<QrDesign, { background: string; ink: string; accent: stri
   bold: { background: '#ff6a3d', ink: '#081220', accent: '#081220', qr: '#081220', paper: '#ffffff' },
 };
 
-function QrCard({ restaurantName, logo, url, table, design, isEnglish }: {
-  restaurantName: string; logo: string; url: string; table?: number; design: QrDesign; isEnglish: boolean;
+function QrCard({ restaurantName, logo, url, table, design, isEnglish, showText = true }: {
+  restaurantName: string; logo: string; url: string; table?: number; design: QrDesign; isEnglish: boolean; showText?: boolean;
 }) {
   const color = palettes[design];
   const title = table ? (isEnglish ? `TABLE ${table}` : `طاولة ${table}`) : (isEnglish ? 'THE MENU' : 'القائمة');
@@ -32,13 +33,54 @@ function QrCard({ restaurantName, logo, url, table, design, isEnglish }: {
     {design === 'cafe' && <><path d="M0 0 H600 V176 Q300 250 0 176 Z" fill="#e8d1ad" /><circle cx="300" cy="360" r="255" fill="none" stroke="#d9bf99" strokeWidth="3" /></>}
     {design === 'bold' && <><path d="M0 0 H600 V186 L0 236 Z" fill={color.accent} /><path d="M0 700 L600 650 V800 H0 Z" fill={color.accent} /></>}
     <image href={logo} x="264" y="50" width="72" height="72" preserveAspectRatio="xMidYMid meet" />
-    <text x="300" y="172" fill={design === 'bold' ? '#ffffff' : color.ink} textAnchor="middle" fontFamily={font} fontWeight="700" fontSize={nameSize} direction="auto">{restaurantName}</text>
-    <text x="300" y="224" fill={design === 'bold' ? '#ffffff' : color.accent} textAnchor="middle" fontFamily={font} fontSize="22" fontWeight="700" letterSpacing="2">{title}</text>
+    {showText && <><text x="300" y="172" fill={design === 'bold' ? '#ffffff' : color.ink} textAnchor="middle" fontFamily={font} fontWeight="700" fontSize={nameSize} direction="auto">{restaurantName}</text>
+    <text x="300" y="224" fill={design === 'bold' ? '#ffffff' : color.accent} textAnchor="middle" fontFamily={font} fontSize="22" fontWeight="700" direction="auto">{title}</text></>}
     <rect x="114" y="254" width="372" height="372" rx={design === 'minimal' ? 4 : 28} fill={color.paper} />
-    <g transform="translate(150 290)"><QRCode value={url} size={300} bgColor={color.paper} fgColor={color.qr} /></g>
-    <text x="300" y="678" fill={color.ink} textAnchor="middle" fontFamily={font} fontSize="22" fontWeight="500" direction="auto">{subtitle}</text>
-    <text x="300" y="730" fill={design === 'bold' ? '#ffffff' : color.accent} textAnchor="middle" fontFamily={font} fontSize="15" fontWeight="700" letterSpacing="3">ORDOVA</text>
+    <g transform="translate(150 290)">
+      <QRCode value={url} size={300} level="H" bgColor={color.paper} fgColor={color.qr} />
+      <rect x="119" y="119" width="62" height="62" rx="12" fill="#ffffff" />
+      <image href={logo} x="126" y="126" width="48" height="48" preserveAspectRatio="xMidYMid meet" />
+    </g>
+    {showText && <><text x="300" y="678" fill={color.ink} textAnchor="middle" fontFamily={font} fontSize="22" fontWeight="500" direction="auto">{subtitle}</text>
+    <text x="300" y="730" fill={design === 'bold' ? '#ffffff' : color.accent} textAnchor="middle" fontFamily={font} fontSize="15" fontWeight="700" letterSpacing="3">ORDOVA</text></>}
   </svg>;
+}
+
+async function prepareLogo(file: File): Promise<string> {
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 5_000_000) throw new Error('unsupported_logo');
+  const imageUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve(); image.onerror = () => reject(new Error('unsupported_logo'));
+      image.src = imageUrl;
+    });
+    const canvas = document.createElement('canvas');
+    const scale = Math.min(1, 400 / Math.max(image.naturalWidth, image.naturalHeight));
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('canvas_unavailable');
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/png');
+  } finally { URL.revokeObjectURL(imageUrl); }
+}
+
+async function drawCardText(context: CanvasRenderingContext2D, name: string, table: number | undefined, design: QrDesign, isEnglish: boolean) {
+  try { await document.fonts.load('700 40px "IBM Plex Sans Arabic"', 'مطعم'); } catch { /* Use the browser's Arabic-capable fallback. */ }
+  const color = palettes[design];
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  const line = (value: string, y: number, size: number, weight: number, fill: string, maxWidth = 500) => {
+    context.direction = /[\u0600-\u06ff]/.test(value) ? 'rtl' : 'ltr';
+    context.font = `${weight} ${size}px "IBM Plex Sans Arabic", Arial, sans-serif`;
+    context.fillStyle = fill;
+    context.fillText(value, 300, y, maxWidth);
+  };
+  line(name, 172, name.length > 30 ? 25 : name.length > 18 ? 32 : 40, 700, design === 'bold' ? '#ffffff' : color.ink);
+  line(table ? (isEnglish ? `TABLE ${table}` : `طاولة ${table}`) : (isEnglish ? 'THE MENU' : 'القائمة'), 224, 22, 700, design === 'bold' ? '#ffffff' : color.accent);
+  line(isEnglish ? 'Scan to explore & order' : 'امسح الرمز لتصفح القائمة والطلب', 678, 22, 500, color.ink);
+  line('ORDOVA', 730, 15, 700, design === 'bold' ? '#ffffff' : color.accent);
 }
 
 async function imageDataUrl(url: string): Promise<string> {
@@ -98,6 +140,20 @@ export default function QrPrintStudio({ restaurant, onSaved }: { restaurant: Res
     } finally { setBusy(false); }
   };
 
+  const uploadLogo = async (file?: File) => {
+    if (!file) return;
+    setBusy(true); setError('');
+    try {
+      const image = await prepareLogo(file);
+      const logoUrl = await persistRestaurantImage(restaurant.id, image, 'restaurant-logo');
+      await updateDoc(doc(db, 'restaurants', restaurant.id), { logoUrl });
+      onSaved({ ...restaurant, logoUrl });
+    } catch (cause) {
+      console.error('Restaurant logo upload failed', cause);
+      setError(tr('تعذر رفع الشعار أو حفظه. استخدم صورة PNG أو JPG أو WebP بحجم أقل من ٥ ميغابايت.', 'Could not upload or save the logo. Use a PNG, JPG, or WebP image under 5 MB.'));
+    } finally { setBusy(false); }
+  };
+
   const ensureLogo = async () => logoData || await imageDataUrl(logoUrl).catch(() => imageDataUrl(DEFAULT_SYSTEM_LOGO));
 
   const downloadCard = async () => {
@@ -106,7 +162,7 @@ export default function QrPrintStudio({ restaurant, onSaved }: { restaurant: Res
       const logo = await ensureLogo();
       const { renderToStaticMarkup } = await import('react-dom/server');
       const table = tableCount > 0 ? selectedTable : undefined;
-      const svg = renderToStaticMarkup(<QrCard restaurantName={restaurant.restaurantName} logo={logo} url={menuUrl(table)} table={table} design={design} isEnglish={isEnglish} />);
+      const svg = renderToStaticMarkup(<QrCard restaurantName={restaurant.restaurantName} logo={logo} url={menuUrl(table)} table={table} design={design} isEnglish={isEnglish} showText={false} />);
       const blobUrl = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
       const image = new Image();
       await new Promise<void>((resolve, reject) => {
@@ -118,6 +174,8 @@ export default function QrPrintStudio({ restaurant, onSaved }: { restaurant: Res
       const context = canvas.getContext('2d');
       if (!context) throw new Error('canvas_unavailable');
       context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      context.scale(2, 2);
+      await drawCardText(context, restaurant.restaurantName, table, design, isEnglish);
       URL.revokeObjectURL(blobUrl);
       const link = document.createElement('a');
       const safeName = restaurant.restaurantName.replace(/[^\p{L}\p{N}-]+/gu, '-').slice(0, 40) || 'restaurant';
@@ -140,8 +198,9 @@ export default function QrPrintStudio({ restaurant, onSaved }: { restaurant: Res
       const tables = tableCount > 0 ? Array.from({ length: tableCount }, (_, index) => index + 1) : [undefined];
       const cards = tables.map((table) => `<div class="card">${renderToStaticMarkup(<QrCard restaurantName={restaurant.restaurantName} logo={logo} url={menuUrl(table)} table={table} design={design} isEnglish={isEnglish} />)}</div>`).join('');
       printWindow.document.open();
-      printWindow.document.write(`<!doctype html><html><head><title>QR cards</title><style>@page{size:A4;margin:10mm}*{box-sizing:border-box}body{margin:0}.sheet{display:grid;grid-template-columns:repeat(2,95mm);gap:0}.card{width:95mm;height:126.67mm;break-inside:avoid}.card>svg{width:100%;height:100%;display:block}</style></head><body><main class="sheet">${cards}</main></body></html>`);
+      printWindow.document.write(`<!doctype html><html><head><title>QR cards</title><style>@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;700&display=swap');@page{size:A4;margin:10mm}*{box-sizing:border-box}body{margin:0}.sheet{display:grid;grid-template-columns:repeat(2,95mm);gap:0}.card{width:95mm;height:126.67mm;break-inside:avoid}.card>svg{width:100%;height:100%;display:block}</style></head><body><main class="sheet">${cards}</main></body></html>`);
       printWindow.document.close();
+      try { await printWindow.document.fonts.load('700 40px "IBM Plex Sans Arabic"', 'مطعم'); } catch { /* Browser fallback remains available. */ }
       printWindow.focus();
       printWindow.print();
     } catch (cause) {
@@ -171,6 +230,17 @@ export default function QrPrintStudio({ restaurant, onSaved }: { restaurant: Res
             </button>)}
           </div>
         </fieldset>
+        <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-border-delicate bg-white p-4 text-sm text-brand-primary hover:border-brand-gold">
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-bg-paper">
+            {logoData ? <img src={logoData} alt="" className="h-full w-full object-contain" /> : <Upload className="h-5 w-5" />}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block font-bold">{tr('رفع شعار المطعم', 'Upload restaurant logo')}</span>
+            <span className="mt-1 block text-xs text-text-muted">{tr('يُحفظ في Supabase كشعار المطعم ويظهر في القائمة ووسط رمز QR وعلى البطاقة.', 'Saved in Supabase as the restaurant logo; shown on the menu, in the QR center, and on the card.')}</span>
+          </span>
+          <Upload className="h-5 w-5 shrink-0" aria-hidden="true" />
+          <input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} className="sr-only" onChange={(event) => { void uploadLogo(event.target.files?.[0]); event.target.value = ''; }} />
+        </label>
         <div className="flex flex-wrap items-end gap-4">
           <label className="flex-1 min-w-[180px] text-sm font-bold text-brand-primary">
             {tr('عدد الطاولات (اختياري)', 'Number of tables (optional)')}
