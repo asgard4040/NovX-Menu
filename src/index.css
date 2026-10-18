@@ -22,6 +22,12 @@
   }
 }
 
+/* Tracking utilities suit Latin headings but pull Arabic glyphs apart. */
+html[lang="ar"] body,
+html[lang="ar"] body * {
+  letter-spacing: normal;
+}
+
 .card-editorial {
   @apply bg-white border border-border-delicate shadow-[0_4px_20px_rgba(0,0,0,0.02)] transition-all duration-500 hover:shadow-[0_8px_30px_rgba(45,58,39,0.05)];
 }

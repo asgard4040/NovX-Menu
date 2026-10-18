@@ -1781,7 +1781,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                   )}
 
                   {!showCustomizer.item.hasCheese && !showCustomizer.item.isSpicy && (
-                    <p className="text-xs text-text-muted font-sans">{tr('لا تتوفر إضافات مخصصة لهذا الصنف، سيقدم كـ عادي.', 'No custom options are available for this item.')}</p>
+                    <p className="text-xs text-text-muted font-sans">{tr('لا تتوفر إضافات مخصصة لهذا الصنف، سيقدم بشكل عادي.', 'No custom options are available for this item.')}</p>
                   )}
                 </div>
 
@@ -1908,7 +1908,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                       <label className="block text-[9px] font-bold text-text-muted uppercase tracking-wider">{tr('خيارات سريعة شائعة:', 'Quick options:')}</label>
                       <div className="flex flex-wrap gap-2 justify-start">
                         {[
-                          tr('دفع وتصفية الـفـاتـورة 💳', 'Pay the bill 💳'),
+                          tr('دفع الفاتورة 💳', 'Pay the bill 💳'),
                           tr('استفسار بخصوص وجبة طعام 🍽️', 'Question about a dish 🍽️'),
                           tr('طلب نادل على الطاولة 🧑‍🍳', 'Waiter at the table 🧑‍🍳'),
                           tr('طلب ماء / مناديل إضافية 🥤', 'Water or napkins 🥤'),

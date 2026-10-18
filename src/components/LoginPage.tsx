@@ -405,7 +405,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
         <div className={`text-center relative z-10 ${role === 'admin' ? 'mt-12' : 'mt-6'}`}>
           <p className="text-xs text-text-muted uppercase tracking-widest italic font-medium">
-             {tr('صـنـع بـأكـمـل', 'Crafted with')} <span className="text-brand-gold">{tr('أنـاقـة رقـمـيـة', 'digital elegance')}</span>
+             {tr('صُنع بإتقان', 'Crafted with')} <span className="text-brand-gold">{tr('أناقة رقمية', 'digital elegance')}</span>
           </p>
         </div>
 

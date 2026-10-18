@@ -881,7 +881,7 @@ export default function RestaurantDashboard({
                   disabled={fetchingLocationGPS}
                   className="px-5 py-3 bg-white border border-brand-primary text-brand-primary text-[10px] font-bold uppercase tracking-wider hover:bg-brand-primary hover:text-white transition-all duration-300 disabled:opacity-40 rounded-none shrink-0 font-sans"
                 >
-                  {fetchingLocationGPS ? tr('جاري جلب موقعك...', 'Getting location...') : tr('تحديد موقعي الحالي بالـ GPS 📍', 'Use current GPS 📍')}
+                  {fetchingLocationGPS ? tr('جاري جلب موقعك...', 'Getting location...') : tr('تحديد موقعي عبر GPS 📍', 'Use current GPS 📍')}
                 </button>
               </div>
 
@@ -1565,7 +1565,7 @@ export default function RestaurantDashboard({
                 onClick={downloadQR}
                 className="px-10 py-5 bg-brand-primary text-white text-[11px] font-bold uppercase tracking-widest hover:bg-brand-secondary transition-all flex items-center justify-center gap-4 w-full sm:w-auto text-center cursor-pointer"
               >
-                <Download className="w-5 h-5 shrink-0" /> {tr('تحميل كود الـ QR المخصص', 'Download QR code')}
+                <Download className="w-5 h-5 shrink-0" /> {tr('تحميل رمز QR المخصص', 'Download QR code')}
               </button>
               <button
                 onClick={() =>
@@ -2030,7 +2030,7 @@ export default function RestaurantDashboard({
                                   </div>
                                 </div>
                                 <details className="mt-2 text-[10px] cursor-pointer text-text-muted font-sans font-sans">
-                                  <summary className="font-semibold hover:text-brand-primary transition-colors">{tr('عرض كود الـ User-Agent الكامل الخاص بجهاز ومذياع الطلب', 'Show full browser user agent')}</summary>
+                                  <summary className="font-semibold hover:text-brand-primary transition-colors">{tr('عرض معلومات المتصفح الكاملة لجهاز الطلب', 'Show full browser user agent')}</summary>
                                   <div className="bg-white border border-border-delicate p-2.5 mt-2 rounded font-mono break-all text-left" dir="ltr">
                                     {deviceMeta.userAgent}
                                   </div>
