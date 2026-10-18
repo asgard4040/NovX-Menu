@@ -790,13 +790,15 @@ export default function RestaurantDashboard({
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
               <StatCard
                 title={tr('المبيعات اليومية', 'Daily sales')}
-                value={`${dailyEarnings.toLocaleString()} ${tr('د.ع', 'IQD')}`}
+                value={dailyEarnings.toLocaleString()}
+                unit={tr('د.ع', 'IQD')}
                 label={tr(`بواقع ${dailyOrdersCount} طلباً اليوم`, `${dailyOrdersCount} orders today`)}
                 icon={<ClipboardList className="w-5 h-5" />}
               />
               <StatCard
                 title={tr('أرباح هذا الشهر', 'Monthly revenue')}
-                value={`${monthlyEarnings.toLocaleString()} ${tr('د.ع', 'IQD')}`}
+                value={monthlyEarnings.toLocaleString()}
+                unit={tr('د.ع', 'IQD')}
                 label={tr(`بواقع ${monthlyOrdersCount} طلباً هذا الشهر`, `${monthlyOrdersCount} orders this month`)}
                 icon={<BarChart3 className="w-5 h-5" />}
               />
@@ -2463,26 +2465,28 @@ function ThemeSettings({ restaurant, onSaved }: { restaurant: Restaurant; onSave
 function StatCard({
   title,
   value,
+  unit,
   label,
   icon,
 }: {
   title: string;
   value: number | string;
+  unit?: string;
   label: string;
   icon: React.ReactNode;
 }) {
   return (
-    <div className="bg-white border border-border-delicate p-6 sm:p-10 space-y-6 relative group overflow-hidden">
+    <div className="min-w-0 bg-white border border-border-delicate p-6 sm:p-10 space-y-6 relative group overflow-hidden">
       <div className="absolute top-0 right-0 w-1.5 h-full bg-border-delicate group-hover:bg-brand-gold transition-colors" />
       <div className="text-brand-gold opacity-40 group-hover:scale-110 transition-transform duration-500">
         {icon}
       </div>
-      <div className="space-y-1">
+      <div className="min-w-0 space-y-1">
         <p className="text-[9px] font-bold text-text-muted uppercase tracking-[0.3em]">
           {label}
         </p>
-        <p className="text-4xl sm:text-5xl font-display not-italic text-brand-primary tracking-tighter tabular-nums font-bold">
-          {value}
+        <p className="min-w-0 text-[clamp(1.875rem,2.5vw,3rem)] leading-tight font-display not-italic text-brand-primary tracking-tight tabular-nums font-bold [overflow-wrap:anywhere]">
+          <bdi>{value}</bdi>{unit && <span className="ms-2 inline-block whitespace-nowrap align-baseline text-base font-semibold tracking-normal">{unit}</span>}
         </p>
       </div>
       <p className="text-xs font-bold text-brand-gold uppercase tracking-widest">
