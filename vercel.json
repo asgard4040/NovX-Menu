@@ -1,6 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
+  "redirects": [
+    { "source": "/app", "destination": "https://menu.novx-team.com/", "permanent": false }
+  ],
   "rewrites": [
     { "source": "/api/:route*", "destination": "/api/index?route=:route*" },
     { "source": "/(.*)", "destination": "/index.html" }

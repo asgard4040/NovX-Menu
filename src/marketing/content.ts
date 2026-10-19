@@ -8,6 +8,7 @@ export const marketingConfig = {
   supportPhone: '07740064528',
   whatsapp: '9647740064528',
   canonicalUrl: 'https://ordova.cc',
+  staffLoginUrl: 'https://menu.novx-team.com/',
   socialLinks: [] as { label: string; url: string }[],
   testimonials: [] as { quote: Bilingual; author: Bilingual; organization: Bilingual }[],
   screenshotSources: {

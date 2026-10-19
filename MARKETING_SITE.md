@@ -1,6 +1,6 @@
 # ORDOVA marketing website
 
-The public marketing page is served at `/`. The existing staff application is at `/app`. Table QR links using `?restaurantId=...` and restaurant-specific staff links using `?loginRestaurantId=...` continue to open the existing product interfaces.
+The public marketing page is served at [ordova.cc](https://ordova.cc/). The staff sign-in link and `/app` route point to [menu.novx-team.com](https://menu.novx-team.com/), which remains the production management application. Table QR links and restaurant-specific staff links on the management domain continue to open the existing product interfaces.
 
 Marketing copy, phone/WhatsApp destination, social links, testimonials, FAQ answers, and screenshot inventory are maintained in [`src/marketing/content.ts`](src/marketing/content.ts). The public site components and styles are in `src/marketing/`.
 
