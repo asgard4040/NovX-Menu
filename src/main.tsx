@@ -7,14 +7,24 @@ const App = lazy(() => import('./App.tsx'));
 const MarketingSite = lazy(() => import('./marketing/MarketingSite.tsx'));
 
 const params = new URLSearchParams(window.location.search);
-const showProductApp = window.location.pathname.startsWith('/app') || params.has('restaurantId') || params.has('loginRestaurantId') || params.has('portal');
+const menuId = params.get('restaurantId');
+const staffId = params.get('loginRestaurantId');
+const destination = menuId ? 'https://menu.ordova.cc/' : staffId ? 'https://rest.ordova.cc/' : null;
+const showProductApp = window.location.pathname.startsWith('/app');
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <LanguageProvider>
-      <Suspense fallback={<div style={{ minHeight: '100vh', background: '#F8F8F6' }} />}>
-        {showProductApp ? <App /> : <MarketingSite />}
-      </Suspense>
-    </LanguageProvider>
-  </StrictMode>,
-);
+if (destination) {
+  const target = new URL(destination);
+  target.search = window.location.search;
+  target.searchParams.delete(menuId ? 'loginRestaurantId' : 'restaurantId');
+  window.location.replace(target.toString());
+} else {
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <LanguageProvider>
+        <Suspense fallback={<div style={{ minHeight: '100vh', background: '#F8F8F6' }} />}>
+          {showProductApp ? <App /> : <MarketingSite />}
+        </Suspense>
+      </LanguageProvider>
+    </StrictMode>,
+  );
+}

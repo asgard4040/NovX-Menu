@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
   "redirects": [
-    { "source": "/app", "destination": "https://menu.novx-team.com/", "permanent": false }
+    { "source": "/app", "destination": "https://rest.ordova.cc/", "permanent": false }
   ],
   "rewrites": [
     { "source": "/api/:route*", "destination": "/api/index?route=:route*" },
