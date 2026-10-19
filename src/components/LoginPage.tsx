@@ -15,7 +15,12 @@ interface LoginPageProps {
 export default function LoginPage({ onLogin }: LoginPageProps) {
   const { dir, isEnglish, setLanguage, tr } = useLanguage();
   const systemLogo = usePublicSystemLogo();
-  const [role, setRole] = useState<'admin' | 'restaurant' | 'waiter' | 'kitchen'>('admin');
+  const [role, setRole] = useState<'admin' | 'restaurant' | 'waiter' | 'kitchen'>(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.get('loginRestaurantId')) return 'admin';
+    const portal = params.get('portal');
+    return portal === 'waiter' || portal === 'kitchen' ? portal : 'restaurant';
+  });
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [passcode, setPasscode] = useState('');
@@ -25,7 +30,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   const loginInFlight = useRef(false);
   
   // Customized login settings
-  const [loginRestaurantId, setLoginRestaurantId] = useState<string | null>(null);
+  const [loginRestaurantId, setLoginRestaurantId] = useState<string | null>(() => new URLSearchParams(window.location.search).get('loginRestaurantId'));
   const [customRestaurant, setCustomRestaurant] = useState<{
     id: string;
     restaurantName: string;
@@ -210,6 +215,17 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     : ([
         { id: 'admin', label: tr('المسؤول العام', 'Administrator') }
       ] as const);
+
+  if (window.location.hostname === 'rest.ordova.cc' && !loginRestaurantId) {
+    return <main className="min-h-screen bg-bg-paper flex items-center justify-center p-6 font-sans" dir={dir}>
+      <div className="w-full max-w-md rounded-3xl border border-border-delicate bg-white p-8 text-center shadow-xl sm:p-10">
+        <img src={systemLogo} alt="" className="mx-auto mb-5 h-16 w-16 object-contain" />
+        <h1 className="text-2xl font-bold text-brand-primary">{tr('بوابة فريق المطعم', 'Restaurant team portal')}</h1>
+        <p className="mt-4 text-sm leading-7 text-text-muted">{tr('افتح رابط الدخول الخاص بمطعمك الذي وصلك من المسؤول أو المالك. يحتوي الرابط على معرف المطعم اللازم لعرض بوابة فريقك.', 'Open the restaurant-specific link given to you by the administrator or owner. It identifies the restaurant for your team portal.')}</p>
+        <a href="https://ordova.cc/" className="mt-7 inline-flex rounded-xl bg-brand-primary px-6 py-3 text-sm font-bold text-white hover:bg-brand-secondary">{tr('زيارة موقع أوردوفا', 'Visit ORDOVA')}</a>
+      </div>
+    </main>;
+  }
 
   return (
     <div className="min-h-screen bg-bg-paper flex items-center justify-center p-3 sm:p-6 relative font-sans selection:bg-brand-primary/10" dir={dir}>

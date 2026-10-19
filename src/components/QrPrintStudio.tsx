@@ -4,7 +4,7 @@ import { Download, Printer, Upload } from 'lucide-react';
 import { doc, updateDoc, db } from '../lib/supabase-db';
 import { DEFAULT_SYSTEM_LOGO } from '../lib/brand';
 import { useLanguage } from '../lib/i18n';
-import { menuQrUrl } from '../lib/qr-tables';
+import { customerMenuUrl } from '../lib/public-urls';
 import { persistRestaurantImage } from '../lib/storage';
 import type { Restaurant } from '../types';
 
@@ -107,7 +107,7 @@ export default function QrPrintStudio({ restaurant, onSaved }: { restaurant: Res
   const [error, setError] = useState('');
   const logoUrl = restaurant.logoUrl || DEFAULT_SYSTEM_LOGO;
   const validCount = Number.isInteger(tableCount) && tableCount >= 0 && tableCount <= 500;
-  const menuUrl = (table?: number) => menuQrUrl(window.location.origin, restaurant.id, table);
+  const menuUrl = (table?: number) => customerMenuUrl(restaurant.id, table);
 
   useEffect(() => {
     setDesign(restaurant.qrDesign || 'ordova');

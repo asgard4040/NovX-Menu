@@ -68,6 +68,7 @@ import { supabase } from "../lib/supabase";
 import { persistRestaurantImage } from "../lib/storage";
 import { localizeCategory, localizeDeviceType, useLanguage } from "../lib/i18n";
 import QrPrintStudio from "./QrPrintStudio";
+import { customerMenuUrl, staffPortalUrl } from '../lib/public-urls';
 
 const DEFAULT_MENU_CATEGORIES = ["الوجبات الأساسية", "المقبلات", "الحلويات", "المشروبات"];
 
@@ -1552,7 +1553,7 @@ export default function RestaurantDashboard({
               <div className="absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 border-brand-gold translate-x-4 translate-y-4" />
               <div className="w-full h-full max-w-[200px] sm:max-w-none flex items-center justify-center animate-fade-in">
                 <QRCode
-                  value={`${window.location.origin}?restaurantId=${restaurantId}`}
+                  value={customerMenuUrl(restaurantId)}
                   size={240}
                   style={{ height: "auto", maxWidth: "100%", width: "100%" }}
                   id="menu-qr"
@@ -1570,7 +1571,7 @@ export default function RestaurantDashboard({
               <button
                 onClick={() =>
                   window.open(
-                    `${window.location.origin}?restaurantId=${restaurantId}`,
+                    customerMenuUrl(restaurantId),
                     "_blank",
                   )
                 }
@@ -1597,13 +1598,13 @@ export default function RestaurantDashboard({
                 <input 
                   type="text" 
                   readOnly 
-                  value={`${window.location.origin}?loginRestaurantId=${restaurantId}`}
+                  value={staffPortalUrl(restaurantId)}
                   className="w-full sm:w-80 px-4 py-2.5 bg-white border border-border-delicate text-xs font-mono text-center focus:outline-none select-all text-brand-primary"
                 />
                 <button
                   type="button"
                   onClick={() => {
-                    navigator.clipboard.writeText(`${window.location.origin}?loginRestaurantId=${restaurantId}`);
+                    navigator.clipboard.writeText(staffPortalUrl(restaurantId));
                     setStaffLinkCopied(true);
                     setTimeout(() => setStaffLinkCopied(false), 2000);
                   }}

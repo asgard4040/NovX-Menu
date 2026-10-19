@@ -50,6 +50,7 @@ import type { MenuTheme } from './lib/themes';
 import { useLanguage } from './lib/i18n';
 import { selectStaffPortal, updateHomeScreenLink } from './lib/home-screen';
 import { BRAND_NAME, DEFAULT_SYSTEM_LOGO } from './lib/brand';
+import { staffPortalUrl } from './lib/public-urls';
 
 export default function App() {
   const { dir, isEnglish, toggleLanguage, tr } = useLanguage();
@@ -141,6 +142,16 @@ export default function App() {
 
   useEffect(() => {
     if (customerRestaurantId) return;
+    // Existing sessions on old bookmarks must not keep a staff workspace on
+    // the administrator host (or an administrator workspace on the staff host).
+    if (session?.restaurantId && session.role !== 'admin' && window.location.hostname === 'menu.novx-team.com') {
+      window.location.replace(staffPortalUrl(session.restaurantId, session.role));
+      return;
+    }
+    if (session?.role === 'admin' && window.location.hostname === 'rest.ordova.cc') {
+      window.location.replace('https://menu.novx-team.com/');
+      return;
+    }
     if (session?.restaurantId && session.role !== 'admin') {
       selectStaffPortal(session.role, session.restaurantId);
     } else if (session?.role === 'admin') {

@@ -54,6 +54,7 @@ import { persistRestaurantImage } from "../lib/storage";
 import { localizeProvince, useLanguage } from "../lib/i18n";
 import { AI_MODELS, DEFAULT_AI_MODEL, firstModelForProvider, providerForAIModel, type AIProvider } from "../lib/ai-models";
 import { DEFAULT_SYSTEM_LOGO } from "../lib/brand";
+import { customerMenuUrl, staffPortalUrl } from "../lib/public-urls";
 
 const safeFormatDate = (dateVal: any, formatStr: string, fallback: string = "---") => {
   if (!dateVal) return fallback;
@@ -673,12 +674,12 @@ export default function AdminDashboard({
                   </div>
                   <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border-delicate pt-4">
                     <div className="flex items-center gap-3">
-                      <div className="p-1 bg-white border border-border-delicate rounded-lg"><QRCode value={`${window.location.origin}?restaurantId=${res.id}`} size={54} bgColor="#ffffff" fgColor="#2D3A27" /></div>
-                      <a href={`${window.location.origin}?restaurantId=${res.id}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-bold text-brand-primary hover:underline"><ExternalLink className="w-3.5 h-3.5" />{tr('فتح المنيو', 'Open menu')}</a>
+                      <div className="p-1 bg-white border border-border-delicate rounded-lg"><QRCode value={customerMenuUrl(res.id)} size={54} bgColor="#ffffff" fgColor="#2D3A27" /></div>
+                      <a href={customerMenuUrl(res.id)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-bold text-brand-primary hover:underline"><ExternalLink className="w-3.5 h-3.5" />{tr('فتح المنيو', 'Open menu')}</a>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <button type="button" onClick={() => setEditingRestaurant(res)} className="rounded-lg bg-brand-primary text-white px-3 py-2 text-xs font-bold min-h-10">{tr('تعديل', 'Edit')}</button>
-                      <button type="button" onClick={() => { navigator.clipboard.writeText(`${window.location.origin}?loginRestaurantId=${res.id}`); setCopiedId(res.id); setTimeout(() => setCopiedId(null), 2000); }} className="rounded-lg border border-border-delicate px-3 py-2 text-xs font-bold text-brand-primary min-h-10">{copiedId === res.id ? tr('تم النسخ', 'Copied') : tr('نسخ رابط الدخول', 'Copy login link')}</button>
+                      <button type="button" onClick={() => { navigator.clipboard.writeText(staffPortalUrl(res.id)); setCopiedId(res.id); setTimeout(() => setCopiedId(null), 2000); }} className="rounded-lg border border-border-delicate px-3 py-2 text-xs font-bold text-brand-primary min-h-10">{copiedId === res.id ? tr('تم النسخ', 'Copied') : tr('نسخ رابط الدخول', 'Copy login link')}</button>
                       <button type="button" onClick={() => toggleStatus(res.id, res.status)} className="rounded-lg border border-border-delicate px-3 py-2 text-xs font-bold text-brand-primary min-h-10">{res.status === 'active' ? tr('إيقاف', 'Pause') : tr('تفعيل', 'Reactivate')}</button>
                     </div>
                   </div>
