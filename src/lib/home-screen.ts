@@ -16,7 +16,7 @@ export function updateHomeScreenLink() {
     document.title = role === 'waiter' ? 'ORDOVA Waiter' : role === 'kitchen' ? 'ORDOVA Kitchen' : 'ORDOVA Restaurant';
   } else {
     link.href = '/manifest.json';
-    document.title = 'ORDOVA Admin';
+    document.title = window.location.hostname === 'rest.ordova.cc' ? 'ORDOVA Team' : 'ORDOVA Admin';
   }
 }
 
