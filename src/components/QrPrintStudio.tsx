@@ -83,7 +83,7 @@ async function drawCardText(context: CanvasRenderingContext2D, name: string, tab
   line('ORDOVA', 730, 15, 700, design === 'bold' ? '#ffffff' : color.accent);
 }
 
-async function imageDataUrl(url: string): Promise<string> {
+export async function imageDataUrl(url: string): Promise<string> {
   const response = await fetch(url, { mode: 'cors' });
   if (!response.ok) throw new Error('logo_unavailable');
   const blob = await response.blob();

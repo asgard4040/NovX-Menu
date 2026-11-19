@@ -1,3 +1,4 @@
+import { DeliveryOrderDetails } from "./DeliveryOrderDetails";
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -384,7 +385,7 @@ export default function WaiterDashboard({
   const now = new Date().getTime();
   const expiryTime = restaurant?.endDate ? new Date(restaurant.endDate).getTime() : 0;
   const oneDay = 24 * 60 * 60 * 1000;
-  const isExpiredAndLocked = expiryTime > 0 && (now - expiryTime > 3 * oneDay);
+  const isExpiredAndLocked = expiryTime <= 0 || now >= expiryTime + (restaurant?.gracePeriodDays ?? 0) * oneDay;
   const isSuspended = restaurant?.status === "suspended";
 
   if (isExpiredAndLocked || isSuspended) {
@@ -396,7 +397,7 @@ export default function WaiterDashboard({
         <div className="space-y-4 max-w-lg">
           <h2 className="text-3xl font-display text-red-700 font-bold">{tr('تنبيه: انتهت صلاحية الاشتراك بالنظام!', 'Subscription expired')}</h2>
           <p className="text-sm text-text-muted leading-relaxed font-sans">
-            {tr('لقد تم إيقاف الخدمة مؤقتًا بسبب انتهاء فترة الاشتراك والمهلة الإضافية المحددة للمطعم. يرجى التواصل مع الإدارة من أجل تجديد الخدمة.', 'Service is temporarily unavailable. Please contact management to renew the restaurant subscription.')}
+            {tr('انتهى اشتراك المطعم. يرجى التواصل مع الإدارة لتجديد الخدمة.', 'The restaurant subscription has ended. Please contact management to renew it.')}
           </p>
           <div className="bg-red-50 p-6 rounded-xl border border-red-100 text-center font-display space-y-2">
             <p className="text-xs text-red-800 font-bold">{tr('يرجى من الإدارة الاتصال بالدعم الفني للتجديد الفوري وتفعيل اللوحة:', 'Technical support:')}</p>
@@ -408,7 +409,7 @@ export default function WaiterDashboard({
   }
 
   return (
-    <div className="space-y-8 lg:space-y-12 pb-24 lg:pb-0" dir={dir}>
+    <div className="dashboard-surface space-y-6 pb-24 lg:pb-0" dir={dir}>
       {view === "dashboard" && (
         <StaffWelcomeCard
           logoUrl={restaurant?.logoUrl || systemLogo || '/ordova-mark.png'}
@@ -781,17 +782,14 @@ export default function WaiterDashboard({
       )}
 
       {view === "dashboard" && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         {/* Urgent: Ready for Delivery */}
-        <div className="lg:col-span-2 space-y-10">
-          <div className="flex items-center gap-4 border-b border-border-delicate pb-4">
-            <div className="h-0.5 w-12 bg-emerald-500" />
-            <h2 className="text-sm font-bold text-brand-primary uppercase tracking-widest">
-              {tr('طلبات جاهزة للتوصيل للزبائن فوراً', 'Ready for table service')}
-            </h2>
+        <div className="workflow-panel workflow-panel-ready space-y-5 lg:col-span-2">
+          <div className="flex items-center justify-between gap-3 border-b border-border-delicate pb-4">
+            <div><h2 className="text-lg font-bold text-brand-primary">{tr('جاهزة للتقديم الآن', 'Ready to serve now')}</h2><p className="mt-1 text-xs text-text-muted">{tr('أوصلها للطاولة ثم أكد التقديم.', 'Take these to the table, then mark served.')}</p></div><span className="rounded-lg bg-emerald-50 px-3 py-1 text-sm font-bold text-emerald-800">{readyOrders.length}</span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <AnimatePresence mode="popLayout">
               {readyOrders.map((order) => (
                 <WaiterOrderCard
@@ -806,8 +804,8 @@ export default function WaiterDashboard({
             </AnimatePresence>
           </div>
           {readyOrders.length === 0 && (
-            <div className="py-20 text-center bg-bg-paper border border-dashed border-border-delicate">
-              <p className="font-display italic text-2xl text-brand-gold opacity-30">
+            <div className="rounded-xl border border-dashed border-border-delicate bg-bg-paper py-10 text-center">
+              <p className="text-sm text-text-muted">
                 {tr('لا توجد طلبات جاهزة بانتظار تقديمها للطاولات حالياً.', 'No orders are ready for service.')}
               </p>
             </div>
@@ -815,15 +813,12 @@ export default function WaiterDashboard({
         </div>
 
         {/* Pending Section */}
-        <div className="space-y-10">
-          <div className="flex items-center gap-4 border-b border-border-delicate pb-4">
-            <div className="h-0.5 w-12 bg-brand-primary" />
-            <h2 className="text-sm font-bold text-brand-primary uppercase tracking-widest">
-              {tr('الطلبات الجديدة المعلقة من الطاولات', 'New table orders')}
-            </h2>
+        <div className="workflow-panel space-y-5">
+          <div className="flex items-center justify-between gap-3 border-b border-border-delicate pb-4">
+            <div><h2 className="text-lg font-bold text-brand-primary">{tr('طلبات جديدة', 'New orders')}</h2><p className="mt-1 text-xs text-text-muted">{tr('راجع الطلب وأرسله للمطبخ.', 'Review and send these to the kitchen.')}</p></div><span className="rounded-lg bg-blue-50 px-3 py-1 text-sm font-bold text-blue-800">{pendingOrders.length}</span>
           </div>
 
-          <div className="space-y-8">
+          <div className="space-y-3">
             <AnimatePresence mode="popLayout">
               {pendingOrders.map((order) => (
                 <WaiterOrderCard
@@ -837,8 +832,8 @@ export default function WaiterDashboard({
               ))}
             </AnimatePresence>
             {pendingOrders.length === 0 && (
-              <div className="py-20 text-center bg-bg-paper border border-dashed border-border-delicate">
-                <p className="font-display italic text-xl text-brand-gold opacity-30 text-center px-10 leading-relaxed">
+              <div className="rounded-xl border border-dashed border-border-delicate bg-bg-paper py-10 text-center">
+                <p className="px-5 text-sm text-text-muted">
                   {tr('قائمة الطلبات الجديدة فارغة الآن.', 'No new orders.')}
                 </p>
               </div>
@@ -847,15 +842,12 @@ export default function WaiterDashboard({
         </div>
 
         {/* Preparing Section */}
-        <div className="space-y-10">
-          <div className="flex items-center gap-4 border-b border-border-delicate pb-4">
-            <div className="h-0.5 w-12 bg-brand-gold" />
-            <h2 className="text-sm font-bold text-brand-primary uppercase tracking-widest">
-              {tr('طلبات قيد التحضير والطهي في المطبخ', 'Orders being prepared')}
-            </h2>
+        <div className="workflow-panel space-y-5">
+          <div className="flex items-center justify-between gap-3 border-b border-border-delicate pb-4">
+            <div><h2 className="text-lg font-bold text-brand-primary">{tr('قيد التحضير', 'Preparing')}</h2><p className="mt-1 text-xs text-text-muted">{tr('المطبخ يعمل عليها؛ ستنتقل إلى الجاهز تلقائياً.', 'The kitchen is working; these will move to ready.')}</p></div><span className="rounded-lg bg-amber-50 px-3 py-1 text-sm font-bold text-amber-800">{preparingOrders.length}</span>
           </div>
 
-          <div className="space-y-8">
+          <div className="space-y-3">
             <AnimatePresence mode="popLayout">
               {preparingOrders.map((order) => (
                 <WaiterOrderCard
@@ -869,8 +861,8 @@ export default function WaiterDashboard({
               ))}
             </AnimatePresence>
             {preparingOrders.length === 0 && (
-              <div className="py-20 text-center bg-bg-paper border border-dashed border-border-delicate">
-                <p className="font-display italic text-xl text-brand-gold opacity-30 text-center px-10 leading-relaxed">
+              <div className="rounded-xl border border-dashed border-border-delicate bg-bg-paper py-10 text-center">
+                <p className="px-5 text-sm text-text-muted">
                    {tr('لا توجد طلبات قيد التحضير حالياً.', 'No orders are being prepared.')}
                 </p>
               </div>
@@ -1144,56 +1136,44 @@ function WaiterOrderCard({
       initial={{ opacity: 0, scale: 0.98 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      className="bg-white border border-border-delicate p-5 sm:p-10 space-y-6 sm:space-y-8 group transition-all duration-500 hover:shadow-2xl relative"
+      className="group relative space-y-4 overflow-hidden rounded-2xl border border-border-delicate bg-white p-5 shadow-sm transition-all duration-300 hover:border-brand-gold hover:shadow-lg sm:p-6"
     >
       <div
         className={`absolute top-0 right-0 w-1.5 h-full ${type === "pending" ? "bg-brand-primary" : type === "preparing" ? "bg-brand-gold" : "bg-emerald-500"}`}
       />
 
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-1">
-          <h3 className="font-display text-xl sm:text-2xl italic text-brand-primary tracking-tight">
-            {tr('طاولة', 'Table')} <span className="not-italic inline-block font-sans font-bold">{order.tableNumber}</span>{" "}
-            <span className="text-text-muted opacity-40 font-bold ml-2">
-              / {order.customerName}
-            </span>
-          </h3>
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 text-[9px] font-bold text-brand-gold uppercase tracking-[0.3em]">
+          <span className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ${type === 'pending' ? 'bg-blue-50 text-blue-800' : type === 'preparing' ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'}`}>{type === 'pending' ? tr('طلب جديد · يحتاج إرسال', 'New · send to kitchen') : type === 'preparing' ? tr('قيد التحضير في المطبخ', 'Preparing in kitchen') : tr('جاهز · يحتاج تقديم', 'Ready · serve now')}</span>
+          <h3 className="pt-1 text-2xl font-bold text-brand-primary">{order.deviceMetadata?.source === 'whatsapp' ? (order.deviceMetadata.fulfillment === 'delivery' ? tr('واتساب · توصيل', 'WhatsApp · Delivery') : tr('واتساب · استلام', 'WhatsApp · Pickup')) : tr('طاولة', 'Table') + ' ' + order.tableNumber}</h3>
+          <p className="text-sm text-text-muted">{order.customerName}</p>
+          <div className="flex flex-wrap items-center gap-3 pt-1 text-xs font-semibold text-text-muted">
             <span className="flex items-center gap-2">
-              <Timer className="w-3 h-3" />{" "}
-              <span className="not-italic inline-block font-sans">{safeFormatDate(order.createdAt, "hh:mm a")}</span>
+              <Timer className="h-4 w-4" />{safeFormatDate(order.createdAt, "hh:mm a")}
             </span>
-            <span className="text-text-muted/40 hidden sm:inline">|</span>
-            <span className="text-text-muted/40 flex items-center gap-1.5">
-              {tr('رقم الطلب:', 'Order:')} <span className="text-brand-gold font-sans font-bold text-xs bg-brand-gold/10 px-2 py-0.5 rounded">{order.orderNumber || `#${order.id.slice(-6).toUpperCase()}`}</span>
-            </span>
+            <span>{tr('طلب رقم', 'Order')} <b className="text-brand-primary">{order.orderNumber || `#${order.id.slice(-6).toUpperCase()}`}</b></span>
           </div>
         </div>
-        <div className="text-right sm:text-left w-full sm:w-auto border-t border-border-delicate/40 sm:border-t-0 pt-3 sm:pt-0">
-          <p className="text-xl font-display not-italic text-brand-primary">
-            <span className="font-sans font-bold">{order.totalAmount.toLocaleString()}</span>{" "}
-            <span className="text-[10px] font-bold opacity-40 uppercase">
-              {tr('د.ع', 'IQD')}
-            </span>
-          </p>
+        <div className="rounded-xl bg-bg-paper px-3 py-2 text-sm font-bold text-brand-primary">{order.totalAmount.toLocaleString()} {tr('د.ع', 'IQD')}</div>
         </div>
-      </div>
 
-      <div className="space-y-4 border-y border-border-delicate py-6 sm:py-8 bg-bg-paper -mx-5 px-5 sm:-mx-10 sm:px-10 text-right">
+      <DeliveryOrderDetails order={order} />
+
+      <div className="space-y-2 rounded-xl bg-bg-paper p-4 text-right">
         {order.items.map((item, i) => (
           <div
             key={i}
-            className="flex flex-col border-b border-border-delicate/20 pb-2 last:border-b-0"
+            className="flex flex-col border-b border-border-delicate/60 pb-2 last:border-b-0 last:pb-0"
           >
-            <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest text-text-muted">
-              <div className="flex items-center gap-4">
-                <span className="text-brand-gold italic"><span className="not-italic font-sans font-bold">{item.quantity}</span>×</span>
-                <span className="text-brand-primary">{item.name}</span>
+            <div className="flex items-start justify-between gap-3 text-sm">
+              <div className="flex min-w-0 items-start gap-2">
+                <span className="shrink-0 rounded-md bg-white px-2 py-0.5 font-bold text-brand-primary">{item.quantity}×</span>
+                <span className="font-semibold text-brand-primary">{item.name}</span>
               </div>
-              <span className="font-sans text-brand-gold">{(item.price * item.quantity).toLocaleString()} {tr('د.ع', 'IQD')}</span>
+              <span className="shrink-0 text-xs font-semibold text-text-muted">{(item.price * item.quantity).toLocaleString()} {tr('د.ع', 'IQD')}</span>
             </div>
             {item.customizationText && (
-              <span className="text-[9px] text-brand-gold font-bold mt-1 block">
+              <span className="mt-1 block text-xs font-semibold text-amber-800">
                 ✨ {tr('الخيارات:', 'Options:')} {item.customizationText}
               </span>
             )}
@@ -1202,7 +1182,9 @@ function WaiterOrderCard({
       </div>
 
       {/* Customer Distance details (Requirement 2) */}
-      <div className="bg-slate-50 border border-slate-100 p-3.5 flex flex-col gap-1 text-right text-xs">
+      <details className="rounded-xl border border-border-delicate bg-slate-50 p-3.5 text-right text-xs">
+        <summary className="cursor-pointer font-bold text-text-muted">{tr('تفاصيل جهاز الزبون وموقعه', 'Customer device and location details')}</summary>
+        <div className="mt-3 flex flex-col gap-1">
         <div className="flex items-center justify-between text-[10px]">
           <span className="font-bold text-brand-gold uppercase tracking-wider">📍 {tr('معلومات جهاز ومسافة الزبون', 'Customer location')}</span>
           <span className="font-bold text-brand-primary">{tr('البصمة:', 'Fingerprint:')} <span className="font-mono select-all">{order.deviceMetadata?.fingerprint?.slice(0, 10) || tr('لا توجد (ويتر)', 'Staff order')}</span></span>
@@ -1224,16 +1206,17 @@ function WaiterOrderCard({
             {tr('الجهاز:', 'Device:')} {localizeDeviceType(order.deviceMetadata.deviceType, language)} | {order.deviceMetadata.language}
           </p>
         )}
-      </div>
+        </div>
+      </details>
 
       {order.notes && (
-        <div className="p-4 sm:p-6 bg-red-50 border border-red-100 flex items-start gap-4 italic text-right">
+        <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-right">
           <Bell className="w-5 h-5 text-red-400 shrink-0" />
           <div className="space-y-1">
-            <p className="text-[9px] font-bold text-red-600 uppercase tracking-widest">
+            <p className="text-xs font-bold text-amber-900">
               {tr('توجيه خاص من الزبون', 'Customer note')}
             </p>
-            <p className="text-xs text-red-900/80 leading-relaxed font-bold">
+            <p className="text-sm font-semibold leading-relaxed text-amber-950">
               {order.notes}
             </p>
           </div>
@@ -1243,14 +1226,14 @@ function WaiterOrderCard({
       <div className="space-y-2">
         {isPreparing ? (
           <div className="space-y-3">
-            <div className="w-full py-5 sm:py-6 border border-border-delicate bg-bg-paper text-brand-gold/40 text-[9px] font-bold uppercase tracking-[0.5em] flex items-center justify-center gap-4">
+            <div className="flex w-full items-center justify-center gap-3 rounded-xl border border-amber-100 bg-amber-50 px-4 py-4 text-sm font-bold text-amber-900">
               <Clock className="w-4 h-4 animate-spin" />
               {tr('جاري تحضير وطهي الطلب بالمطبخ...', 'The kitchen is preparing this order...')}
             </div>
             <button
               type="button"
               onClick={onReject}
-              className="w-full py-3 border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-colors text-xs font-bold flex items-center justify-center gap-2"
+              className="flex min-h-10 w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 text-xs font-bold text-red-700 hover:bg-red-100"
             >
               {tr('رفض وإلغاء هذا الطلب', 'Reject order')}
             </button>
@@ -1259,7 +1242,7 @@ function WaiterOrderCard({
           <div className="flex flex-col sm:flex-row gap-3">
             <button
               onClick={onAction}
-              className={`flex-1 py-4 sm:py-5 text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-xl text-white ${
+              className={`flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-white transition-colors ${
                 type === "pending"
                   ? "bg-brand-primary hover:bg-brand-secondary"
                   : "bg-emerald-500 hover:bg-emerald-600"
@@ -1273,7 +1256,7 @@ function WaiterOrderCard({
             <button
               type="button"
               onClick={onReject}
-              className="py-4 sm:py-5 px-6 border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-colors text-xs font-bold flex items-center justify-center gap-2"
+              className="flex min-h-12 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 text-xs font-bold text-red-700 hover:bg-red-100"
             >
               {tr('رفض الطلب', 'Reject')}
             </button>
@@ -1284,7 +1267,7 @@ function WaiterOrderCard({
           <button
             type="button"
             onClick={onBan}
-            className="w-full py-3 bg-red-600 text-white font-bold text-[10px] tracking-widest uppercase hover:bg-red-700 transition-all flex items-center justify-center gap-2"
+            className="flex min-h-10 w-full items-center justify-center gap-2 rounded-xl border border-red-100 bg-red-50 px-3 text-xs font-bold text-red-700 hover:bg-red-100"
           >
             🚫 {tr('حظر جهاز هذا الزبون ومنعه من الخدمة الرقمية', 'Block this customer device')}
           </button>

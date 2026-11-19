@@ -1,28 +1,22 @@
-import type { Request, Response } from "express";
+import express from "express";
 import app from "../server.js";
 
-// Vercel sends every /api/* request here. Restore the public path for the
-// existing Express router; keep the original query string for tracking tokens.
-export default function handler(req: Request, res: Response) {
-  // If the request body was already parsed by the serverless runtime (e.g. Vercel),
-  // flag it for body-parser so Express does not hang waiting on an already-consumed stream.
-  if ((req as any).body !== undefined && !(req as any)._body) {
-    (req as any)._body = true;
-  }
+const api = express();
 
+// Expose an Express listener so the Node runtime leaves the webhook bytes in
+// the request stream. Only the target Express routes parse the body.
+api.use((req, res) => {
   const url = new URL(req.url || "/", "http://localhost");
   const rawRoute = req.query?.route ?? url.searchParams.get("route");
-
   if (rawRoute !== undefined && rawRoute !== null && rawRoute !== "") {
     const segments = Array.isArray(rawRoute)
-      ? rawRoute.flatMap((s) => String(s).split("/"))
+      ? rawRoute.flatMap(segment => String(segment).split("/"))
       : String(rawRoute).split("/");
     const cleanSegments = segments.filter(Boolean);
-
     if (cleanSegments.includes("..")) {
-      return res.status(404).json({ error: "not_found" });
+      res.status(404).json({ error: "not_found" });
+      return;
     }
-
     url.searchParams.delete("route");
     const search = url.searchParams.toString();
     req.url = `/api/${cleanSegments.join("/")}${search ? `?${search}` : ""}`;
@@ -31,16 +25,7 @@ export default function handler(req: Request, res: Response) {
     const search = url.searchParams.toString();
     req.url = `/api/${pathname}${search ? `?${search}` : ""}`;
   }
+  app(req, res);
+});
 
-  return new Promise<void>((resolve, reject) => {
-    if (res.writableEnded) {
-      resolve();
-      return;
-    }
-    res.on("finish", () => resolve());
-    res.on("close", () => resolve());
-    res.on("error", (err) => reject(err));
-    app(req, res);
-  });
-}
-
+export default api;

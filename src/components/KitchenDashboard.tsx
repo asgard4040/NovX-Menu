@@ -163,7 +163,7 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
   const now = new Date().getTime();
   const expiryTime = restaurant?.endDate ? new Date(restaurant.endDate).getTime() : 0;
   const oneDay = 24 * 60 * 60 * 1000;
-  const isExpiredAndLocked = expiryTime > 0 && (now - expiryTime > 3 * oneDay);
+  const isExpiredAndLocked = expiryTime <= 0 || now >= expiryTime + (restaurant?.gracePeriodDays ?? 0) * oneDay;
   const isSuspended = restaurant?.status === "suspended";
 
   if (isExpiredAndLocked || isSuspended) {
@@ -175,7 +175,7 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
         <div className="space-y-4 max-w-lg">
           <h2 className="text-3xl font-display text-red-700 font-bold">{tr('تنبيه: انتهت صلاحية الاشتراك بالنظام!', 'Subscription expired')}</h2>
           <p className="text-sm text-text-muted leading-relaxed font-sans">
-            {tr('لقد تم إيقاف الخدمة مؤقتًا بسبب انتهاء فترة الاشتراك والمهلة الإضافية المحددة للمطعم. يرجى التواصل مع الإدارة من أجل تجديد الخدمة.', 'Service is temporarily unavailable. Please contact management to renew the restaurant subscription.')}
+            {tr('انتهى اشتراك المطعم. يرجى التواصل مع الإدارة لتجديد الخدمة.', 'The restaurant subscription has ended. Please contact management to renew it.')}
           </p>
           <div className="bg-red-50 p-6 rounded-xl border border-red-100 text-center font-display space-y-2">
             <p className="text-xs text-red-800 font-bold">{tr('يرجى من الإدارة الاتصال بالدعم الفني للتجديد الفوري وتفعيل اللوحة:', 'Technical support:')}</p>
@@ -187,7 +187,7 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
   }
 
   return (
-    <div className="space-y-8 lg:space-y-12 pb-24 lg:pb-0" dir={dir}>
+    <div className="dashboard-surface space-y-6 pb-24 lg:pb-0" dir={dir}>
       <div className={mobileView === 'preparing' ? '' : 'hidden xl:block'}>
         <StaffWelcomeCard
           logoUrl={restaurant?.logoUrl || systemLogo || '/ordova-mark.png'}
@@ -238,15 +238,14 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
               {notificationTestMessage && <p role="status" className="w-full text-xs text-text-muted">{notificationTestMessage}</p>}
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-12">
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
         {/* Preparing Column */}
-        <div className={`${mobileView === 'preparing' ? 'block' : 'hidden'} xl:block space-y-10`}>
-           <div className="flex items-center gap-4 border-b border-border-delicate pb-4">
-              <div className="h-0.5 w-12 bg-brand-gold" />
-               <h2 className="text-sm font-bold text-brand-primary uppercase tracking-widest">{tr('طلبات قيد الطهي والتحضير', 'Preparing orders')}</h2>
+        <div className={`${mobileView === 'preparing' ? 'block' : 'hidden'} workflow-panel space-y-5 xl:block`}>
+           <div className="flex items-center justify-between gap-3 border-b border-border-delicate pb-4">
+               <div><h2 className="text-lg font-bold text-brand-primary">{tr('قيد التحضير', 'Preparing orders')}</h2><p className="mt-1 text-xs text-text-muted">{tr('راجع الأصناف والملاحظات ثم أكد الجاهزية.', 'Check items and notes, then mark ready.')}</p></div><span className="rounded-lg bg-amber-50 px-3 py-1 text-sm font-bold text-amber-800">{preparingOrders.length}</span>
             </div>
             
-            <div className="space-y-8">
+            <div className="space-y-3">
                <AnimatePresence mode="popLayout">
                  {preparingOrders.map((order) => (
                    <KitchenOrderCard 
@@ -264,13 +263,12 @@ export default function KitchenDashboard({ restaurantId }: KitchenDashboardProps
         </div>
 
         {/* Ready Column */}
-        <div className={`${mobileView === 'ready' ? 'block' : 'hidden'} xl:block space-y-10`}>
-           <div className="flex items-center gap-4 border-b border-border-delicate pb-4">
-              <div className="h-0.5 w-12 bg-emerald-500" />
-               <h2 className="text-sm font-bold text-brand-primary uppercase tracking-widest">{tr('أطباق جاهزة للتقديم فوراً', 'Ready for service')}</h2>
+        <div className={`${mobileView === 'ready' ? 'block' : 'hidden'} workflow-panel workflow-panel-ready space-y-5 xl:block`}>
+           <div className="flex items-center justify-between gap-3 border-b border-border-delicate pb-4">
+               <div><h2 className="text-lg font-bold text-brand-primary">{tr('جاهزة للتقديم', 'Ready for service')}</h2><p className="mt-1 text-xs text-text-muted">{tr('بانتظار الويتر. أعدها للتحضير إذا لزم تعديلها.', 'Waiting for waiter service. Return if changes are needed.')}</p></div><span className="rounded-lg bg-emerald-50 px-3 py-1 text-sm font-bold text-emerald-800">{readyOrders.length}</span>
             </div>
             
-            <div className="space-y-8">
+            <div className="space-y-3">
                <AnimatePresence mode="popLayout">
                   {readyOrders.map((order) => (
                      <KitchenOrderCard 
@@ -336,42 +334,38 @@ function KitchenOrderCard({
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      className="bg-white border border-border-delicate p-5 sm:p-10 space-y-8 group hover:border-brand-gold transition-colors duration-500 relative"
+      className="group relative space-y-4 overflow-hidden rounded-2xl border border-border-delicate bg-white p-5 shadow-sm transition-colors hover:border-brand-gold sm:p-6"
     >
       <div className={`absolute top-0 right-0 w-1.5 h-full ${type === 'preparing' ? 'bg-brand-gold' : 'bg-emerald-500'}`} />
       
-      <div className="flex justify-between items-start">
+      <div className="flex flex-wrap items-start justify-between gap-3">
          <div className="space-y-1">
-            <h3 className="font-display text-xl sm:text-2xl italic text-brand-primary tracking-tight">{tr('طاولة', 'Table')} <span className="not-italic inline-block font-sans font-bold">{order.tableNumber}</span> <span className="text-text-muted opacity-40 font-bold ml-2">/ {order.customerName}</span></h3>
-            <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 text-[9px] font-bold text-brand-gold uppercase tracking-[0.3em]">
-               <span className="flex items-center gap-2"><Timer className="w-3 h-3" /> <span className="not-italic inline-block font-sans">{safeFormatDate(order.createdAt, 'hh:mm a')}</span></span>
-               <span className="text-text-muted/40 hidden sm:inline">|</span>
-               <span className="text-text-muted/40 flex items-center gap-1.5">
-                  {tr('رقم الطلب:', 'Order:')} <span className="text-brand-gold font-sans font-bold text-xs bg-brand-gold/10 px-2 py-0.5 rounded">{order.orderNumber || `#${order.id.slice(-6).toUpperCase()}`}</span>
-               </span>
+            <span className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ${type === 'preparing' ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'}`}>{type === 'preparing' ? tr('قيد التحضير · أكمل الأصناف', 'Preparing · finish the items') : tr('جاهز للتقديم', 'Ready for service')}</span>
+            <h3 className="pt-1 text-2xl font-bold text-brand-primary">{order.deviceMetadata?.source === 'whatsapp' ? (order.deviceMetadata.fulfillment === 'delivery' ? tr('واتساب · توصيل', 'WhatsApp · Delivery') : tr('واتساب · استلام', 'WhatsApp · Pickup')) : tr('طاولة', 'Table') + ' ' + order.tableNumber}</h3>
+            <p className="text-sm text-text-muted">{order.customerName}</p>
+            <div className="flex flex-wrap items-center gap-3 pt-1 text-xs font-semibold text-text-muted">
+               <span className="flex items-center gap-2"><Timer className="h-4 w-4" />{safeFormatDate(order.createdAt, 'hh:mm a')}</span>
+               <span>{tr('طلب رقم', 'Order')} <b className="text-brand-primary">{order.orderNumber || `#${order.id.slice(-6).toUpperCase()}`}</b></span>
             </div>
          </div>
+         <div className="rounded-xl bg-bg-paper px-3 py-2 text-sm font-bold text-brand-primary">{order.items.reduce((sum, item) => sum + item.quantity, 0)} {tr('قطعة', 'items')}</div>
       </div>
 
-      <div className="space-y-4 border-y border-border-delicate py-6 sm:py-8 bg-bg-paper -mx-5 px-5 sm:-mx-10 sm:px-10">
+      <div className="space-y-2 rounded-xl bg-bg-paper p-4">
          {order.items.map((item, i) => (
-           <div key={i} className="flex items-center justify-between group/item">
-              <div className="flex items-center gap-4">
-                 <div className="min-w-[36px] sm:min-w-[40px] h-9 sm:h-10 border border-border-delicate bg-white flex items-center justify-center font-display not-italic text-brand-gold font-bold">
-                    {item.quantity}
-                 </div>
-                 <span className="font-display italic text-base sm:text-lg text-brand-primary">{item.name}</span>
-              </div>
+           <div key={i} className="border-b border-border-delicate/60 pb-2 last:border-b-0 last:pb-0">
+              <div className="flex items-start gap-3"><span className="flex h-9 min-w-9 items-center justify-center rounded-lg bg-white px-2 text-sm font-bold text-brand-primary">{item.quantity}×</span><span className="pt-1 text-base font-semibold text-brand-primary">{item.name}</span></div>
+              {item.customizationText && <p className="mt-1 ps-12 text-xs font-semibold text-amber-800">{tr('الخيارات:', 'Options:')} {item.customizationText}</p>}
            </div>
          ))}
       </div>
 
       {order.notes && (
-        <div className="p-4 sm:p-6 bg-red-50 border border-red-100 flex items-start gap-4 italic">
+        <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
            <Bell className="w-5 h-5 text-red-400 shrink-0" />
            <div>
-              <p className="text-[9px] font-bold text-red-600 uppercase tracking-widest mb-1">{tr('توجيهات خاصة وجانبية', 'Special instructions')}</p>
-              <p className="text-sm font-bold text-red-900/80 leading-relaxed">{order.notes}</p>
+              <p className="mb-1 text-xs font-bold text-amber-900">{tr('ملاحظة الزبون', 'Customer note')}</p>
+              <p className="text-sm font-semibold leading-relaxed text-amber-950">{order.notes}</p>
            </div>
         </div>
       )}
@@ -379,10 +373,10 @@ function KitchenOrderCard({
       <div className="flex flex-col sm:flex-row gap-3">
         <button
           onClick={onAction}
-          className={`flex-grow py-5 sm:py-6 text-[10px] font-bold uppercase tracking-[0.4em] transition-all flex items-center justify-center gap-4 shadow-xl ${
+          className={`flex min-h-12 flex-grow items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition-colors ${
             type === 'preparing'
             ? 'bg-brand-primary text-white hover:bg-brand-secondary'
-            : 'bg-white border border-border-delicate text-text-muted hover:bg-bg-paper'
+            : 'border border-border-delicate bg-white text-brand-primary hover:bg-bg-paper'
           }`}
         >
            {type === 'preparing' ? <CheckCircle2 className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
@@ -392,7 +386,7 @@ function KitchenOrderCard({
           <button
             type="button"
             onClick={onReject}
-            className="py-5 sm:py-6 px-6 border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-colors text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2"
+            className="flex min-h-12 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 text-xs font-bold text-red-700 hover:bg-red-100"
           >
             {tr('رفض الطلب', 'Reject order')}
           </button>
@@ -404,9 +398,9 @@ function KitchenOrderCard({
 
 function EmptyState({ icon, text }: { icon: React.ReactNode, text: string }) {
   return (
-    <div className="py-24 bg-bg-paper border border-dashed border-border-delicate flex flex-col items-center justify-center text-text-muted/40 gap-6 grayscale">
-       <div className="opacity-20">{icon}</div>
-       <p className="text-[10px] font-bold uppercase tracking-[0.4em] text-center px-10">{text}</p>
+    <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border-delicate bg-bg-paper py-10 text-text-muted">
+       <div className="opacity-50">{icon}</div>
+       <p className="px-5 text-center text-sm font-medium">{text}</p>
     </div>
   );
 }

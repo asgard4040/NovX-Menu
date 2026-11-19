@@ -29,5 +29,7 @@ test('viewable codes are authenticated-encrypted, not stored as plaintext', () =
   assert.notEqual(first, second);
   assert.equal(decryptPasscode(first, key), '0123');
   assert.ok(!first.includes('0123'));
-  assert.throws(() => decryptPasscode(first.slice(0, -2) + 'aa', key));
+  const [iv, tag, ciphertext] = first.split('.');
+  const tampered = `${iv}.${tag[0] === 'A' ? 'B' : 'A'}${tag.slice(1)}.${ciphertext}`;
+  assert.throws(() => decryptPasscode(tampered, key));
 });

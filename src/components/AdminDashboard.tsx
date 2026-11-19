@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from "react";
+import WhatsAppSettings from "./WhatsAppSettings";
+import AdminSaasConsole from "./AdminSaasConsole";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Building2,
   Users,
-  CreditCard,
   Plus,
   Search,
   Trash2,
   Cpu,
-  CheckCircle2,
   Calendar,
   Phone,
   MapPin,
@@ -47,7 +47,7 @@ import {
 } from "../constants";
 import { Restaurant, SubscriptionType, SubscriptionDuration } from "../types";
 import { format } from "date-fns";
-import { calculateSubscriptionEnd } from "../lib/subscription";
+import { calculateSubscriptionEnd, getSubscriptionAccess } from "../lib/subscription";
 import QRCode from "react-qr-code";
 import { supabase } from "../lib/supabase";
 import { persistRestaurantImage } from "../lib/storage";
@@ -55,6 +55,9 @@ import { localizeProvince, useLanguage } from "../lib/i18n";
 import { AI_MODELS, DEFAULT_AI_MODEL, firstModelForProvider, providerForAIModel, type AIProvider } from "../lib/ai-models";
 import { DEFAULT_SYSTEM_LOGO } from "../lib/brand";
 import { customerMenuUrl, staffPortalUrl } from "../lib/public-urls";
+import AdminFinancialOverview, { type FinancialOverview } from "./AdminFinancialOverview";
+import AdminSubscriptionSettings from "./AdminSubscriptionSettings";
+import { emptyPlanPrices, type PlanPrices } from "../lib/subscription-pricing";
 
 const safeFormatDate = (dateVal: any, formatStr: string, fallback: string = "---") => {
   if (!dateVal) return fallback;
@@ -67,16 +70,22 @@ const safeFormatDate = (dateVal: any, formatStr: string, fallback: string = "---
   }
 };
 
+const restaurantAccessState = (restaurant: Restaurant, now: number) => {
+  if (restaurant.status === 'suspended') return 'suspended';
+  const access = getSubscriptionAccess(restaurant, now);
+  return access.reason === 'expired' ? 'expired' : access.allowed ? 'active' : 'unavailable';
+};
+
 export default function AdminDashboard({
   activeTab: externalTab,
   onNavigate,
 }: {
-  activeTab?: "overview" | "restaurants" | "ai" | "alerts";
-  onNavigate?: (tab: "overview" | "restaurants" | "ai" | "alerts") => void;
+  activeTab?: "overview" | "restaurants" | "settings" | "ai" | "alerts";
+  onNavigate?: (tab: "overview" | "restaurants" | "settings" | "ai" | "alerts") => void;
 }) {
   const { dir, language, tr } = useLanguage();
   const [internalTab, setInternalTab] = useState<
-    "overview" | "restaurants" | "ai" | "alerts"
+    "overview" | "restaurants" | "settings" | "ai" | "alerts"
   >("overview");
   const activeTab = externalTab || internalTab;
 
@@ -89,6 +98,7 @@ export default function AdminDashboard({
     null,
   );
   const [searchQuery, setSearchQuery] = useState("");
+  const [whatsappRestaurant, setWhatsAppRestaurant] = useState<string | null>(null);
   const [filterProvince, setFilterProvince] = useState("");
   const [filterType, setFilterType] = useState("");
   const [filterExpiry, setFilterExpiry] = useState<"all" | "expired" | "soon">("all");
@@ -120,18 +130,17 @@ export default function AdminDashboard({
   const [annSuccess, setAnnSuccess] = useState(false);
   const [annLoading, setAnnLoading] = useState(false);
 
-  // Stats
-  const [stats, setStats] = useState({
-    totalRestaurants: 0,
-    monthlyProfit: 0,
-    activeSubscriptions: 0,
-  });
+  const [finance, setFinance] = useState<FinancialOverview | null>(null);
+  const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
     fetchRestaurants();
     fetchSupportSetting();
     fetchAISettings();
     fetchAnnouncements();
+    fetchFinancialOverview();
+
+    const clock = window.setInterval(() => setNow(Date.now()), 60_000);
 
     const handleOnline = () => {
       setIsOffline(false);
@@ -140,6 +149,7 @@ export default function AdminDashboard({
       fetchSupportSetting();
       fetchAISettings();
       fetchAnnouncements();
+      fetchFinancialOverview();
     };
     const handleOffline = () => setIsOffline(true);
 
@@ -149,8 +159,21 @@ export default function AdminDashboard({
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
+      window.clearInterval(clock);
     };
   }, []);
+
+  const fetchFinancialOverview = async () => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) return;
+      const response = await fetch('/api/admin/financial-overview', {
+        headers: { Authorization: `Bearer ${data.session.access_token}` }, cache: 'no-store',
+      });
+      if (!response.ok) throw new Error('financial_data_unavailable');
+      setFinance(await response.json());
+    } catch { setFinance(null); }
+  };
 
   const fetchSupportSetting = async () => {
     try {
@@ -335,14 +358,6 @@ export default function AdminDashboard({
       setRestaurants(data);
       localStorage.setItem("novix_restaurants", JSON.stringify(data));
 
-      setStats({
-        totalRestaurants: data.length,
-        monthlyProfit: data.reduce(
-          (acc, curr) => acc + (curr.monthlyCost || 0),
-          0,
-        ),
-        activeSubscriptions: data.filter((r) => r.status === "active").length,
-      });
     } catch (err) {
       console.warn("Could not load restaurants from Supabase (using local cache):", err);
       const cached = localStorage.getItem("novix_restaurants");
@@ -350,14 +365,6 @@ export default function AdminDashboard({
         try {
           const data = JSON.parse(cached) as Restaurant[];
           setRestaurants(data);
-          setStats({
-            totalRestaurants: data.length,
-            monthlyProfit: data.reduce(
-              (acc, curr) => acc + (curr.monthlyCost || 0),
-              0,
-            ),
-            activeSubscriptions: data.filter((r) => r.status === "active").length,
-          });
         } catch (_) {}
       }
     } finally {
@@ -391,12 +398,11 @@ export default function AdminDashboard({
     // Subscription expiry filters
     let matchesExpiry = true;
     if (filterExpiry !== "all") {
-      const now = new Date().getTime();
       const expiryTime = r.endDate ? new Date(r.endDate).getTime() : 0;
       const oneDay = 24 * 60 * 60 * 1000;
 
       if (filterExpiry === "expired") {
-        matchesExpiry = expiryTime > 0 && now >= expiryTime;
+        matchesExpiry = restaurantAccessState(r, now) === 'expired';
       } else if (filterExpiry === "soon") {
         matchesExpiry = expiryTime > 0 && now < expiryTime && (expiryTime - now <= 3 * oneDay);
       }
@@ -407,6 +413,7 @@ export default function AdminDashboard({
 
   return (
     <div className="admin-surface space-y-8" dir={dir}>
+      <AdminSaasConsole />
       {isOffline && (
         <div className="p-4 bg-amber-50/80 border-r-4 border-brand-gold text-brand-primary text-xs font-sans font-bold flex items-center gap-3 animate-pulse">
           <span className="w-2.5 h-2.5 bg-brand-gold rounded-full shrink-0" />
@@ -433,23 +440,7 @@ export default function AdminDashboard({
                 <Plus className="w-4 h-4" />{tr('إضافة مطعم', 'Add restaurant')}
               </button>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-5">
-              <StatCard
-                title={tr('إجمالي المطاعم', 'Total restaurants')}
-                value={stats.totalRestaurants}
-                icon={<Building2 className="w-6 h-6 text-brand-primary" />}
-              />
-              <StatCard
-                title={tr('قيمة الاشتراكات الشهرية', 'Monthly plan value')}
-                value={`${stats.monthlyProfit.toLocaleString()} ${tr('د.ع', 'IQD')}`}
-                icon={<CreditCard className="w-6 h-6 text-emerald-500" />}
-              />
-              <StatCard
-                title={tr('الاشتراكات النشطة', 'Active subscriptions')}
-                value={stats.activeSubscriptions}
-                icon={<CheckCircle2 className="w-6 h-6 text-purple-500" />}
-              />
-            </div>
+            <AdminFinancialOverview restaurants={restaurants} finance={finance} now={now} />
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <div className="lg:col-span-2 bg-white border border-border-delicate rounded-2xl p-5 sm:p-6">
@@ -477,10 +468,18 @@ export default function AdminDashboard({
                 <button type="button" onClick={() => onNavigate ? onNavigate('restaurants') : setInternalTab('restaurants')} className="w-full flex items-center justify-between gap-3 rounded-xl bg-white/15 px-4 py-3 text-sm font-bold hover:bg-white/25"><span>{tr('إدارة المطاعم', 'Manage restaurants')}</span><Building2 className="w-4 h-4" /></button>
                 <button type="button" onClick={() => onNavigate ? onNavigate('alerts') : setInternalTab('alerts')} className="w-full flex items-center justify-between gap-3 rounded-xl bg-white/15 px-4 py-3 text-sm font-bold hover:bg-white/25"><span>{tr('إرسال تنبيه', 'Send an alert')}</span><Bell className="w-4 h-4" /></button>
                 <button type="button" onClick={() => onNavigate ? onNavigate('ai') : setInternalTab('ai')} className="w-full flex items-center justify-between gap-3 rounded-xl bg-white/15 px-4 py-3 text-sm font-bold hover:bg-white/25"><span>{tr('إعدادات المساعد', 'Assistant settings')}</span><Cpu className="w-4 h-4" /></button>
+                <button type="button" onClick={() => onNavigate ? onNavigate('settings') : setInternalTab('settings')} className="w-full flex items-center justify-between gap-3 rounded-xl bg-white/15 px-4 py-3 text-sm font-bold hover:bg-white/25"><span>{tr('أسعار الاشتراكات', 'Subscription prices')}</span><Settings className="w-4 h-4" /></button>
               </div>
             </div>
             </div>
 
+          </motion.div>
+        )}
+
+        {activeTab === "settings" && (
+          <motion.div key="settings" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }} className="space-y-5">
+            <div><p className="mb-1 text-xs font-bold text-brand-gold">{tr('ضبط النظام', 'System control')}</p><h2 className="text-2xl font-bold text-brand-primary sm:text-3xl">{tr('الإعدادات', 'Settings')}</h2><p className="mt-1 text-sm text-text-muted">{tr('أسعار الاشتراكات والدعم وهوية النظام في مكان واحد.', 'Subscription pricing, support, and branding in one place.')}</p></div>
+            <AdminSubscriptionSettings onSaved={() => void fetchFinancialOverview()} />
             {/* Support and System Branding Card */}
             <details className="bg-white border border-border-delicate rounded-2xl overflow-hidden group">
               <summary className="list-none cursor-pointer p-5 sm:p-6 flex items-center justify-between gap-4 font-bold text-brand-primary">
@@ -664,8 +663,8 @@ export default function AdminDashboard({
                       <h3 className="text-lg font-bold text-brand-primary truncate">{res.restaurantName}</h3>
                       <p className="text-xs text-text-muted flex items-center gap-1 mt-1"><MapPin className="w-3.5 h-3.5" />{localizeProvince(res.province, language)}{res.area ? ` · ${res.area}` : ''}</p>
                     </div>
-                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-bold ${res.status === 'active' ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800'}`}>
-                      {res.status === 'active' ? tr('نشط', 'Active') : tr('موقوف', 'Paused')}
+                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-bold ${restaurantAccessState(res, now) === 'active' ? 'bg-emerald-50 text-emerald-800' : restaurantAccessState(res, now) === 'expired' ? 'bg-amber-50 text-amber-800' : 'bg-red-50 text-red-800'}`}>
+                      {restaurantAccessState(res, now) === 'active' ? tr('نشط', 'Active') : restaurantAccessState(res, now) === 'expired' ? tr('منتهي', 'Expired') : restaurantAccessState(res, now) === 'suspended' ? tr('موقوف', 'Paused') : tr('غير متاح', 'Unavailable')}
                     </span>
                   </div>
                   <div className="grid grid-cols-2 gap-3 rounded-xl bg-bg-paper p-3">
@@ -679,10 +678,16 @@ export default function AdminDashboard({
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <button type="button" onClick={() => setEditingRestaurant(res)} className="rounded-lg bg-brand-primary text-white px-3 py-2 text-xs font-bold min-h-10">{tr('تعديل', 'Edit')}</button>
+                      <button type="button" aria-expanded={whatsappRestaurant === res.id}
+                        onClick={() => setWhatsAppRestaurant(current => current === res.id ? null : res.id)}
+                        className="rounded-lg border border-border-delicate px-3 py-2 text-xs font-bold text-brand-primary min-h-10">
+                        {tr('ربط واتساب', 'WhatsApp connection')}
+                      </button>
                       <button type="button" onClick={() => { navigator.clipboard.writeText(staffPortalUrl(res.id)); setCopiedId(res.id); setTimeout(() => setCopiedId(null), 2000); }} className="rounded-lg border border-border-delicate px-3 py-2 text-xs font-bold text-brand-primary min-h-10">{copiedId === res.id ? tr('تم النسخ', 'Copied') : tr('نسخ رابط الدخول', 'Copy login link')}</button>
                       <button type="button" onClick={() => toggleStatus(res.id, res.status)} className="rounded-lg border border-border-delicate px-3 py-2 text-xs font-bold text-brand-primary min-h-10">{res.status === 'active' ? tr('إيقاف', 'Pause') : tr('تفعيل', 'Reactivate')}</button>
                     </div>
                   </div>
+                  {whatsappRestaurant === res.id && <WhatsAppSettings restaurantId={res.id} connectionOnly />}
                 </article>
               ))}
             </div>
@@ -947,36 +952,6 @@ export default function AdminDashboard({
   );
 }
 
-function StatCard({
-  title,
-  value,
-  icon,
-}: {
-  title: string;
-  value: string | number;
-  icon: React.ReactNode;
-}) {
-  return (
-    <div className="bg-white p-5 sm:p-6 rounded-2xl border border-border-delicate shadow-sm relative overflow-hidden">
-      <div className="flex justify-between items-start mb-4 relative z-10">
-        <div className="p-3 bg-bg-paper rounded-xl border border-border-delicate">
-          {React.cloneElement(icon as React.ReactElement, {
-            className: "w-5 h-5 transition-colors",
-          })}
-        </div>
-      </div>
-      <div className="relative z-10">
-        <p className="text-text-muted text-sm font-bold mb-2">
-          {title}
-        </p>
-        <p className="text-2xl sm:text-3xl font-display font-bold text-brand-primary tracking-tight tabular-nums leading-none">
-          {value}
-        </p>
-      </div>
-    </div>
-  );
-}
-
 function RestaurantModal({
   onClose,
   onSuccess,
@@ -1020,6 +995,29 @@ function RestaurantModal({
   const [createdPasscode, setCreatedPasscode] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [planPrices, setPlanPrices] = useState<PlanPrices>(emptyPlanPrices);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) return;
+      const response = await fetch('/api/admin/subscription-prices', {
+        headers: { Authorization: `Bearer ${data.session.access_token}` }, cache: 'no-store',
+      });
+      if (response.ok && !cancelled) {
+        const prices: PlanPrices = await response.json();
+        setPlanPrices(prices);
+      }
+    })().catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const type = formData.subscriptionType;
+    const configured = type === 'normal' || type === 'pro' ? planPrices[type] : null;
+    if (configured !== null) setFormData(previous => previous.monthlyCost === configured ? previous : { ...previous, monthlyCost: configured });
+  }, [planPrices, formData.subscriptionType]);
 
   useEffect(() => {
     const start = new Date(formData.startDate);
@@ -1388,7 +1386,7 @@ function RestaurantModal({
                     type="number"
                     className="w-full bg-white border border-border-delicate pl-16 pr-8 py-5 text-xl font-mono text-brand-primary focus:border-brand-primary outline-none text-right"
                     placeholder={tr('أدخل التكلفة', 'Enter cost')}
-                    disabled={formData.subscriptionType === "trial"}
+                    disabled={formData.subscriptionType === "trial" || (formData.subscriptionType !== "trial" && planPrices[formData.subscriptionType] !== null)}
                     value={formData.monthlyCost}
                     onChange={(e) =>
                       setFormData({
@@ -1397,6 +1395,8 @@ function RestaurantModal({
                       })
                     }
                   />
+                  {formData.subscriptionType !== 'trial' && planPrices[formData.subscriptionType] !== null &&
+                    <p className="mt-2 text-xs text-text-muted">{tr('السعر محدد من إعدادات الاشتراكات.', 'This price is controlled in subscription settings.')}</p>}
                 </div>
               </div>
             </div>

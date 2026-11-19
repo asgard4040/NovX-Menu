@@ -1,10 +1,15 @@
 import express from "express";
+import { whatsappRouter } from "./whatsapp/routes";
 import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 import ws from "ws";
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { DEFAULT_AI_MODEL, openAIResponseText, providerForAIModel } from "./src/lib/ai-models";
 import { decryptPasscode, encryptPasscode, generatePasscode, isPasscode, isWeakPasscode, passcodeDigest, passcodeKey } from "./passcodes";
+import { WAYL_API, renewalAmount, validWaylCheckoutUrl, verifyWaylSignature, waylLinkIsPaid } from "./wayl";
+import { getSubscriptionAccess } from "./src/lib/subscription";
+import { emptyPlanPrices, parsePlanPrices, planMonthlyPrice } from "./src/lib/subscription-pricing";
+import { summarizeWaylPayments } from "./src/lib/admin-finance";
 
 if (!globalThis.WebSocket) {
   (globalThis as any).WebSocket = ws;
@@ -111,7 +116,65 @@ app.use((req: any, _res: any, next: any) => {
   }
   next();
 });
-app.use(express.json({ limit: "256kb" }));
+app.use("/api/whatsapp", whatsappRouter(supabaseAdmin));
+app.use(express.json({ limit: "256kb", verify: (req, _res, body) => { (req as any).rawBody = Buffer.from(body); } }));
+
+async function waylRequest(path: string, options?: RequestInit) {
+  const token = process.env.WAYL_API_KEY;
+  if (!token) throw new Error("wayl_not_configured");
+  const response = await fetch(`${WAYL_API}${path}`, {
+    ...options,
+    headers: { "X-WAYL-AUTHENTICATION": token, "Content-Type": "application/json", ...options?.headers },
+    signal: AbortSignal.timeout(12_000),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.data) throw new Error(`wayl_http_${response.status}`);
+  return payload.data;
+}
+
+async function subscriptionIdentity(req: express.Request) {
+  if (!supabaseAdmin) return null;
+  const bearer = req.headers.authorization?.replace(/^Bearer /, "") || "";
+  const { data } = await supabaseAdmin.auth.getUser(bearer);
+  return data.user || null;
+}
+
+async function subscriptionMembership(userId: string, restaurantId: string) {
+  if (!supabaseAdmin) return null;
+  const { data } = await supabaseAdmin.from("restaurant_members").select("role")
+    .eq("user_id", userId).eq("restaurant_id", restaurantId).eq("active", true).maybeSingle();
+  return data?.role || null;
+}
+
+async function readPlanPrices() {
+  if (!supabaseAdmin) throw new Error("service_role_not_configured");
+  // The existing app_settings table stores this small JSON document under its own key.
+  const { data, error } = await supabaseAdmin.from("app_settings").select("prompt")
+    .eq("key", "subscription_pricing").maybeSingle();
+  if (error) throw new Error("pricing_unavailable");
+  return data ? parsePlanPrices(data.prompt) : emptyPlanPrices;
+}
+
+async function reconcileWaylPayment(referenceId: string) {
+  if (!supabaseAdmin) throw new Error("service_role_not_configured");
+  const { data: payment, error } = await supabaseAdmin.from("subscription_payments")
+    .select("reference_id,restaurant_id,amount_iqd,environment,wayl_link_id,status").eq("reference_id", referenceId).maybeSingle();
+  if (error || !payment) throw new Error("payment_not_found");
+  if (payment.status === "paid") return true;
+  if (payment.environment === "test" && payment.restaurant_id !== process.env.WAYL_TEST_RESTAURANT_ID)
+    throw new Error("test_payment_restaurant_not_allowed");
+  const link = await waylRequest(`/${encodeURIComponent(referenceId)}`);
+  if (!payment.wayl_link_id && link?.referenceId === referenceId && typeof link?.id === "string") {
+    const saved = await supabaseAdmin.from("subscription_payments").update({ wayl_link_id: link.id })
+      .eq("reference_id", referenceId).is("wayl_link_id", null);
+    if (saved.error) throw new Error("payment_store_failed");
+    payment.wayl_link_id = link.id;
+  }
+  if (!waylLinkIsPaid(link, referenceId, Number(payment.amount_iqd), payment.wayl_link_id)) return false;
+  const applied = await supabaseAdmin.rpc("apply_paid_subscription", { p_reference_id: referenceId });
+  if (applied.error) throw new Error(`renewal_failed:${applied.error.message}`);
+  return true;
+}
 
   app.get("/api/home-screen-manifest", (req, res) => {
     const restaurantId = String(req.query.restaurantId || "");
@@ -151,6 +214,176 @@ app.use(express.json({ limit: "256kb" }));
     const { data, error } = await supabase.rpc(rpc, { p_restaurant_id: restaurantId });
     if (error || !data) return res.status(error?.message.includes("subscription_inactive") ? 403 : 404).json({ error: error?.message || "not_found" });
     return res.json(req.query.branding === "1" ? { restaurant: camelRow(data) } : camelRow(data));
+  });
+  app.get("/api/admin/subscription-prices", async (req, res) => {
+    res.setHeader("Cache-Control", "private, no-store");
+    const user = await subscriptionIdentity(req);
+    if (!user) return res.status(401).json({ error: "authentication_required" });
+    if (user.app_metadata?.system_role !== "admin") return res.status(403).json({ error: "admin_required" });
+    try { return res.json({ ...await readPlanPrices(), paymentConfigured: Boolean(process.env.WAYL_API_KEY),
+      paymentEnvironment: process.env.WAYL_ENV || null }); }
+    catch { return res.status(503).json({ error: "pricing_unavailable" }); }
+  });
+  app.put("/api/admin/subscription-prices", async (req, res) => {
+    res.setHeader("Cache-Control", "private, no-store");
+    const user = await subscriptionIdentity(req);
+    if (!user) return res.status(401).json({ error: "authentication_required" });
+    if (user.app_metadata?.system_role !== "admin") return res.status(403).json({ error: "admin_required" });
+    const { normal, pro } = req.body || {};
+    if (![normal, pro].every(value => Number.isSafeInteger(value) && value > 0 && value <= 1_000_000_000))
+      return res.status(400).json({ error: "invalid_plan_prices" });
+    if (!supabaseAdmin) return res.status(503).json({ error: "service_role_not_configured" });
+    const { error } = await supabaseAdmin.from("app_settings").upsert({
+      key: "subscription_pricing", prompt: JSON.stringify({ normal, pro }), updated_at: new Date().toISOString(),
+    }, { onConflict: "key" });
+    if (error) return res.status(503).json({ error: "pricing_save_failed" });
+    return res.json({ normal, pro });
+  });
+  app.get("/api/admin/financial-overview", async (req, res) => {
+    res.setHeader("Cache-Control", "private, no-store");
+    const user = await subscriptionIdentity(req);
+    if (!user) return res.status(401).json({ error: "authentication_required" });
+    if (user.app_metadata?.system_role !== "admin") return res.status(403).json({ error: "admin_required" });
+    if (!supabaseAdmin) return res.status(503).json({ error: "service_role_not_configured" });
+    const paid: Array<{ amount_iqd: number; paid_at: string }> = [];
+    for (let offset = 0; ; offset += 1000) {
+      const page = await supabaseAdmin.from("subscription_payments").select("amount_iqd,paid_at")
+        .eq("status", "paid").eq("environment", "live")
+        .order("paid_at", { ascending: false }).range(offset, offset + 999);
+      if (page.error) return res.status(503).json({ error: "financial_data_unavailable" });
+      paid.push(...(page.data || []).filter(item => item.paid_at));
+      if ((page.data || []).length < 1000) break;
+    }
+    const pending = await supabaseAdmin.from("subscription_payments").select("reference_id", { count: "exact", head: true })
+      .eq("status", "pending").eq("environment", "live");
+    if (pending.error) return res.status(503).json({ error: "financial_data_unavailable" });
+    let planPrices;
+    try { planPrices = await readPlanPrices(); }
+    catch { return res.status(503).json({ error: "pricing_unavailable" }); }
+    return res.json({ ...summarizeWaylPayments(paid, pending.count || 0), planPrices });
+  });
+  app.get("/api/restaurants/:restaurantId/subscription", async (req, res) => {
+    res.setHeader("Cache-Control", "private, no-store");
+    const user = await subscriptionIdentity(req);
+    if (!user) return res.status(401).json({ error: "authentication_required" });
+    const restaurantId = await resolveRestaurantId(req.params.restaurantId);
+    const role = await subscriptionMembership(user.id, restaurantId);
+    if (!role) return res.status(403).json({ error: "restaurant_access_denied" });
+    if (!supabaseAdmin) return res.status(503).json({ error: "service_role_not_configured" });
+    const { data: restaurant, error } = await supabaseAdmin.from("restaurants")
+      .select("restaurant_name,status,start_date,end_date,grace_period_days,subscription_type,subscription_duration,monthly_cost")
+      .eq("id", restaurantId).maybeSingle();
+    if (error || !restaurant) return res.status(404).json({ error: "restaurant_not_found" });
+    const access = getSubscriptionAccess({ status: restaurant.status, startDate: restaurant.start_date,
+      endDate: restaurant.end_date, gracePeriodDays: restaurant.grace_period_days });
+    let prices;
+    try { prices = await readPlanPrices(); }
+    catch { return res.status(503).json({ error: "pricing_unavailable" }); }
+    const monthlyPrice = planMonthlyPrice(restaurant.subscription_type, restaurant.monthly_cost, prices);
+    const renewal = monthlyPrice === null ? null : renewalAmount(monthlyPrice, restaurant.subscription_duration);
+    return res.json({ allowed: access.allowed, reason: access.reason, restaurantName: restaurant.restaurant_name,
+      endDate: restaurant.end_date, gracePeriodDays: restaurant.grace_period_days,
+      amountIqd: role === "owner" || role === "manager" ? renewal : null,
+      canRenew: (role === "owner" || role === "manager") && restaurant.status === "active"
+        && renewal !== null });
+  });
+
+  app.post("/api/restaurants/:restaurantId/subscription/checkout", rateLimit, async (req, res) => {
+    res.setHeader("Cache-Control", "private, no-store");
+    const user = await subscriptionIdentity(req);
+    if (!user) return res.status(401).json({ error: "authentication_required" });
+    const restaurantId = await resolveRestaurantId(req.params.restaurantId);
+    const role = await subscriptionMembership(user.id, restaurantId);
+    if (role !== "owner" && role !== "manager") return res.status(403).json({ error: "owner_required" });
+    if (!supabaseAdmin) return res.status(503).json({ error: "service_role_not_configured" });
+    const appUrl = process.env.APP_URL || "https://rest.ordova.cc";
+    if (!process.env.WAYL_API_KEY || !["test", "live"].includes(process.env.WAYL_ENV || "")
+      || !appUrl.startsWith("https://")) return res.status(503).json({ error: "payment_not_configured" });
+    if (process.env.WAYL_ENV === "test" && restaurantId !== process.env.WAYL_TEST_RESTAURANT_ID)
+      return res.status(403).json({ error: "test_payment_restaurant_not_allowed" });
+    const { data: restaurant, error } = await supabaseAdmin.from("restaurants")
+      .select("id,restaurant_name,status,end_date,subscription_type,subscription_duration,monthly_cost")
+      .eq("id", restaurantId).maybeSingle();
+    if (error || !restaurant) return res.status(404).json({ error: "restaurant_not_found" });
+    if (restaurant.status !== "active") return res.status(403).json({ error: "restaurant_suspended" });
+    if (Date.parse(restaurant.end_date) > Date.now()) return res.status(409).json({ error: "subscription_still_active" });
+    let prices;
+    try { prices = await readPlanPrices(); }
+    catch { return res.status(503).json({ error: "pricing_unavailable" }); }
+    const monthlyPrice = planMonthlyPrice(restaurant.subscription_type, restaurant.monthly_cost, prices);
+    const amount = monthlyPrice === null ? null : renewalAmount(monthlyPrice, restaurant.subscription_duration);
+    if (amount === null) return res.status(409).json({ error: "plan_price_not_configured" });
+    const { data: pending } = await supabaseAdmin.from("subscription_payments")
+      .select("reference_id,checkout_url,amount_iqd,duration,environment,created_at")
+      .eq("restaurant_id", restaurantId).eq("status", "pending").maybeSingle();
+    if (pending && Date.now() - Date.parse(pending.created_at) < 2 * 60 * 60 * 1000
+      && Number(pending.amount_iqd) === amount && pending.duration === restaurant.subscription_duration
+      && pending.environment === process.env.WAYL_ENV) {
+      if (!pending.checkout_url) return res.status(409).json({ error: "checkout_preparing" });
+      return res.json({ url: pending.checkout_url, referenceId: pending.reference_id });
+    }
+    if (pending) await supabaseAdmin.from("subscription_payments").update({ status: "superseded" }).eq("reference_id", pending.reference_id);
+    const referenceId = `renewal-${randomUUID()}`;
+    const webhookSecret = randomBytes(32).toString("hex");
+    const inserted = await supabaseAdmin.from("subscription_payments").insert({
+      reference_id: referenceId, restaurant_id: restaurantId, amount_iqd: amount,
+      environment: process.env.WAYL_ENV,
+      duration: restaurant.subscription_duration, webhook_secret: webhookSecret,
+    });
+    if (inserted.error) return res.status(inserted.error.code === "23505" ? 409 : 503).json({ error: "checkout_preparing" });
+    try {
+      const site = new URL(appUrl);
+      const redirect = new URL(site.origin + "/");
+      redirect.searchParams.set("loginRestaurantId", restaurantId);
+      redirect.searchParams.set("portal", "restaurant");
+      redirect.searchParams.set("paymentReturn", "1");
+      const link = await waylRequest("", { method: "POST", body: JSON.stringify({
+        env: process.env.WAYL_ENV, referenceId, total: amount,
+        currency: "IQD", customParameter: restaurantId,
+        lineItem: [{ label: `${restaurant.restaurant_name} subscription renewal`, amount, type: "increase" }],
+        webhookUrl: new URL("/api/payments/wayl/webhook", site.origin).toString(),
+        webhookSecret, redirectionUrl: redirect.toString(),
+      }) });
+      if (link.referenceId !== referenceId || link.currency !== "IQD" || Number(link.total) !== amount
+        || typeof link.id !== "string" || !validWaylCheckoutUrl(link.url)) throw new Error("wayl_invalid_response");
+      const saved = await supabaseAdmin.from("subscription_payments")
+        .update({ wayl_link_id: link.id, checkout_url: link.url }).eq("reference_id", referenceId);
+      if (saved.error) throw new Error("payment_store_failed");
+      return res.json({ url: link.url, referenceId });
+    } catch (reason) {
+      console.error("Wayl checkout creation failed:", reason);
+      await supabaseAdmin.from("subscription_payments").update({ status: "superseded" }).eq("reference_id", referenceId);
+      return res.status(502).json({ error: "checkout_unavailable" });
+    }
+  });
+
+  app.post("/api/payments/wayl/webhook", async (req, res) => {
+    if (!supabaseAdmin) return res.status(503).end();
+    const referenceId = req.body?.referenceId;
+    if (typeof referenceId !== "string" || !/^renewal-[0-9a-f-]{36}$/i.test(referenceId)) return res.status(400).end();
+    const { data: payment } = await supabaseAdmin.from("subscription_payments")
+      .select("webhook_secret").eq("reference_id", referenceId).maybeSingle();
+    if (!payment || !verifyWaylSignature((req as any).rawBody, req.headers["x-wayl-signature-256"], payment.webhook_secret)) return res.status(401).end();
+    try {
+      await reconcileWaylPayment(referenceId);
+      return res.status(204).end();
+    } catch (reason) {
+      console.error("Wayl renewal reconciliation failed:", reason);
+      return res.status(503).end();
+    }
+  });
+
+  app.get("/api/payments/wayl/:referenceId/status", async (req, res) => {
+    res.setHeader("Cache-Control", "private, no-store");
+    const user = await subscriptionIdentity(req);
+    if (!user || !supabaseAdmin) return res.status(401).json({ error: "authentication_required" });
+    const { data: payment } = await supabaseAdmin.from("subscription_payments")
+      .select("restaurant_id,status").eq("reference_id", req.params.referenceId).maybeSingle();
+    if (!payment) return res.status(404).json({ error: "payment_not_found" });
+    const role = await subscriptionMembership(user.id, payment.restaurant_id);
+    if (role !== "owner" && role !== "manager") return res.status(403).json({ error: "owner_required" });
+    try { return res.json({ paid: await reconcileWaylPayment(req.params.referenceId) }); }
+    catch (reason) { console.error("Wayl payment status check failed:", reason); return res.status(503).json({ error: "payment_status_unavailable" }); }
   });
   app.post("/api/public/restaurants/:restaurantId/customer-status", rateLimit, async (req, res) => {
     const restaurantId = await resolveRestaurantId(req.params.restaurantId);
@@ -219,7 +452,7 @@ app.use(express.json({ limit: "256kb" }));
       const { data, error } = await authClient.auth.verifyOtp({ token_hash: link.data.properties.hashed_token, type: "magiclink" });
       if (error || !data.session || data.user?.id !== record.user_id) return res.status(503).json({ error: "auth_service_unavailable" });
       return res.json({ accessToken: data.session.access_token, refreshToken: data.session.refresh_token,
-        session: { role: requestedRole, id: record.user_id, restaurantId: requestedRestaurantId, name: data.user.user_metadata?.name || requestedRole } });
+        session: { role: requestedRole, membershipRole: record.role, id: record.user_id, restaurantId: requestedRestaurantId, name: data.user.user_metadata?.name || requestedRole } });
     } catch (error) {
       console.error("Passcode session creation failed:", error);
       return res.status(503).json({ error: "auth_service_unavailable" });
@@ -238,7 +471,7 @@ app.use(express.json({ limit: "256kb" }));
     const { data: memberships } = await membershipQuery.limit(1);
     const membership = memberships?.[0]; if (!membership) return res.status(403).end();
     const role = membership.role === "owner" || membership.role === "manager" ? "restaurant" : membership.role;
-    return res.json({ role, id: identity.user.id, restaurantId: membership.restaurant_id, name: identity.user.user_metadata?.name || "user" });
+    return res.json({ role, membershipRole: membership.role, id: identity.user.id, restaurantId: membership.restaurant_id, name: identity.user.user_metadata?.name || "user" });
   });
   app.get("/api/admin/restaurants/:restaurantId/passcode", async (req, res) => {
     if (!supabaseAdmin) return res.status(503).json({ error: "service_role_not_configured" });
@@ -379,7 +612,14 @@ app.use(express.json({ limit: "256kb" }));
     if (requestedPasscode && isWeakPasscode(requestedPasscode)) return res.status(400).json({ error: "weak_passcode" });
     try { getPasscodeKey(); } catch { return res.status(503).json({ error: "passcode_secret_not_configured" }); }
     const username = body.id ? String(body.username || "") : `restaurant-${randomUUID()}`;
-    const row = { manager_name: body.managerName, manager_phone: body.managerPhone, restaurant_name: body.restaurantName, username, province: body.province, area: body.area, landmark: body.landmark, subscription_type: body.subscriptionType, subscription_duration: body.subscriptionDuration, start_date: body.startDate, end_date: body.endDate, monthly_cost: body.monthlyCost, total_cost: body.totalCost, logo_url: body.logoUrl, status: body.status || "active" };
+    let prices;
+    try { prices = await readPlanPrices(); }
+    catch { return res.status(503).json({ error: "pricing_unavailable" }); }
+    const monthlyCost = body.subscriptionType === "trial" ? 0 : planMonthlyPrice(body.subscriptionType, body.monthlyCost, prices);
+    if (monthlyCost === null) return res.status(400).json({ error: "plan_price_not_configured" });
+    const months = body.subscriptionDuration === "month" ? 1 : body.subscriptionDuration === "six-months" ? 6 : body.subscriptionDuration === "year" ? 12 : null;
+    if (body.subscriptionType !== "trial" && months === null) return res.status(400).json({ error: "invalid_subscription_duration" });
+    const row = { manager_name: body.managerName, manager_phone: body.managerPhone, restaurant_name: body.restaurantName, username, province: body.province, area: body.area, landmark: body.landmark, subscription_type: body.subscriptionType, subscription_duration: body.subscriptionDuration, start_date: body.startDate, end_date: body.endDate, monthly_cost: monthlyCost, total_cost: monthlyCost * (months || 0), grace_period_days: 0, logo_url: body.logoUrl, status: body.status || "active" };
     if (body.id) {
       if (requestedPasscode) {
         const owner = await supabaseAdmin.from("restaurant_members").select("user_id").eq("restaurant_id", body.id).eq("role", "owner").single();

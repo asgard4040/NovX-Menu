@@ -11,7 +11,6 @@ import {
   Users, 
   LogOut, 
   Plus, 
-  Search, 
   Trash2, 
   CheckCircle2, 
   Clock, 
@@ -33,16 +32,19 @@ import {
   History,
   Bell,
   Palette,
+  Settings,
   Languages,
 } from 'lucide-react';
 import { UserSession } from './types';
 import { supabase } from './lib/supabase';
 import AdminDashboard from './components/AdminDashboard';
 import RestaurantDashboard from './components/RestaurantDashboard';
+const WhatsAppSettings = React.lazy(() => import('./components/WhatsAppSettings'));
 import WaiterDashboard from './components/WaiterDashboard';
 import KitchenDashboard from './components/KitchenDashboard';
 import CustomerMenu from './components/CustomerMenu';
 import LoginPage from './components/LoginPage';
+import SubscriptionGuard from './components/SubscriptionGuard';
 import FirstVisitGuide from './components/FirstVisitGuide';
 import { db, doc, onSnapshot } from './lib/supabase-db';
 import { DEFAULT_THEME, resolveTheme, themeStyle } from './lib/themes';
@@ -134,11 +136,13 @@ export default function App() {
     if (session) {
       if (session.role === 'kitchen') {
         setActiveTab('orders');
+      } else if (session.membershipRole === 'owner' && new URLSearchParams(window.location.search).has('whatsappSignup')) {
+        setActiveTab('whatsapp');
       } else {
         setActiveTab('overview');
       }
     }
-  }, [session?.role]);
+  }, [session?.role, session?.membershipRole]);
 
   useEffect(() => {
     if (customerRestaurantId) return;
@@ -221,18 +225,20 @@ export default function App() {
     admin: [
       { id: 'overview', label: tr('الرئيسية', 'Home'), icon: <LayoutDashboard className="w-5 h-5" /> },
       { id: 'restaurants', label: tr('المطاعم', 'Restaurants'), icon: <Building2 className="w-5 h-5" /> },
+      { id: 'settings', label: tr('الإعدادات', 'Settings'), icon: <Settings className="w-5 h-5" /> },
       { id: 'ai', label: tr('إدارة AI', 'AI'), icon: <Cpu className="w-5 h-5" /> },
       { id: 'alerts', label: tr('التنبيهات', 'Alerts'), icon: <Bell className="w-5 h-5" /> },
     ],
     restaurant: [
       { id: 'overview', label: tr('الرئيسية', 'Home'), icon: <BarChart3 className="w-5 h-5" /> },
       { id: 'waiters', label: tr('الموظفين', 'Staff'), icon: <Users className="w-5 h-5" /> },
+      { id: 'menu', label: tr('المنيو', 'Menu'), icon: <Utensils className="w-5 h-5" /> },
+      ...(session.membershipRole === 'owner' ? [{ id: 'whatsapp', label: tr('طلبات واتساب', 'WhatsApp AI'), icon: <MessageSquare className="w-5 h-5" /> }] : []),
+      { id: 'qr', label: tr('الباركود', 'QR'), icon: <QrCode className="w-5 h-5" /> },
       { id: 'orders', label: tr('الطلبات', 'Orders'), icon: <ClipboardList className="w-5 h-5" /> },
       { id: 'archive', label: tr('الأرشيف', 'Archive'), icon: <History className="w-5 h-5" /> },
       { id: 'alerts', label: tr('التنبيهات', 'Alerts'), icon: <ShieldAlert className="w-5 h-5" /> },
-      { id: 'menu', label: tr('المنيو', 'Menu'), icon: <Utensils className="w-5 h-5" /> },
       { id: 'theme', label: tr('هوية المطعم', 'Branding'), icon: <Palette className="w-5 h-5" /> },
-      { id: 'qr', label: tr('الباركود', 'QR'), icon: <QrCode className="w-5 h-5" /> },
       { id: 'help', label: tr('المساعدة', 'Help'), icon: <HelpingHand className="w-5 h-5" /> },
     ],
     waiter: [
@@ -246,15 +252,13 @@ export default function App() {
   const currentMenuItems = menuItems[session.role] || [];
 
   return (
+    <SubscriptionGuard session={session}>
     <div
-      className={`workspace-theme ${session.role === 'admin' ? 'admin-shell' : ''} min-h-screen bg-bg-paper font-sans text-text-main selection:bg-brand-primary/10 flex overflow-hidden`}
+      className={`workspace-theme ${session.role === 'admin' ? 'admin-shell' : 'partner-shell'} min-h-screen bg-bg-paper font-sans text-text-main selection:bg-brand-primary/10 flex overflow-hidden`}
       data-workspace-theme={workspaceTheme.id}
       style={themeStyle(workspaceTheme)}
       dir={dir}
     >
-      {/* Texture Overlay */}
-      {session.role !== 'admin' && <div className="fixed inset-0 pointer-events-none opacity-[0.02] z-[100] bg-[url('https://www.transparenttextures.com/patterns/natural-paper.png')]" />}
-
       {/* Mobile Backdrop Overlay */}
       <AnimatePresence>
         {isSidebarOpen && (
@@ -288,20 +292,20 @@ export default function App() {
 
           <motion.div 
             whileHover={{ scale: 1.05 }}
-            className={session.role === 'admin' ? 'w-14 h-14 bg-brand-primary rounded-2xl flex items-center justify-center mb-4 p-2' : 'w-20 h-20 bg-brand-primary rounded-2xl flex items-center justify-center mb-8 shadow-xl p-3'}
+            className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-primary p-2"
           >
             <img src={systemLogo || DEFAULT_SYSTEM_LOGO} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
           </motion.div>
           <div className="text-center">
-            <h1 className={session.role === 'admin' ? 'text-2xl font-display font-bold text-brand-primary leading-none mb-2 tracking-tight' : 'text-4xl font-display font-bold text-brand-primary leading-none mb-4 tracking-tight'}>{BRAND_NAME}</h1>
+            <h1 className="mb-2 font-display text-2xl font-bold leading-none tracking-tight text-brand-primary">{BRAND_NAME}</h1>
             <p className="text-xs text-text-muted font-bold">{session.role === 'admin' ? tr('لوحة الإدارة', 'Admin dashboard') : tr('لوحة إدارة المطعم', 'Restaurant workspace')}</p>
           </div>
         </div>
 
         {/* Navigation Items */}
-        <nav className={session.role === 'admin' ? 'sidebar-scroll min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-y-contain px-4' : 'sidebar-scroll min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-y-contain px-8'}>
-          <div className={session.role === 'admin' ? 'mb-5' : 'mb-10'}>
-             <div className={session.role === 'admin' ? 'flex items-center gap-3 mb-3 px-3' : 'flex items-center gap-3 mb-8'}>
+        <nav className="sidebar-scroll min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-y-contain px-4">
+          <div className="mb-5">
+             <div className="mb-3 flex items-center gap-3 px-3">
                 <span className="w-8 h-[1px] bg-brand-gold" />
                 <p className="text-[10px] font-bold text-brand-gold uppercase tracking-[0.3em]">{tr('أقسام النظام', 'Workspace')}</p>
              </div>
@@ -312,15 +316,12 @@ export default function App() {
                    setActiveTab(item.id);
                    if (window.innerWidth < 1024) setIsSidebarOpen(false);
                  }}
-                 className={session.role === 'admin'
-                   ? `w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-colors relative group overflow-hidden ${activeTab === item.id ? 'bg-brand-primary text-white font-bold' : 'text-text-muted hover:text-brand-primary hover:bg-bg-paper'}`
-                   : `w-full flex items-center gap-6 px-8 py-5 rounded-none transition-all relative group overflow-hidden border-b border-transparent hover:border-border-delicate ${activeTab === item.id ? 'text-brand-primary italic font-medium' : 'text-text-muted hover:text-brand-primary'}`}
+                 className={`relative flex w-full items-center gap-4 overflow-hidden rounded-xl px-4 py-3 transition-colors ${activeTab === item.id ? 'bg-brand-primary font-bold text-white' : 'text-text-muted hover:bg-bg-paper hover:text-brand-primary'}`}
                >
-                 <span className={session.role === 'admin' ? (activeTab === item.id ? 'text-white' : 'text-brand-gold') : `transition-transform duration-700 ${activeTab === item.id ? 'scale-110 text-brand-gold' : 'group-hover:scale-110 opacity-40'}`}>
+                 <span className={activeTab === item.id ? 'text-white' : 'text-brand-gold'}>
                     {item.icon}
                  </span>
-                 <span className={session.role === 'admin' ? 'font-display text-base' : 'font-display text-xl tracking-tight'}>{item.label}</span>
-                 {session.role !== 'admin' && activeTab === item.id && <motion.div layoutId="sidebarActiveInd" className="absolute left-0 w-1.5 h-full bg-brand-gold" />}
+                 <span className="font-display text-base">{item.label}</span>
                </button>
              ))}
           </div>
@@ -376,9 +377,9 @@ export default function App() {
         </header>
 
         {/* Desktop Header */}
-        <header className={session.role === 'admin' ? 'workspace-shell-panel hidden lg:flex items-center justify-between px-10 py-5 backdrop-blur-sm border-b border-border-delicate' : 'workspace-shell-panel hidden lg:flex items-center justify-between px-16 py-10 backdrop-blur-sm border-b border-border-delicate'}>
+        <header className="workspace-shell-panel hidden items-center justify-between border-b border-border-delicate px-10 py-5 backdrop-blur-sm lg:flex">
            <div className="flex items-center gap-6">
-              <h2 className={session.role === 'admin' ? 'text-2xl font-display font-bold text-brand-primary' : 'text-5xl font-display text-brand-primary tracking-tight italic'}>
+              <h2 className="font-display text-2xl font-bold text-brand-primary">
                 {currentMenuItems.find(m => m.id === activeTab)?.label || tr('الرئيسية', 'Home')}
               </h2>
               <div className="w-[1px] h-10 bg-brand-gold/20" />
@@ -389,28 +390,15 @@ export default function App() {
               }</span>
            </div>
            
-           {session.role === 'admin' ? <div className="flex items-center gap-2">
+           <div className="flex items-center gap-2">
              <button type="button" onClick={toggleLanguage} className="rounded-xl border border-border-delicate px-4 py-2 text-sm font-bold text-brand-primary">{isEnglish ? 'العربية' : 'English'}</button>
              <button type="button" onClick={handleLogout} className="rounded-xl border border-border-delicate px-4 py-2 text-sm font-bold text-red-700">{tr('خروج', 'Sign out')}</button>
-           </div> : <div className="flex items-center gap-12">
-              <div className="relative group">
-                 <Search className="absolute right-0 top-1/2 -translate-y-1/2 w-5 h-5 text-text-muted/30 group-focus-within:text-brand-primary transition-colors" />
-                 <input 
-                  type="text" 
-                  placeholder={tr('البحث الشامل...', 'Search...')}
-                  className="bg-transparent border-b border-border-delicate px-8 py-3 text-sm focus:outline-none focus:border-brand-primary transition-all w-80 font-light italic"
-                 />
-              </div>
-              <div className="flex items-center gap-4">
-                 <div className="w-1.5 h-1.5 bg-emerald-600 rounded-full animate-pulse" />
-                 <span className="text-[9px] font-bold text-emerald-700 uppercase tracking-[0.3em]">{tr('نشط ومستمر', 'Live')}</span>
-              </div>
-           </div>}
+           </div>
          </header>
 
 
         {/* Viewport for Dashboard Pages */}
-        <main className={session.role === 'admin' ? 'flex-1 overflow-y-auto px-4 pt-5 pb-28 sm:p-8 lg:px-10 lg:py-8 no-scrollbar bg-bg-paper' : 'flex-1 overflow-y-auto px-4 pt-5 pb-28 sm:p-8 lg:p-20 no-scrollbar bg-bg-paper'}>
+        <main className="no-scrollbar flex-1 overflow-y-auto bg-bg-paper px-4 pb-28 pt-5 sm:p-8 lg:px-10 lg:py-8">
           <AnimatePresence mode="wait">
             {session.role === 'admin' && (
               <motion.div
@@ -429,7 +417,13 @@ export default function App() {
                 exit={{ opacity: 0, scale: 0.98 }}
                 key={`restaurant-${activeTab}`}
               >
-                <RestaurantDashboard restaurantId={session.restaurantId} activeTab={activeTab as any} onThemeChange={(restaurant) => setWorkspaceTheme(resolveTheme(restaurant.themeId, restaurant.themeColors))} />
+                {activeTab === 'whatsapp' && session.membershipRole === 'owner' ? (
+                  <React.Suspense fallback={<p role="status">{tr('جارٍ التحميل…', 'Loading…')}</p>}>
+                    <WhatsAppSettings key={session.restaurantId} restaurantId={session.restaurantId} />
+                  </React.Suspense>
+                ) : (
+                  <RestaurantDashboard restaurantId={session.restaurantId} activeTab={activeTab as any} onThemeChange={(restaurant) => setWorkspaceTheme(resolveTheme(restaurant.themeId, restaurant.themeColors))} />
+                )}
               </motion.div>
             )}
             {session.role === 'waiter' && session.restaurantId && (
@@ -478,6 +472,7 @@ export default function App() {
       <div className="fixed top-12 left-12 w-24 h-24 border-t border-l border-brand-gold/20 pointer-events-none opacity-40 z-0" />
       <div className="fixed bottom-12 left-12 w-24 h-24 border-b border-l border-brand-gold/20 pointer-events-none opacity-40 z-0" />
     </div>
+    </SubscriptionGuard>
   );
 }
 

@@ -10,10 +10,10 @@ type StaffWelcomeCardProps = {
 export function StaffWelcomeCard({ logoUrl, logoAlt, eyebrow, title, description, metrics }: StaffWelcomeCardProps) {
   return (
     <section
-      className="relative overflow-hidden rounded-[28px] px-6 py-7 text-white shadow-[0_20px_45px_rgba(8,18,32,0.14)] sm:px-9 sm:py-9"
-      style={{ backgroundImage: 'linear-gradient(135deg, var(--color-brand-primary), var(--color-brand-secondary))' }}
+      className="relative overflow-hidden rounded-[28px] bg-[#081d2d] px-6 py-7 text-white shadow-[0_20px_45px_rgba(8,18,32,0.14)] sm:px-9 sm:py-9"
     >
       <div className="pointer-events-none absolute -top-24 -end-20 h-64 w-64 rounded-full border-[32px] border-white/[0.04]" />
+      <div className="pointer-events-none absolute -bottom-28 start-1/3 h-52 w-52 rounded-full bg-brand-gold/10 blur-3xl" />
       <div className="relative flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-5">
           <img src={logoUrl} alt={logoAlt} className="h-14 w-14 shrink-0 object-contain sm:h-20 sm:w-20" referrerPolicy="no-referrer" />
@@ -25,7 +25,7 @@ export function StaffWelcomeCard({ logoUrl, logoAlt, eyebrow, title, description
         </div>
         <div className="grid grid-cols-2 gap-2 border-t border-white/20 pt-4 sm:min-w-48 sm:border-t-0 sm:pt-0">
           {metrics.map(({ label, value }) => (
-            <div key={label} className="rounded-xl bg-white/10 px-3 py-2.5 text-center">
+            <div key={label} className="rounded-xl border border-white/10 bg-white/10 px-3 py-2.5 text-center">
               <p className="text-[10px] font-medium text-white/75">{label}</p>
               <p className="mt-1 text-xl font-bold tabular-nums text-white">{value}</p>
             </div>

@@ -109,6 +109,19 @@ html[lang="ar"] body * {
 .admin-shell .workspace-sidebar nav button:hover { background-color: rgb(255 255 255 / .08); }
 .admin-shell .workspace-sidebar nav button.bg-brand-primary { background-color: #C84C29; }
 .admin-shell main { background: #f8f8f6; }
+.partner-shell .workspace-sidebar.workspace-shell-panel { background: #081220; color: #f8f8f6; border-color: rgb(255 255 255 / .12); }
+.partner-shell .workspace-sidebar .text-brand-primary { color: #f8f8f6; }
+.partner-shell .workspace-sidebar .text-text-muted { color: #c0c9cf; }
+.partner-shell .workspace-sidebar .border-border-delicate { border-color: rgb(255 255 255 / .14); }
+.partner-shell .workspace-sidebar .bg-bg-paper { background: #132537; }
+.partner-shell .workspace-sidebar nav button:hover { background-color: rgb(255 255 255 / .08); }
+.partner-shell .workspace-sidebar nav button.bg-brand-primary { background-color: var(--color-brand-primary); }
+.dashboard-surface { max-width: 1440px; margin-inline: auto; }
+.dashboard-surface [class~="bg-white"] { border-radius: 1.25rem; box-shadow: 0 8px 28px rgb(8 18 32 / .035); }
+.dashboard-surface .workflow-panel { background: color-mix(in srgb, var(--color-bg-card), var(--color-bg-paper) 35%); border: 1px solid var(--color-border-delicate); border-radius: 1.5rem; padding: 1.25rem; box-shadow: 0 8px 28px rgb(8 18 32 / .035); }
+.dashboard-surface .workflow-panel-ready { background: color-mix(in srgb, #eaf8ef, var(--color-bg-card) 70%); }
+.dashboard-surface .workflow-panel :is(h2, h3) { letter-spacing: normal; }
+.dashboard-surface button:focus-visible, .dashboard-surface :is(input, select, textarea):focus-visible { outline: 2px solid var(--color-brand-gold); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
   .admin-surface .admin-partner-card { transition: none; }
   .admin-surface .admin-partner-card:hover { transform: none; }

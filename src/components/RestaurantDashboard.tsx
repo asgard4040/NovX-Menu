@@ -66,9 +66,13 @@ import { BanCustomerModal } from "./WaiterDashboard";
 import { MENU_THEMES, contrastRatio, resolveTheme, themeStyle, ThemeColors } from "../lib/themes";
 import { supabase } from "../lib/supabase";
 import { persistRestaurantImage } from "../lib/storage";
+import { DEFAULT_SYSTEM_LOGO } from "../lib/brand";
 import { localizeCategory, localizeDeviceType, useLanguage } from "../lib/i18n";
-import QrPrintStudio from "./QrPrintStudio";
+import QrPrintStudio, { imageDataUrl } from "./QrPrintStudio";
 import { customerMenuUrl, staffPortalUrl } from '../lib/public-urls';
+import { baghdadDayKey, summarizeOwnerOrders } from '../lib/owner-finance';
+
+const RestaurantLocationMap = React.lazy(() => import('./RestaurantLocationMap'));
 
 const DEFAULT_MENU_CATEGORIES = ["الوجبات الأساسية", "المقبلات", "الحلويات", "المشروبات"];
 
@@ -108,6 +112,7 @@ export default function RestaurantDashboard({
     role: "waiter" | "kitchen";
     staff?: Waiter;
   } | null>(null);
+  const [staffPasscodeVersion, setStaffPasscodeVersion] = useState(0);
   const [showProductModal, setShowProductModal] = useState<{
     open: boolean;
     item?: MenuItem;
@@ -131,6 +136,20 @@ export default function RestaurantDashboard({
 
   const [supportPhone, setSupportPhone] = useState(() => localStorage.getItem("novix_support_phone") || "07740064528");
   const [systemLogo, setSystemLogo] = useState(() => localStorage.getItem("novix_system_logo") || "");
+  const [qrLogoData, setQrLogoData] = useState<string | null>(null);
+  const [qrDownloadError, setQrDownloadError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setQrLogoData(null);
+    setQrDownloadError("");
+    const logoUrl = restaurant?.logoUrl || DEFAULT_SYSTEM_LOGO;
+    imageDataUrl(logoUrl)
+      .catch(() => imageDataUrl(DEFAULT_SYSTEM_LOGO))
+      .then(data => { if (active) setQrLogoData(data); })
+      .catch(() => { if (active) setQrDownloadError(tr('تعذر تحميل شعار رمز QR.', 'Could not load the QR logo.')); });
+    return () => { active = false; };
+  }, [restaurant?.logoUrl, language]);
 
   useEffect(() => {
     const fetchSupport = async () => {
@@ -153,13 +172,7 @@ export default function RestaurantDashboard({
     fetchSupport();
   }, []);
 
-  const [selectedProfitDate, setSelectedProfitDate] = useState<string>(() => {
-    const today = new Date();
-    const y = today.getFullYear();
-    const m = String(today.getMonth() + 1).padStart(2, '0');
-    const d = String(today.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  });
+  const [selectedProfitDate, setSelectedProfitDate] = useState<string>(() => baghdadDayKey(Date.now()));
   const [isResetting, setIsResetting] = useState(false);
   const [showResetConfirmModal, setShowResetConfirmModal] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
@@ -178,31 +191,36 @@ export default function RestaurantDashboard({
   const [latInput, setLatInput] = useState<string>("");
   const [lngInput, setLngInput] = useState<string>("");
   const [radiusInput, setRadiusInput] = useState<string>("150");
+  const [selectingLocationOnMap, setSelectingLocationOnMap] = useState(false);
+  const [locationMessage, setLocationMessage] = useState('');
+  const [financeNow, setFinanceNow] = useState(Date.now());
   const [savingLocation, setSavingLocation] = useState(false);
   const [fetchingLocationGPS, setFetchingLocationGPS] = useState(false);
+  const locationInitializedFor = React.useRef<string | null>(null);
 
   useEffect(() => {
-    if (restaurant) {
-      if (restaurant.latitude != null && latInput === "") {
-        setLatInput(restaurant.latitude.toString());
-      }
-      if (restaurant.longitude != null && lngInput === "") {
-        setLngInput(restaurant.longitude.toString());
-      }
-      setRadiusInput(String(restaurant.geofenceRadiusMeters || 150));
-    }
+    if (!restaurant || locationInitializedFor.current === restaurant.id) return;
+    locationInitializedFor.current = restaurant.id;
+    setLatInput(restaurant.latitude == null ? '' : String(restaurant.latitude));
+    setLngInput(restaurant.longitude == null ? '' : String(restaurant.longitude));
+    setRadiusInput(String(Math.min(1000, Math.max(10, restaurant.geofenceRadiusMeters || 150))));
   }, [restaurant]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setFinanceNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const handleUpdateLocation = async () => {
     const latNum = parseFloat(latInput);
     const lngNum = parseFloat(lngInput);
     const radiusNum = parseFloat(radiusInput);
     if (!Number.isFinite(latNum) || !Number.isFinite(lngNum) || Math.abs(latNum) > 90 || Math.abs(lngNum) > 180) {
-      alert(tr('يرجى إدخال قيم جغرافية (خط العرض وخط الطول) صحيحة.', 'Enter valid latitude and longitude values.'));
+      setLocationMessage(tr('حدد موقع المطعم على الخريطة أولاً.', 'Choose the restaurant location on the map first.'));
       return;
     }
-    if (!Number.isFinite(radiusNum) || radiusNum < 25 || radiusNum > 1000) {
-      alert(tr('يجب أن يكون نطاق التحقق بين 25 و1000 متر.', 'The allowed radius must be between 25 and 1000 meters.'));
+    if (!Number.isInteger(radiusNum) || radiusNum < 10 || radiusNum > 1000) {
+      setLocationMessage(tr('اختر نطاقاً بين ١٠ و١٠٠٠ متر.', 'Choose a radius between 10 and 1000 meters.'));
       return;
     }
     try {
@@ -212,12 +230,12 @@ export default function RestaurantDashboard({
         longitude: lngNum,
         geofenceRadiusMeters: radiusNum,
       });
-      alert(tr('تم حفظ موقع المطعم الجغرافي بنجاح! سيتم فحص وجود الزبائن تبعاً لهذا الموقع بدقة.', 'Restaurant location saved. Customer distance checks will use these coordinates.'));
+      setLocationMessage(tr('تم حفظ الموقع ونطاق التحقق بنجاح.', 'Location and allowed radius saved.'));
       if (restaurant) {
         setRestaurant({ ...restaurant, latitude: latNum, longitude: lngNum, geofenceRadiusMeters: radiusNum });
       }
     } catch (err) {
-      alert(tr('فشل في حفظ إعدادات الموقع الجغرافي.', 'Could not save location settings.'));
+      setLocationMessage(tr('تعذر حفظ الموقع. تحقق من الاتصال ثم أعد المحاولة.', 'Could not save location. Check your connection and retry.'));
     } finally {
       setSavingLocation(false);
     }
@@ -234,11 +252,12 @@ export default function RestaurantDashboard({
         setLatInput(position.coords.latitude.toString());
         setLngInput(position.coords.longitude.toString());
         setFetchingLocationGPS(false);
-        alert(tr("تم التقاط إحداثيات موقعك الحالي بنجاح! انقر على زر 'حفظ موقع المطعم' لتثبيت الإعدادات.", 'Location captured. Select Save restaurant location to apply it.'));
+        setSelectingLocationOnMap(false);
+        setLocationMessage(tr('تم تحديد موقعك الحالي. راجع الدائرة ثم احفظ.', 'Current location selected. Review the circle, then save.'));
       },
-      (error) => {
+      () => {
         setFetchingLocationGPS(false);
-        alert(tr('فشل في التقاط موقعك الجغرافي. يرجى تفعيل إذن الوصول للموقع في متصفحك أو إدخالها يدوياً.', 'Could not get your location. Allow location access or enter coordinates manually.'));
+        setLocationMessage(tr('تعذر تحديد الموقع. اسمح للموقع بالوصول إلى GPS أو اختره على الخريطة.', 'Could not get your location. Allow GPS access or pick the restaurant on the map.'));
       },
       { enableHighAccuracy: true, timeout: 10000 }
     );
@@ -311,49 +330,22 @@ export default function RestaurantDashboard({
     }
   };
 
-  const todayStr = new Date().toDateString();
-  const currentMonth = new Date().getMonth();
-  const currentYear = new Date().getFullYear();
-
-  const dailyOrders = orders.filter(o => {
-    try {
-      return new Date(o.createdAt).toDateString() === todayStr;
-    } catch {
-      return false;
-    }
-  });
-  const dailyOrdersCount = dailyOrders.length;
-  const dailyEarnings = dailyOrders.reduce((sum, o) => o.status !== 'cancelled' ? sum + o.totalAmount : sum, 0);
-
-  const monthlyOrders = orders.filter(o => {
-    try {
-      const oDate = new Date(o.createdAt);
-      return oDate.getMonth() === currentMonth && oDate.getFullYear() === currentYear;
-    } catch {
-      return false;
-    }
-  });
-  const monthlyOrdersCount = monthlyOrders.length;
-  const monthlyEarnings = monthlyOrders.reduce((sum, o) => o.status !== 'cancelled' ? sum + o.totalAmount : sum, 0);
+  const finance = summarizeOwnerOrders(orders, financeNow);
+  const draftLat = Number(latInput);
+  const draftLng = Number(lngInput);
+  const draftPoint = latInput !== '' && lngInput !== '' && Number.isFinite(draftLat) && Number.isFinite(draftLng)
+    && Math.abs(draftLat) <= 90 && Math.abs(draftLng) <= 180 ? { latitude: draftLat, longitude: draftLng } : null;
 
   // Profit analytical date filters
   const selectedDateOrders = orders.filter(o => {
     try {
-      const oDate = new Date(o.createdAt);
-      const formatYMD = (date: Date) => {
-        const y = date.getFullYear();
-        const m = String(date.getMonth() + 1).padStart(2, '0');
-        const d = String(date.getDate()).padStart(2, '0');
-        return `${y}-${m}-${d}`;
-      };
-      return formatYMD(oDate) === selectedProfitDate;
+      return baghdadDayKey(new Date(o.createdAt)) === selectedProfitDate;
     } catch {
       return false;
     }
   });
-  const selectedDateOrdersCount = selectedDateOrders.length;
-  const selectedDateEarnings = selectedDateOrders.reduce((sum, o) => o.status !== 'cancelled' ? sum + o.totalAmount : sum, 0);
-  const selectedDateCancelled = selectedDateOrders.filter(o => o.status === 'cancelled').length;
+  const selectedDateEarnings = selectedDateOrders.reduce((sum, o) => o.status === 'served' ? sum + o.totalAmount : sum, 0);
+  const selectedDateCancelled = selectedDateOrders.filter(o => o.status === 'cancelled' || o.status === 'rejected').length;
 
   useEffect(() => {
     let active = true;
@@ -627,22 +619,34 @@ export default function RestaurantDashboard({
 
   const downloadQR = () => {
     const svg = document.getElementById("menu-qr");
-    if (svg) {
+    if (svg && qrLogoData) {
+      setQrDownloadError("");
       const svgData = new XMLSerializer().serializeToString(svg);
       const canvas = document.createElement("canvas");
       const ctx = canvas.getContext("2d");
       const img = new Image();
+      const svgUrl = URL.createObjectURL(new Blob([svgData], { type: "image/svg+xml;charset=utf-8" }));
       img.onload = () => {
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx?.drawImage(img, 0, 0);
-        const pngFile = canvas.toDataURL("image/png");
-        const downloadLink = document.createElement("a");
-        downloadLink.download = `${restaurant?.restaurantName}-Menu-QR.png`;
-        downloadLink.href = `${pngFile}`;
-        downloadLink.click();
+        try {
+          canvas.width = 1024;
+          canvas.height = 1024;
+          if (!ctx) throw new Error("canvas_unavailable");
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          const downloadLink = document.createElement("a");
+          downloadLink.download = `${restaurant?.restaurantName}-Menu-QR.png`;
+          downloadLink.href = canvas.toDataURL("image/png");
+          downloadLink.click();
+        } catch {
+          setQrDownloadError(tr('تعذر تنزيل رمز QR. حاول مرة أخرى.', 'Could not download the QR code. Try again.'));
+        } finally {
+          URL.revokeObjectURL(svgUrl);
+        }
       };
-      img.src = "data:image/svg+xml;base64," + btoa(svgData);
+      img.onerror = () => {
+        URL.revokeObjectURL(svgUrl);
+        setQrDownloadError(tr('تعذر تنزيل رمز QR. حاول مرة أخرى.', 'Could not download the QR code. Try again.'));
+      };
+      img.src = svgUrl;
     }
   };
 
@@ -681,7 +685,8 @@ export default function RestaurantDashboard({
   const oneDay = 24 * 60 * 60 * 1000;
   const isWarningBefore = expiryTime > 0 && now < expiryTime && (expiryTime - now <= 3 * oneDay);
   const isWarningAfter = expiryTime > 0 && now >= expiryTime && (now - expiryTime <= 3 * oneDay);
-  const isExpiredAndLocked = expiryTime > 0 && (now - expiryTime > 3 * oneDay);
+  const graceMs = (restaurant.gracePeriodDays ?? 0) * oneDay;
+  const isExpiredAndLocked = expiryTime <= 0 || now >= expiryTime + graceMs;
 
   if (isExpiredAndLocked) {
     return (
@@ -692,7 +697,7 @@ export default function RestaurantDashboard({
         <div className="space-y-4 max-w-lg">
           <h2 className="text-3xl font-display text-red-700 font-bold">{tr('عذراً، انتهى اشتراك النظام!', 'Subscription expired')}</h2>
           <p className="text-text-muted leading-relaxed font-sans">
-            {tr('لقد انتهت فترة الاشتراك وفترة السماح الممنوحة لهذا المطعم بالكامل. تم إيقاف تشغيل لوحة التحكم مؤقتاً.', 'The subscription and grace period have ended. This workspace is temporarily unavailable.')}
+            {tr('انتهت فترة الاشتراك. تم إيقاف لوحة التحكم مؤقتاً حتى التجديد.', 'The subscription has ended. This workspace is unavailable until renewal.')}
           </p>
           <div className="bg-red-50 p-6 rounded-xl border border-red-100 text-center font-display space-y-2">
             <p className="text-xs text-red-800 font-bold">{tr('يرجى الاتصال بفريق الدعم الفني فوراً من أجل تجديد الاشتراك وتفعيل النظام:', 'Contact support to renew and reactivate the service:')}</p>
@@ -713,7 +718,7 @@ export default function RestaurantDashboard({
   }
 
   return (
-    <div className="space-y-12" dir={dir}>
+    <div className="dashboard-surface space-y-6" dir={dir}>
       {/* Offline Alert Banner */}
       {!isOnline && (
         <div className="p-4 bg-red-600 text-white rounded-none flex items-center justify-center gap-3 text-right font-sans font-bold text-xs" id="admin-offline-banner">
@@ -736,7 +741,7 @@ export default function RestaurantDashboard({
         <div className="p-6 bg-red-50 border border-red-200 text-red-950 rounded-none flex items-center gap-4 text-right">
           <ShieldAlert className="w-6 h-6 text-red-600 shrink-0 animate-pulse" />
           <p className="text-sm font-bold font-sans">
-            {tr('تنبيه حرج جداً: لقد انتهى اشتراك نظامكم رسميًا! النظام قيد فترة التجريب والمهلة الإضافية وستتوقف الخدمة تماماً بعد 3 أيام من تاريخ الانتهاء. اتصلوا بالدعم للتجديد الفوري:', 'Your subscription has expired. Service will stop after the grace period. Contact support to renew:')} <span className="font-display font-bold text-red-800">{supportPhone}</span>
+            {tr('انتهى الاشتراك. جدد لاستعادة الخدمة أو اتصل بالدعم:', 'The subscription has ended. Renew to restore service or contact support:')} <span className="font-display font-bold text-red-800">{supportPhone}</span>
           </p>
         </div>
       )}
@@ -748,11 +753,10 @@ export default function RestaurantDashboard({
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="space-y-12"
+            className="space-y-6"
           >
             <section
-              className="relative overflow-hidden rounded-[28px] px-6 py-8 text-white shadow-[0_20px_45px_rgba(8,18,32,0.14)] sm:px-10 sm:py-10"
-              style={{ backgroundImage: 'linear-gradient(135deg, var(--color-brand-primary), var(--color-brand-secondary))' }}
+              className="relative overflow-hidden rounded-[28px] bg-[#081d2d] px-6 py-8 text-white shadow-[0_20px_45px_rgba(8,18,32,0.14)] sm:px-10 sm:py-10"
             >
               <div className="pointer-events-none absolute -top-24 -end-20 h-72 w-72 rounded-full border-[36px] border-white/[0.04]" />
               <div className="pointer-events-none absolute -bottom-32 start-1/3 h-64 w-64 rounded-full bg-white/[0.04] blur-2xl" />
@@ -791,19 +795,19 @@ export default function RestaurantDashboard({
                 </div>
               </div>
             </section>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
               <StatCard
-                title={tr('المبيعات اليومية', 'Daily sales')}
-                value={dailyEarnings.toLocaleString()}
+                title={tr('قيمة الطلبات المقدمة اليوم', 'Served order value today')}
+                value={finance.todayValue.toLocaleString()}
                 unit={tr('د.ع', 'IQD')}
-                label={tr(`بواقع ${dailyOrdersCount} طلباً اليوم`, `${dailyOrdersCount} orders today`)}
+                label={tr('حسب الطلبات المقدمة فقط', 'Served orders only')}
                 icon={<ClipboardList className="w-5 h-5" />}
               />
               <StatCard
-                title={tr('أرباح هذا الشهر', 'Monthly revenue')}
-                value={monthlyEarnings.toLocaleString()}
+                title={tr('قيمة الطلبات المقدمة هذا الشهر', 'Served order value this month')}
+                value={finance.monthValue.toLocaleString()}
                 unit={tr('د.ع', 'IQD')}
-                label={tr(`بواقع ${monthlyOrdersCount} طلباً هذا الشهر`, `${monthlyOrdersCount} orders this month`)}
+                label={tr(`من ${finance.monthServedCount} طلب مقدم`, `From ${finance.monthServedCount} served orders`)}
                 icon={<BarChart3 className="w-5 h-5" />}
               />
               <StatCard
@@ -820,14 +824,16 @@ export default function RestaurantDashboard({
               />
             </div>
 
+            <OwnerFinancePanel finance={finance} />
+
             {/* Specific Day Profit Analyzer */}
-            <div className="bg-white border border-border-delicate p-6 sm:p-10 space-y-6 relative overflow-hidden text-right" dir={dir}>
+            <div className="relative space-y-6 overflow-hidden rounded-2xl border border-border-delicate bg-white p-6 text-right sm:p-8" dir={dir}>
               <div className="absolute top-0 right-0 w-1.5 h-full bg-brand-gold" />
               <div className="space-y-4">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                   <div className="space-y-1">
-                    <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest">{tr('أرباح أي يوم تريده', 'Sales by date')}</p>
-                    <h3 className="text-xl font-display text-brand-primary italic font-bold">{tr('مستكشف مبيعات الأيام السابقة', 'Daily sales explorer')}</h3>
+                    <p className="text-xs font-bold text-brand-gold">{tr('مراجعة الأيام', 'Daily review')}</p>
+                    <h3 className="text-xl font-bold text-brand-primary">{tr('تفاصيل يوم محدد', 'A closer look at any day')}</h3>
                   </div>
                   {/* Date input styled nicely */}
                   <input
@@ -839,21 +845,21 @@ export default function RestaurantDashboard({
                 </div>
                 
                 {/* Stats for the chosen day */}
-                <div className="grid grid-cols-3 gap-4 pt-2">
-                  <div className="p-4 bg-bg-paper border border-border-delicate text-right">
-                    <p className="text-[9px] font-bold text-text-muted uppercase tracking-widest">{tr('مبيعات هذا اليوم', 'Sales')}</p>
+                <div className="grid grid-cols-1 gap-3 pt-2 sm:grid-cols-3">
+                  <div className="rounded-xl border border-border-delicate bg-bg-paper p-4 text-right">
+                    <p className="text-xs font-bold text-text-muted">{tr('قيمة الطلبات المقدمة', 'Served order value')}</p>
                     <p className="text-md sm:text-lg font-display text-brand-primary not-italic font-bold truncate mt-1">
                       <span className="font-sans">{selectedDateEarnings.toLocaleString()}</span> <span className="text-[10px]">{tr('د.ع', 'IQD')}</span>
                     </p>
                   </div>
-                  <div className="p-4 bg-bg-paper border border-border-delicate text-right">
-                    <p className="text-[9px] font-bold text-text-muted uppercase tracking-widest font-sans">{tr('طلبات مكتملة', 'Completed')}</p>
+                  <div className="rounded-xl border border-border-delicate bg-bg-paper p-4 text-right">
+                    <p className="text-xs font-bold text-text-muted">{tr('طلبات مقدمة', 'Served orders')}</p>
                     <p className="text-md sm:text-lg font-display text-brand-primary not-italic font-bold mt-1">
-                      <span className="font-sans">{selectedDateOrders.filter(o => o.status !== 'cancelled').length}</span>
+                      <span className="font-sans">{selectedDateOrders.filter(o => o.status === 'served').length}</span>
                     </p>
                   </div>
-                  <div className="p-4 bg-bg-paper border border-border-delicate text-right">
-                    <p className="text-[9px] font-bold text-text-muted uppercase tracking-widest font-sans">{tr('طلبات ملغاة', 'Cancelled')}</p>
+                  <div className="rounded-xl border border-border-delicate bg-bg-paper p-4 text-right">
+                    <p className="text-xs font-bold text-text-muted">{tr('ملغاة أو مرفوضة', 'Cancelled or rejected')}</p>
                     <p className="text-md sm:text-lg font-display text-red-800 not-italic font-bold mt-1">
                       <span className="font-sans">{selectedDateCancelled}</span>
                     </p>
@@ -863,80 +869,24 @@ export default function RestaurantDashboard({
             </div>
 
             {/* Geofence & Location Control Center */}
-            <div className="bg-white border border-border-delicate p-6 sm:p-10 space-y-6 relative overflow-hidden text-right" dir={dir}>
-              <div className="absolute top-0 right-0 w-1.5 h-full bg-emerald-600" />
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-                <div className="space-y-1">
-                  <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
-                    {tr('التحقق الجغرافي والوقاية من الطلبات والتصفح المزيف (GPS Anti-Spam)', 'Location verification and order protection')}
-                  </p>
-                  <h3 className="text-xl font-display text-brand-primary italic font-bold">{tr('تحديد موقع المطعم الجغرافي', 'Restaurant location')}</h3>
-                  <p className="text-xs text-text-muted max-w-3xl leading-relaxed">
-                    {tr('من خلال تحديد إحداثيات خطوط الطول والعرض لموقع مطعمك، حتى يظهر لك موقع الزبون بالنسبة لموقع مطعمك لكشف الطلبات الوهمية.', 'Set your restaurant coordinates so customer distance can be checked when placing orders.')}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleFetchCurrentGPS}
-                  disabled={fetchingLocationGPS}
-                  className="px-5 py-3 bg-white border border-brand-primary text-brand-primary text-[10px] font-bold uppercase tracking-wider hover:bg-brand-primary hover:text-white transition-all duration-300 disabled:opacity-40 rounded-none shrink-0 font-sans"
-                >
-                  {fetchingLocationGPS ? tr('جاري جلب موقعك...', 'Getting location...') : tr('تحديد موقعي عبر GPS 📍', 'Use current GPS 📍')}
-                </button>
+            <section className="space-y-5 rounded-2xl border border-border-delicate bg-white p-5 sm:p-7" dir={dir}>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div><p className="mb-1 text-xs font-bold text-brand-gold">{tr('حماية الطلبات بالموقع', 'Location-based order protection')}</p><h3 className="text-xl font-bold text-brand-primary">{tr('موقع المطعم ونطاق الخدمة', 'Restaurant location and service area')}</h3><p className="mt-2 max-w-2xl text-sm leading-6 text-text-muted">{tr('حدد مركز المطعم بالطريقة المناسبة، ثم اسحب الشريط لتشاهد المدى المسموح للزبائن على الخريطة.', 'Set the restaurant point, then drag the slider to preview the customer ordering area on the map.')}</p></div>
+                <span className={`inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-xs font-bold ${restaurant.latitude != null && restaurant.longitude != null ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}><span className="h-2 w-2 rounded-full bg-current" />{restaurant.latitude != null && restaurant.longitude != null ? tr('الموقع محفوظ', 'Location saved') : tr('الموقع غير محدد', 'No location saved')}</span>
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-2 font-sans">
-                <div className="space-y-1.5 text-right">
-                  <label className="text-[10px] font-bold text-brand-primary uppercase tracking-widest">{tr('خط العرض (Latitude)', 'Latitude')}</label>
-                  <input
-                    type="text"
-                    value={latInput}
-                    onChange={(e) => setLatInput(e.target.value)}
-                    placeholder={tr('مثال: 33.3250', 'Example: 33.3250')}
-                    className="w-full bg-bg-paper border border-border-delicate px-4 py-3.5 text-sm font-semibold text-brand-primary focus:outline-none"
-                  />
-                </div>
-                <div className="space-y-1.5 text-right">
-                  <label className="text-[10px] font-bold text-brand-primary uppercase tracking-widest">{tr('نطاق التحقق بالمتر', 'Allowed radius (meters)')}</label>
-                  <input type="number" min="25" max="1000" value={radiusInput} onChange={(e) => setRadiusInput(e.target.value)} className="w-full bg-bg-paper border border-border-delicate px-4 py-3.5 text-sm font-semibold text-brand-primary focus:outline-none" />
-                </div>
-                <div className="space-y-1.5 text-right">
-                  <label className="text-[10px] font-bold text-brand-primary uppercase tracking-widest">{tr('خط الطول (Longitude)', 'Longitude')}</label>
-                  <input
-                    type="text"
-                    value={lngInput}
-                    onChange={(e) => setLngInput(e.target.value)}
-                    placeholder={tr('مثال: 44.3400', 'Example: 44.3400')}
-                    className="w-full bg-bg-paper border border-border-delicate px-4 py-3.5 text-sm font-semibold text-brand-primary focus:outline-none"
-                  />
-                </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <button type="button" onClick={handleFetchCurrentGPS} disabled={fetchingLocationGPS} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-brand-primary px-4 text-sm font-bold text-white disabled:opacity-50"><MapPin className="h-4 w-4" />{fetchingLocationGPS ? tr('جاري تحديد الموقع...', 'Locating...') : tr('تحديد موقعي الحالي كمطعم', 'Use my current location')}</button>
+                <button type="button" onClick={() => { setSelectingLocationOnMap(true); setLocationMessage(tr('انقر على موضع المطعم داخل الخريطة.', 'Tap the restaurant position on the map.')); }} className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border px-4 text-sm font-bold ${selectingLocationOnMap ? 'border-brand-gold bg-amber-50 text-brand-primary' : 'border-border-delicate text-brand-primary hover:bg-bg-paper'}`}><MapPin className="h-4 w-4" />{selectingLocationOnMap ? tr('انقر على الخريطة الآن', 'Tap the map now') : tr('تحديد المطعم على الخريطة', 'Choose on the map')}</button>
               </div>
-
-              <div className="pt-2 flex flex-col sm:flex-row items-center gap-4 justify-between border-t border-border-delicate/40 font-sans">
-                <div className="text-xs text-text-muted flex items-center gap-1.5">
-                  {restaurant?.latitude && restaurant?.longitude ? (
-                    <span className="text-emerald-700 font-semibold flex items-center gap-1">
-                      <span className="w-2 h-2 bg-emerald-600 rounded-full" />
-                      {tr('الموقع الحالي مثبت:', 'Current location:')} ({restaurant.latitude.toFixed(5)}, {restaurant.longitude.toFixed(5)})
-                    </span>
-                  ) : (
-                    <span className="text-amber-700 font-semibold flex items-center gap-1 animate-pulse">
-                      <span className="w-2 h-2 bg-amber-500 rounded-full" />
-                      {tr('يرجى تعيين موقعك لتفعيل الوقاية الجغرافية (المنصور، بغداد افتراضياً)', 'Set your location to enable location verification.')}
-                    </span>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={handleUpdateLocation}
-                  disabled={savingLocation}
-                  className="w-full sm:w-auto px-10 py-4 bg-brand-primary text-white text-[10px] font-bold uppercase tracking-widest hover:bg-brand-secondary transition-all duration-300 disabled:opacity-40 rounded-none text-center font-sans"
-                >
-                  {savingLocation ? tr('جاري الحفظ والترميز الجغرافي...', 'Saving location...') : tr('حفظ وتثبيت موقع المطعم 💾', 'Save restaurant location 💾')}
-                </button>
+              <div className="relative z-0 overflow-hidden rounded-2xl border border-border-delicate"><React.Suspense fallback={<div className="flex h-72 items-center justify-center bg-bg-paper text-sm text-text-muted">{tr('جاري تحميل الخريطة...', 'Loading map...')}</div>}><RestaurantLocationMap point={draftPoint} radius={Number(radiusInput) || 150} selecting={selectingLocationOnMap} onSelect={point => { setLatInput(String(point.latitude)); setLngInput(String(point.longitude)); setSelectingLocationOnMap(false); setLocationMessage(tr('تم اختيار الموقع. راجع الدائرة ثم احفظ.', 'Location selected. Review the circle, then save.')); }} /></React.Suspense></div>
+              <div className="rounded-xl bg-bg-paper p-4 sm:p-5">
+                <div className="mb-3 flex items-center justify-between gap-3"><label htmlFor="service-radius" className="text-sm font-bold text-brand-primary">{tr('نصف قطر التحقق', 'Allowed radius')}</label><span className="rounded-lg bg-white px-3 py-1 text-sm font-bold text-brand-primary" dir="ltr">{Number(radiusInput).toLocaleString()} {tr('متر', 'm')}</span></div>
+                <input id="service-radius" type="range" min="10" max="1000" step="10" value={radiusInput} onChange={event => { setRadiusInput(event.target.value); setLocationMessage(''); }} className="w-full accent-emerald-700" />
+                <div className="mt-1 flex justify-between text-xs text-text-muted" dir="ltr"><span>10 m</span><span>1,000 m</span></div>
+                <p className="mt-3 text-xs leading-5 text-text-muted">{tr('الدائرة على الخريطة تمثل المسافة من مركز المطعم، وليست مساحة بالمتر المربع.', 'The circle shows distance from the restaurant point in meters.')}</p>
               </div>
-            </div>
+              <div className="flex flex-col gap-3 border-t border-border-delicate pt-4 sm:flex-row sm:items-center sm:justify-between"><p role="status" className="text-sm text-text-muted">{locationMessage || (draftPoint ? tr('راجع الموقع والمدى ثم احفظ التغييرات.', 'Review the location and radius, then save.') : tr('اختر موقع المطعم لعرض دائرة النطاق.', 'Choose a location to preview the allowed area.'))}</p><button type="button" onClick={handleUpdateLocation} disabled={savingLocation || !draftPoint} className="min-h-11 rounded-xl bg-brand-primary px-6 text-sm font-bold text-white disabled:opacity-50">{savingLocation ? tr('جاري الحفظ...', 'Saving...') : tr('حفظ الموقع والنطاق', 'Save location and radius')}</button></div>
+            </section>
 
             <div className="grid grid-cols-1 gap-8">
               <div className="bg-white border border-border-delicate p-6 sm:p-10 space-y-8">
@@ -993,30 +943,43 @@ export default function RestaurantDashboard({
             key="waiters"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="space-y-16"
+            className="space-y-8"
           >
+            <div className="relative overflow-hidden rounded-3xl bg-[#081d2d] p-6 text-white shadow-xl sm:p-8">
+              <div className="absolute -end-16 -top-20 h-56 w-56 rounded-full border border-white/10 bg-white/5" />
+              <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+                <div><p className="mb-2 text-xs font-bold text-brand-gold">{tr('إدارة الفريق', 'Team management')}</p><h2 className="text-2xl font-bold sm:text-3xl">{tr('طاقم مطعمك في مكان واحد', 'Your team in one place')}</h2><p className="mt-2 max-w-xl text-sm leading-6 text-white/65">{tr('تابع موظفي الصالة والمطبخ، وعدّل بياناتهم أو حالة عملهم بسرعة.', 'See your waiter and kitchen teams, and manage their access quickly.')}</p></div>
+                <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                  <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3"><p className="text-xs text-white/60">{tr('الكل', 'Total')}</p><p className="mt-1 text-2xl font-bold">{waiters.length + kitchenStaff.length}</p></div>
+                  <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3"><p className="text-xs text-white/60">{tr('الصالة', 'Waiters')}</p><p className="mt-1 text-2xl font-bold">{waiters.length}</p></div>
+                  <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3"><p className="text-xs text-white/60">{tr('المطبخ', 'Kitchen')}</p><p className="mt-1 text-2xl font-bold">{kitchenStaff.length}</p></div>
+                </div>
+              </div>
+            </div>
             {/* Waiters Section */}
-            <div className="space-y-8">
+            <div className="space-y-5">
               <div className="flex flex-col md:flex-row justify-between items-stretch md:items-end gap-6">
-                <div className="space-y-2 text-right">
-                  <h2 className="text-2xl sm:text-3xl font-display text-brand-primary tracking-tight">
-                    {tr('موظفين الصالة', 'Waiter staff')}
-                  </h2>
+                <div className="space-y-1 text-right">
+                  <h2 className="text-xl sm:text-2xl font-bold text-brand-primary">{tr('فريق الصالة', 'Waiter team')}</h2>
+                  <p className="text-sm text-text-muted">{tr('استقبال الطلبات وخدمة الطاولات', 'Taking orders and serving tables')}</p>
                 </div>
                 <button
                   onClick={() =>
                     setShowStaffModal({ open: true, role: "waiter" })
                   }
-                  className="px-10 py-5 bg-brand-primary text-white text-[11px] font-bold uppercase tracking-widest hover:bg-brand-secondary transition-all shadow-xl text-center"
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-brand-primary px-5 py-3 text-sm font-bold text-white hover:bg-brand-secondary transition-colors"
                 >
+                  <Plus className="h-4 w-4" />
                   {tr('إضافة كابتن / ويتر جديد', 'Add waiter')}
                 </button>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {waiters.map((w) => (
                   <StaffCard
                     key={w.id}
                     staff={w}
+                    restaurantId={restaurantId}
+                    passcodeVersion={staffPasscodeVersion}
                     onToggle={() => toggleStaffStatus(w.id, w.status, "waiter")}
                     onDelete={() => deleteStaff(w.id, "waiter")}
                     onEdit={() =>
@@ -1028,31 +991,34 @@ export default function RestaurantDashboard({
                     }
                   />
                 ))}
+                {waiters.length === 0 && <div className="col-span-full rounded-2xl border border-dashed border-border-delicate bg-white p-10 text-center text-sm text-text-muted">{tr('لا يوجد موظفو صالة بعد. أضف أول موظف للبدء.', 'No waiter staff yet. Add your first team member.')}</div>}
               </div>
             </div>
 
             {/* Kitchen Staff Section */}
-            <div className="space-y-8 pt-16 border-t border-border-delicate">
+            <div className="space-y-5 border-t border-border-delicate pt-8">
               <div className="flex flex-col md:flex-row justify-between items-stretch md:items-end gap-6">
-                <div className="space-y-2 text-right">
-                  <h2 className="text-2xl sm:text-3xl font-display text-brand-primary tracking-tight">
-                    {tr('قسم المطبخ', 'Kitchen staff')}
-                  </h2>
+                <div className="space-y-1 text-right">
+                  <h2 className="text-xl sm:text-2xl font-bold text-brand-primary">{tr('فريق المطبخ', 'Kitchen team')}</h2>
+                  <p className="text-sm text-text-muted">{tr('تحضير الأصناف وتحديث جاهزية الطلبات', 'Preparing items and marking orders ready')}</p>
                 </div>
                 <button
                   onClick={() =>
                     setShowStaffModal({ open: true, role: "kitchen" })
                   }
-                  className="px-10 py-5 border border-brand-gold text-brand-gold text-[11px] font-bold uppercase tracking-widest hover:bg-brand-gold hover:text-white transition-all text-center"
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-brand-gold px-5 py-3 text-sm font-bold text-brand-primary hover:bg-brand-gold/10 transition-colors"
                 >
+                  <Plus className="h-4 w-4" />
                   {tr('اضافة موظف جديد', 'Add kitchen staff')}
                 </button>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {kitchenStaff.map((w) => (
                   <StaffCard
                     key={w.id}
                     staff={w}
+                    restaurantId={restaurantId}
+                    passcodeVersion={staffPasscodeVersion}
                     onToggle={() =>
                       toggleStaffStatus(w.id, w.status, "kitchen")
                     }
@@ -1067,6 +1033,7 @@ export default function RestaurantDashboard({
                     accent="gold"
                   />
                 ))}
+                {kitchenStaff.length === 0 && <div className="col-span-full rounded-2xl border border-dashed border-border-delicate bg-white p-10 text-center text-sm text-text-muted">{tr('لا يوجد موظفو مطبخ بعد. أضف أول موظف للبدء.', 'No kitchen staff yet. Add your first team member.')}</div>}
               </div>
             </div>
           </motion.div>
@@ -1077,34 +1044,30 @@ export default function RestaurantDashboard({
             key="orders"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="space-y-12"
+            className="space-y-6"
           >
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 bg-white border border-border-delicate p-6 sm:p-8 relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-1.5 h-full bg-brand-gold" />
-              <div className="space-y-1.5 text-right flex-1">
-                <p className="text-[10px] font-bold text-brand-gold uppercase tracking-widest">
-                  {tr('إدارة وتنظيم طلبات الزبائن (المقود الذكي)', 'Manage customer orders')}
-                </p>
-                <div className="flex items-center gap-3">
-                  <h3 className="text-xl font-display text-brand-primary font-bold italic">{tr('لوحة إدارة الطلبيات المباشرة', 'Live orders')}</h3>
-                  <span className="text-xs bg-bg-paper text-brand-primary py-1 px-2 border border-border-delicate font-mono font-bold">
-                    {tr('العدد الحالي:', 'Current number:')} {restaurant?.currentOrderNumber || 0}
-                  </span>
+            <div className="relative overflow-hidden rounded-3xl bg-[#081d2d] p-6 text-white shadow-xl sm:p-8">
+              <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+                <div><p className="mb-2 text-xs font-bold text-brand-gold">{tr('متابعة مباشرة', 'Live workflow')}</p><h2 className="text-2xl font-bold sm:text-3xl">{tr('الطلبات حسب مرحلة العمل', 'Orders by work stage')}</h2><p className="mt-2 text-sm text-white/65">{tr('ابدأ بالطلبات الجديدة، ثم تابع التحضير والتقديم. التاريخ والرفض في الأسفل.', 'Start with new orders, then follow preparation and service. History and rejections appear below.')}</p></div>
+                <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                  <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3"><p className="text-xs text-white/60">{tr('جديد', 'New')}</p><p className="mt-1 text-2xl font-bold">{orders.filter(o => o.status === 'pending' && !o.clearedForStaff).length}</p></div>
+                  <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3"><p className="text-xs text-white/60">{tr('تحضير', 'Preparing')}</p><p className="mt-1 text-2xl font-bold">{orders.filter(o => o.status === 'preparing' && !o.clearedForStaff).length}</p></div>
+                  <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3"><p className="text-xs text-white/60">{tr('جاهز', 'Ready')}</p><p className="mt-1 text-2xl font-bold">{orders.filter(o => o.status === 'ready' && !o.clearedForStaff).length}</p></div>
                 </div>
-                <p className="text-xs text-text-muted leading-relaxed">
-                  {tr('هنا تعرض جميع الطلبات الجارية مقسمة حسب الحالة. يمكنك تصفير عداد ترتيب الطلبات والبدء بيوم عمل جديد من خلال الزر الجانبي.', 'Orders are grouped by status. You can reset the daily order counter to start a new workday.')}
-                </p>
               </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border-delicate bg-white px-5 py-4">
+              <p className="text-sm font-semibold text-text-muted">{tr('آخر رقم طلب', 'Latest order number')}: <span className="font-bold text-brand-primary">{restaurant?.currentOrderNumber || 0}</span></p>
               <button
                 type="button"
                 onClick={() => setShowResetConfirmModal(true)}
                 disabled={isResetting}
-                className="w-full md:w-auto px-6 py-4 bg-brand-primary text-white text-[11px] font-bold uppercase tracking-widest hover:bg-brand-secondary transition-all shrink-0 flex items-center justify-center gap-2 rounded-none"
+                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-border-delicate px-4 py-2 text-xs font-bold text-brand-primary hover:bg-bg-paper"
               >
                 {isResetting ? tr('جاري تصفير العداد...', 'Resetting counter...') : tr('🧹 تصفير العداد والبدء بيوم عمل جديد', '🧹 Start a new workday')}
               </button>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-8">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
               <OrderColumn
                 title={tr('طلبات جديدة واردة', 'New orders')}
                 orders={orders.filter((o) => o.status === "pending" && !o.clearedForStaff)}
@@ -1129,6 +1092,9 @@ export default function RestaurantDashboard({
                 onBan={(order) => setBanningOrder(order)}
                 onShowTimeline={(order) => setSelectedOrderForTimeline(order)}
               />
+            </div>
+            <div className="border-t border-border-delicate pt-5"><h3 className="text-lg font-bold text-brand-primary">{tr('السجل والمتابعة', 'History and follow-up')}</h3><p className="mt-1 text-sm text-text-muted">{tr('الطلبات المكتملة والمرفوضة للمراجعة.', 'Review completed and rejected orders.')}</p></div>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               <OrderColumn
                 title={tr('طلبات منتهية وتاريخية', 'Completed orders')}
                 orders={orders.filter((o) => o.status === "served" && !o.clearedForStaff)}
@@ -1408,22 +1374,27 @@ export default function RestaurantDashboard({
                 </button>
               </div>
 
-              <div className="flex flex-wrap gap-2 pt-2">
+              <div className="grid gap-3 pt-2 sm:grid-cols-2 xl:grid-cols-3">
                 {(restaurant?.categories || ["الوجبات الأساسية", "المقبلات", "الحلويات", "المشروبات"]).map((cat) => (
-                  <span
+                  <div
                     key={cat}
-                    className="inline-flex items-center gap-2 bg-bg-paper border border-border-delicate px-4 py-2 text-xs font-bold text-brand-primary"
+                    className="group flex min-w-0 items-center gap-3 rounded-2xl border border-border-delicate bg-bg-paper/70 p-3 transition-colors hover:border-brand-gold/50 hover:bg-white"
                   >
-                    <span>{localizeCategory(cat, language)}</span>
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-brand-primary shadow-sm" aria-hidden="true"><UtensilsCrossed className="h-4 w-4" /></span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-bold text-brand-primary" title={localizeCategory(cat, language)}>{localizeCategory(cat, language)}</span>
+                      <span className="mt-0.5 block text-xs text-text-muted">{menuItems.filter(item => item.category === cat).length} {tr('طبق', 'dishes')}</span>
+                    </span>
                     <button
                       type="button"
                       onClick={() => handleDeleteCategory(cat)}
-                      className="text-red-500 hover:text-red-700 font-bold text-base w-5 h-5 flex items-center justify-center rounded-full hover:bg-red-50"
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-transparent text-red-600 transition-colors hover:border-red-100 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600"
                       title={tr('حذف هذا القسم', 'Delete this category')}
+                      aria-label={`${tr('حذف القسم', 'Delete category')}: ${localizeCategory(cat, language)}`}
                     >
-                      ×
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />
                     </button>
-                  </span>
+                  </div>
                 ))}
               </div>
             </div>
@@ -1552,19 +1523,21 @@ export default function RestaurantDashboard({
               <div className="absolute bottom-0 left-0 w-8 h-8 border-b-2 border-l-2 border-brand-gold -translate-x-4 translate-y-4" />
               <div className="absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 border-brand-gold translate-x-4 translate-y-4" />
               <div className="w-full h-full max-w-[200px] sm:max-w-none flex items-center justify-center animate-fade-in">
-                <QRCode
-                  value={customerMenuUrl(restaurantId)}
-                  size={240}
-                  style={{ height: "auto", maxWidth: "100%", width: "100%" }}
-                  id="menu-qr"
-                />
+                <svg id="menu-qr" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" className="h-auto max-w-full" role="img" aria-label={tr('رمز QR لقائمة المطعم مع الشعار في المنتصف', 'Restaurant menu QR code with centered logo')}>
+                  <QRCode value={customerMenuUrl(restaurantId)} size={256} level="H" bgColor="#ffffff" fgColor="#2D3A27" />
+                  {qrLogoData && <>
+                    <rect x="101" y="101" width="54" height="54" rx="10" fill="#ffffff" />
+                    <image href={qrLogoData} x="106" y="106" width="44" height="44" preserveAspectRatio="xMidYMid meet" />
+                  </>}
+                </svg>
               </div>
             </div>
 
             <div className="flex flex-col sm:flex-row gap-4 sm:gap-8 w-full sm:w-auto px-6 sm:px-0">
               <button
                 onClick={downloadQR}
-                className="px-10 py-5 bg-brand-primary text-white text-[11px] font-bold uppercase tracking-widest hover:bg-brand-secondary transition-all flex items-center justify-center gap-4 w-full sm:w-auto text-center cursor-pointer"
+                disabled={!qrLogoData}
+                className="px-10 py-5 bg-brand-primary text-white text-[11px] font-bold uppercase tracking-widest hover:bg-brand-secondary transition-all flex items-center justify-center gap-4 w-full sm:w-auto text-center cursor-pointer disabled:cursor-wait disabled:opacity-50"
               >
                 <Download className="w-5 h-5 shrink-0" /> {tr('تحميل رمز QR المخصص', 'Download QR code')}
               </button>
@@ -1580,6 +1553,7 @@ export default function RestaurantDashboard({
                 <ExternalLink className="w-5 h-5 shrink-0" /> {tr('استعراض صفحة زبائنك', 'View customer menu')}
               </button>
             </div>
+            {qrDownloadError && <p role="alert" className="mt-3 text-sm text-red-700">{qrDownloadError}</p>}
 
             <QrPrintStudio restaurant={restaurant} onSaved={setRestaurant} />
 
@@ -2181,7 +2155,7 @@ export default function RestaurantDashboard({
       <AnimatePresence>
         {showStaffModal?.open && (
           <StaffModal
-            onClose={() => setShowStaffModal(null)}
+            onClose={() => { setShowStaffModal(null); setStaffPasscodeVersion(version => version + 1); }}
             restaurantId={restaurantId}
             role={showStaffModal.role}
             existingStaff={showStaffModal.staff}
@@ -2466,6 +2440,34 @@ function ThemeSettings({ restaurant, onSaved }: { restaurant: Restaurant; onSave
   );
 }
 
+function OwnerFinancePanel({ finance }: { finance: ReturnType<typeof summarizeOwnerOrders> }) {
+  const { tr, language } = useLanguage();
+  const max = Math.max(1, ...finance.week.map(day => day.value));
+  const money = (value: number) => `${value.toLocaleString()} ${tr('د.ع', 'IQD')}`;
+  return <section className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
+    <div className="rounded-2xl border border-border-delicate bg-white p-5 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold text-brand-gold">{tr('اتجاه المبيعات', 'Sales trend')}</p><h3 className="mt-1 text-lg font-bold text-brand-primary">{tr('آخر ٧ أيام', 'Last 7 days')}</h3></div><span className="rounded-full bg-bg-paper px-3 py-1 text-xs font-semibold text-text-muted">{tr('الطلبات المقدمة فقط', 'Served orders only')}</span></div>
+      <div className="mt-6 flex h-44 items-end gap-2 border-b border-border-delicate pb-2 sm:gap-3">
+        {finance.week.map(day => <div key={day.day} className="group flex h-full min-w-0 flex-1 flex-col justify-end gap-2 text-center" title={`${day.day}: ${money(day.value)}`}>
+          <div className="flex min-h-0 flex-1 items-end"><div className={`mx-auto w-full max-w-12 rounded-t-lg ${day.value ? 'bg-brand-primary/85 group-hover:bg-brand-gold' : 'bg-bg-paper'}`} style={{ height: `${Math.max(day.value ? 8 : 3, day.value / max * 100)}%` }} /></div>
+          <span className="text-[10px] font-bold text-text-muted" dir="ltr">{new Date(`${day.day}T12:00:00+03:00`).toLocaleDateString(language === 'ar' ? 'ar-IQ' : 'en-GB', { weekday: 'short', timeZone: 'Asia/Baghdad' })}</span>
+        </div>)}
+      </div>
+      <p className="mt-3 text-xs text-text-muted">{tr('هذه قيم الطلبات التي تم تقديمها، وليست تحصيلاً نقدياً مؤكداً أو صافي ربح.', 'Served order value is not confirmed cash collection or net profit.')}</p>
+    </div>
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-2xl border border-border-delicate bg-white p-5"><p className="text-xs font-semibold text-text-muted">{tr('متوسط الطلب هذا الشهر', 'Average order this month')}</p><p className="mt-3 text-lg font-bold text-brand-primary">{money(finance.averageTicket)}</p><p className="mt-2 text-xs text-text-muted">{tr('من الطلبات المقدمة', 'From served orders')}</p></div>
+        <div className="rounded-2xl border border-border-delicate bg-white p-5"><p className="text-xs font-semibold text-text-muted">{tr('قيمة الطلبات المفتوحة', 'Open order value')}</p><p className="mt-3 text-lg font-bold text-brand-primary">{money(finance.openValue)}</p><p className="mt-2 text-xs text-text-muted">{tr('جديد، تحضير، جاهز', 'New, preparing, ready')}</p></div>
+      </div>
+      <div className="rounded-2xl border border-border-delicate bg-white p-5"><div className="flex items-center justify-between"><h3 className="text-sm font-bold text-brand-primary">{tr('الأصناف الأكثر طلباً هذا الشهر', 'Most ordered items this month')}</h3><UtensilsCrossed className="h-4 w-4 text-brand-gold" /></div>
+        {finance.topItems.length ? <div className="mt-3 space-y-2">{finance.topItems.map((item, index) => <div key={item.name} className="flex items-center justify-between gap-3 rounded-xl bg-bg-paper px-3 py-2 text-sm"><span className="min-w-0 truncate font-semibold text-brand-primary">{index + 1}. {item.name}</span><span className="shrink-0 text-xs font-bold text-text-muted">{item.quantity} {tr('قطعة', 'sold')}</span></div>)}</div> : <p className="mt-4 text-sm text-text-muted">{tr('ستظهر الأصناف بعد تقديم الطلبات.', 'Items will appear after orders are served.')}</p>}
+        <p className="mt-4 border-t border-border-delicate pt-3 text-xs text-text-muted">{tr(`ملغاة أو مرفوضة هذا الشهر: ${finance.monthRejectedCount}`, `Cancelled or rejected this month: ${finance.monthRejectedCount}`)}</p>
+      </div>
+    </div>
+  </section>;
+}
+
 function StatCard({
   title,
   value,
@@ -2480,20 +2482,20 @@ function StatCard({
   icon: React.ReactNode;
 }) {
   return (
-    <div className="min-w-0 bg-white border border-border-delicate p-6 sm:p-10 space-y-6 relative group overflow-hidden">
-      <div className="absolute top-0 right-0 w-1.5 h-full bg-border-delicate group-hover:bg-brand-gold transition-colors" />
-      <div className="text-brand-gold opacity-40 group-hover:scale-110 transition-transform duration-500">
+    <div className="group relative min-w-0 space-y-4 overflow-hidden rounded-2xl border border-border-delicate bg-white p-5 shadow-[0_8px_28px_rgba(0,0,0,.03)] sm:p-6">
+      <div className="absolute top-0 right-0 h-full w-1 bg-brand-gold/60" />
+      <div className="text-brand-gold">
         {icon}
       </div>
       <div className="min-w-0 space-y-1">
-        <p className="text-[9px] font-bold text-text-muted uppercase tracking-[0.3em]">
+        <p className="text-xs font-semibold text-text-muted">
           {label}
         </p>
-        <p className="min-w-0 text-[clamp(1.875rem,2.5vw,3rem)] leading-tight font-display not-italic text-brand-primary tracking-tight tabular-nums font-bold [overflow-wrap:anywhere]">
+        <p className="min-w-0 text-2xl leading-tight text-brand-primary tabular-nums font-bold [overflow-wrap:anywhere] sm:text-3xl">
           <bdi>{value}</bdi>{unit && <span className="ms-2 inline-block whitespace-nowrap align-baseline text-base font-semibold tracking-normal">{unit}</span>}
         </p>
       </div>
-      <p className="text-xs font-bold text-brand-gold uppercase tracking-widest">
+      <p className="text-xs font-bold text-brand-primary">
         {title}
       </p>
     </div>
@@ -2502,12 +2504,16 @@ function StatCard({
 
 function StaffCard({
   staff,
+  restaurantId,
+  passcodeVersion,
   onToggle,
   onDelete,
   onEdit,
   accent = "primary",
 }: {
   staff: Waiter;
+  restaurantId: string;
+  passcodeVersion: number;
   onToggle: () => void;
   onDelete: () => void;
   onEdit: () => void;
@@ -2515,56 +2521,55 @@ function StaffCard({
   key?: any;
 }) {
   const { tr } = useLanguage();
+  const [passcode, setPasscode] = useState<string | null>(null);
+  const [passcodeError, setPasscodeError] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setPasscode(null);
+    setPasscodeError(false);
+    setCopied(false);
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) throw new Error('authentication_required');
+      const response = await fetch(`/api/staff/${encodeURIComponent(staff.id)}/passcode?restaurantId=${encodeURIComponent(restaurantId)}`, {
+        headers: { Authorization: `Bearer ${data.session.access_token}` }, cache: 'no-store',
+      });
+      if (!response.ok) throw new Error('passcode_unavailable');
+      const result = await response.json();
+      if (!/^[0-9]{4}$/.test(result.passcode)) throw new Error('invalid_passcode');
+      if (!cancelled) setPasscode(result.passcode);
+    })().catch(() => { if (!cancelled) setPasscodeError(true); });
+    return () => { cancelled = true; };
+  }, [staff.id, restaurantId, passcodeVersion]);
+
+  const copyPasscode = async () => {
+    if (!passcode) return;
+    try { await navigator.clipboard.writeText(passcode); setCopied(true); }
+    catch { setCopied(false); }
+  };
   return (
-    <div className="bg-white border border-border-delicate p-6 sm:p-10 space-y-8 group transition-all duration-500 hover:shadow-2xl">
-      <div className="flex justify-between items-start">
-        <div
-          className={`w-16 h-16 sm:w-20 sm:h-20 border border-border-delicate flex items-center justify-center font-display italic text-2xl sm:text-3xl ${accent === "gold" ? "text-brand-gold" : "text-brand-primary"}`}
-        >
-          {staff.name[0]}
+    <article className="overflow-hidden rounded-2xl border border-border-delicate bg-white shadow-[0_8px_28px_rgba(0,0,0,.03)] transition-shadow hover:shadow-lg">
+      <div className="flex items-start gap-4 p-5">
+        <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-xl font-bold ${accent === 'gold' ? 'bg-amber-50 text-amber-800' : 'bg-slate-100 text-brand-primary'}`}>{staff.name?.trim().charAt(0) || '•'}</div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-lg font-bold text-brand-primary">{staff.name}</p>
+          <p className="mt-0.5 text-sm text-text-muted" dir="ltr">{staff.phone}</p>
+          <p className="mt-2 text-xs font-semibold text-text-muted">{accent === 'gold' ? tr('موظف مطبخ', 'Kitchen staff') : tr('موظف صالة', 'Waiter staff')}</p>
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={onEdit}
-            className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center border border-border-delicate text-text-muted hover:border-brand-primary hover:text-brand-primary transition-all"
-          >
-            <Edit2 className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={onToggle}
-            className={`w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center border border-border-delicate transition-all ${staff.status === "active" ? "text-emerald-600 hover:bg-emerald-50" : "text-red-500 hover:bg-red-50"}`}
-          >
-            {staff.status === "active" ? (
-              <PauseCircle className="w-3.5 h-3.5" />
-            ) : (
-              <PlayCircle className="w-3.5 h-3.5" />
-            )}
-          </button>
-          <button
-            onClick={onDelete}
-            className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center border border-border-delicate text-text-muted hover:border-red-500 hover:text-red-500 transition-all"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-        </div>
+        <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold ${staff.status === 'active' ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800'}`}>{staff.status === 'active' ? tr('نشط', 'Active') : tr('موقوف', 'Paused')}</span>
       </div>
-      <div className="space-y-1 text-right">
-        <div className="flex items-center gap-3 justify-start">
-          <span
-            className={`w-2 h-2 rounded-full ${staff.status === "active" ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : "bg-red-500"}`}
-          />
-          <h3 className="text-xl sm:text-2xl font-display italic text-brand-primary tracking-tight">
-            {staff.name}
-          </h3>
-        </div>
-        <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
-          {staff.phone}
-        </p>
+      <div className="flex items-center justify-between gap-3 border-t border-border-delicate bg-bg-paper/60 px-5 py-3">
+        <div><p className="text-xs font-semibold text-text-muted">{tr('رمز الدخول', 'Passcode')}</p><p className="mt-1 font-mono text-xl font-bold tracking-[.25em] text-brand-primary" dir="ltr">{passcodeError ? '—' : passcode || '••••'}</p></div>
+        {passcode ? <button type="button" onClick={() => void copyPasscode()} className="min-h-10 rounded-xl border border-border-delicate bg-white px-4 text-xs font-bold text-brand-primary hover:bg-bg-paper">{copied ? tr('تم النسخ', 'Copied') : tr('نسخ الرمز', 'Copy code')}</button> : <span className="text-xs text-text-muted">{passcodeError ? tr('تعذر تحميل الرمز', 'Could not load code') : tr('جاري التحميل...', 'Loading...')}</span>}
       </div>
-      <div className="bg-bg-paper p-6 sm:p-8 border border-border-delicate space-y-3">
-        <p className="text-xs text-text-muted">{tr('افتح التعديل لعرض رمز الدخول المكوّن من ٤ أرقام أو تغييره.', 'Open Edit to view or change this staff member’s four-digit passcode.')}</p>
+      <div className="grid grid-cols-[1fr_1fr_auto] gap-2 border-t border-border-delicate p-4">
+        <button type="button" onClick={onEdit} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-brand-primary px-3 text-xs font-bold text-white"><Edit2 className="h-4 w-4" />{tr('تعديل', 'Edit')}</button>
+        <button type="button" onClick={onToggle} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-border-delicate px-3 text-xs font-bold text-brand-primary">{staff.status === 'active' ? <PauseCircle className="h-4 w-4" /> : <PlayCircle className="h-4 w-4" />}{staff.status === 'active' ? tr('إيقاف', 'Pause') : tr('تفعيل', 'Activate')}</button>
+        <button type="button" onClick={onDelete} aria-label={tr(`حذف ${staff.name}`, `Delete ${staff.name}`)} title={tr('حذف الموظف', 'Delete staff member')} className="flex min-h-10 min-w-10 items-center justify-center rounded-xl border border-red-100 text-red-700 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -2586,17 +2591,15 @@ function OrderColumn({
   onShowTimeline?: (order: Order) => void;
 }) {
   const { tr } = useLanguage();
+  const stageColor = type === 'pending' ? 'bg-blue-500' : type === 'preparing' ? 'bg-amber-500' : type === 'ready' ? 'bg-emerald-500' : type === 'rejected' ? 'bg-red-500' : 'bg-slate-400';
+  const stageHint = type === 'pending' ? tr('بانتظار الإرسال للمطبخ', 'Waiting to be sent to kitchen') : type === 'preparing' ? tr('المطبخ يعمل عليها الآن', 'The kitchen is working on these') : type === 'ready' ? tr('بانتظار التقديم للطاولة', 'Waiting to be served') : type === 'rejected' ? tr('طلبات تحتاج مراجعة', 'Orders to review') : tr('تم تقديمها للزبائن', 'Served to customers');
   return (
-    <div className="space-y-8">
-      <div className="flex items-center justify-between border-b border-border-delicate pb-4">
-        <h3 className="text-sm font-bold text-brand-primary uppercase tracking-widest">
-          {title}
-        </h3>
-        <span className="text-[10px] font-bold text-brand-gold">
-          {orders.length}
-        </span>
+    <section className="min-w-0 rounded-2xl border border-border-delicate bg-bg-paper/60 p-4 sm:p-5">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3"><span className={`h-3 w-3 shrink-0 rounded-full ${stageColor}`} /><div><h3 className="text-base font-bold text-brand-primary">{title}</h3><p className="mt-0.5 text-xs text-text-muted">{stageHint}</p></div></div>
+        <span className="flex h-8 min-w-8 items-center justify-center rounded-lg bg-white px-2 text-sm font-bold text-brand-primary">{orders.length}</span>
       </div>
-      <div className="space-y-6">
+      <div className="space-y-3">
         <AnimatePresence mode="popLayout">
           {orders.map((order) => (
             <motion.div
@@ -2605,39 +2608,33 @@ function OrderColumn({
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white border border-border-delicate p-5 sm:p-8 space-y-6 group hover:border-brand-gold transition-colors"
+              className="group space-y-4 rounded-2xl border border-border-delicate bg-white p-4 shadow-sm transition-colors hover:border-brand-gold sm:p-5"
             >
-              <div className="flex justify-between items-start">
+              <div className="flex justify-between items-start gap-3">
                 <div className="space-y-1 text-right">
-                  <h4 className="font-display text-lg italic text-brand-primary tracking-tight">
-                    {order.customerName}
-                  </h4>
-                  <p className="text-[9px] font-bold text-brand-gold uppercase tracking-widest">
-                    {tr('طاولة رقم:', 'Table:')} {order.tableNumber}
-                  </p>
+                  <h4 className="text-lg font-bold text-brand-primary">{tr('طاولة', 'Table')} {order.tableNumber}</h4>
+                  <p className="text-sm text-text-muted">{order.customerName}</p>
                 </div>
-                <span className="text-[10px] font-sans font-bold text-brand-gold bg-brand-gold/10 px-2 py-0.5 rounded">
+                <span className="shrink-0 rounded-lg bg-bg-paper px-2.5 py-1 text-xs font-bold text-brand-primary">
                   {order.orderNumber ? tr(`رقم الطلب ${order.orderNumber}`, `Order ${order.orderNumber}`) : `#${order.id.slice(-6).toUpperCase()}`}
                 </span>
               </div>
 
-              <div className="space-y-3 border-y border-border-delicate py-6 bg-bg-paper -mx-5 px-5 sm:-mx-8 sm:px-8 text-right">
+              <div className="space-y-2 rounded-xl bg-bg-paper p-3 text-right">
                 {order.items.map((item, i) => (
                   <div
                     key={i}
-                    className="flex flex-col border-b border-border-delicate/20 pb-2 last:border-b-0"
+                    className="flex flex-col border-b border-border-delicate/60 pb-2 last:border-b-0 last:pb-0"
                   >
-                    <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-[0.4em]">
-                      <div className="flex items-center gap-4">
-                        <span className="text-brand-gold not-italic">
-                          <span className="font-sans font-bold">{item.quantity}</span>×
-                        </span>
-                        <span className="text-brand-primary">{item.name}</span>
+                    <div className="flex items-start justify-between gap-3 text-sm">
+                      <div className="flex min-w-0 items-start gap-2">
+                        <span className="shrink-0 rounded-md bg-white px-2 py-0.5 font-bold text-brand-primary">{item.quantity}×</span>
+                        <span className="font-semibold text-brand-primary">{item.name}</span>
                       </div>
-                      <span className="font-sans text-brand-gold opacity-8 tracking-normal">{(item.price * item.quantity).toLocaleString()} {tr('د.ع', 'IQD')}</span>
+                      <span className="shrink-0 text-xs font-semibold text-text-muted">{(item.price * item.quantity).toLocaleString()} {tr('د.ع', 'IQD')}</span>
                     </div>
                     {item.customizationText && (
-                      <div className="text-[9px] text-brand-gold font-bold tracking-normal mt-1 block">
+                      <div className="mt-1 text-xs font-semibold text-amber-800">
                         ✨ {tr('الخيارات:', 'Options:')} {item.customizationText}
                       </div>
                     )}
@@ -2660,7 +2657,8 @@ function OrderColumn({
                 </div>
               )}
 
-              <div className="flex flex-col gap-3 pt-3 border-t border-border-delicate">
+              {order.notes && <p className="rounded-xl border border-amber-100 bg-amber-50 p-3 text-xs font-semibold leading-5 text-amber-900">{tr('ملاحظة الزبون:', 'Customer note:')} {order.notes}</p>}
+              <div className="flex flex-col gap-3 border-t border-border-delicate pt-3">
                 <div className="flex justify-between items-center">
                   <p className="text-base font-display not-italic text-brand-primary">
                     <span className="font-sans font-bold">{order.totalAmount.toLocaleString()}</span> {tr('د.ع', 'IQD')}
@@ -2669,21 +2667,21 @@ function OrderColumn({
                     <button
                       onClick={() => onShowTimeline(order)}
                       type="button"
-                      className="text-[10px] font-bold text-brand-gold hover:text-brand-primary border border-brand-gold/25 hover:border-brand-primary/20 px-3 py-1.5 rounded transition-all flex items-center gap-1 h-[36px]"
+                      className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-border-delicate px-3 text-xs font-bold text-brand-primary hover:bg-bg-paper"
                       title={tr('عرض المخطط الزمني وتتبع الكفاءة', 'View order timeline')}
                     >
                       <Clock className="w-3.5 h-3.5" />
-                      <span>⏱️ {tr('تفاصيل الأوقات', 'Timeline')}</span>
+                      <span>{tr('التوقيت', 'Timeline')}</span>
                     </button>
                   )}
                 </div>
 
                 {!isHistory && (
-                  <div className="flex items-center justify-end gap-4 mt-1">
+                  <div className="flex items-center justify-end gap-2">
                     {order.deviceMetadata?.fingerprint && onBan && (
                       <button
                         onClick={() => onBan(order)}
-                        className="text-[10px] font-bold text-red-600 hover:text-red-700 hover:bg-red-50 px-2.5 py-1.5 border border-red-100 rounded transition-all duration-300 flex items-center gap-1 shrink-0 h-[36px]"
+                        className="inline-flex min-h-10 shrink-0 items-center gap-1 rounded-xl border border-red-100 px-3 text-xs font-bold text-red-700 hover:bg-red-50"
                         title={tr('حظر هذا العميل من المنيو الرقمي نهائياً', 'Block this customer from the digital menu')}
                       >
                         🚫 {tr('حظر', 'Block')}
@@ -2698,7 +2696,7 @@ function OrderColumn({
                         };
                         onUpdate(order.id, nextMap[order.status] || "served");
                       }}
-                      className="flex items-center gap-2 text-[9px] font-bold text-brand-gold uppercase tracking-widest group/btn border border-border-delicate hover:border-brand-primary/20 px-4 py-1.5 rounded transition-all h-[36px] flex-1 justify-center"
+                      className="group/btn flex min-h-10 flex-1 items-center justify-center gap-2 rounded-xl bg-brand-primary px-3 text-xs font-bold text-white hover:bg-brand-secondary"
                     >
                       {order.status === "pending"
                         ? tr('إرسال للمطبخ', 'Send to kitchen')
@@ -2714,12 +2712,12 @@ function OrderColumn({
           ))}
         </AnimatePresence>
         {orders.length === 0 && (
-          <div className="py-20 text-center text-text-muted/20 text-xs font-bold uppercase tracking-widest">
+          <div className="rounded-xl border border-dashed border-border-delicate bg-white py-10 text-center text-sm text-text-muted">
             {tr('القائمة فارغة حالياً', 'No orders here yet')}
           </div>
         )}
       </div>
-    </div>
+    </section>
   );
 }
 

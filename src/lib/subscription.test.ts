@@ -7,6 +7,7 @@ test("subscription active, exact-boundary expired, suspended and grace", () => {
   const end = Date.parse("2026-02-01T00:00:00.000Z");
   assert.equal(getSubscriptionAccess({ status: "active", endDate: end, gracePeriodDays: 0 }, end - 1).allowed, true);
   assert.equal(getSubscriptionAccess({ status: "active", endDate: end, gracePeriodDays: 0 }, end).reason, "expired");
+  assert.equal(getSubscriptionAccess({ status: "active", endDate: end }, end).allowed, false);
   assert.equal(getSubscriptionAccess({ status: "suspended", endDate: end + 1000, gracePeriodDays: 0 }, end).reason, "inactive");
   assert.equal(getSubscriptionAccess({ status: "active", endDate: end, gracePeriodDays: 1 }, end).allowed, true);
 });

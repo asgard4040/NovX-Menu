@@ -14,6 +14,7 @@ export interface Restaurant {
   subscriptionDuration: SubscriptionDuration;
   startDate: string;
   endDate: string;
+  gracePeriodDays?: number;
   monthlyCost: number;
   totalCost: number;
   logoUrl?: string;
@@ -95,6 +96,12 @@ export interface Order {
     screenSize: string;
     language: string;
     fingerprint: string;
+    source?: 'whatsapp';
+    fulfillment?: 'pickup' | 'delivery';
+    delivery?: {
+      address: { city?: string; area?: string; details?: string; latitude?: number; longitude?: number };
+      contactPhone: string; phoneSource: 'whatsapp' | 'alternative'; fee: number; subtotal: number;
+    };
     coordinates?: { lat: number; lng: number } | null;
     distanceMeters?: number;
   };
@@ -122,6 +129,7 @@ export interface SecurityAlert {
 }
 
 export interface UserSession {
+  membershipRole?: 'owner' | 'manager' | 'waiter' | 'kitchen';
   role: 'admin' | 'restaurant' | 'waiter' | 'kitchen';
   id?: string;
   restaurantId?: string;

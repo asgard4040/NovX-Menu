@@ -18,9 +18,7 @@ export function getSubscriptionAccess(
 ) {
   const startsAt = asMillis(subscription.startDate);
   const endsAt = asMillis(subscription.endDate);
-  // The existing product grants a three-day grace period unless a restaurant
-  // record explicitly overrides it (including zero).
-  const graceDays = subscription.gracePeriodDays ?? 3;
+  const graceDays = subscription.gracePeriodDays ?? 0;
   const graceMs = Math.max(0, Number(graceDays) || 0) * 86_400_000;
   const enabled = subscription.status === "active";
   const started = startsAt === null || nowMs >= startsAt;
