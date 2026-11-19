@@ -80,12 +80,12 @@ export default function AdminDashboard({
   activeTab: externalTab,
   onNavigate,
 }: {
-  activeTab?: "overview" | "restaurants" | "settings" | "ai" | "alerts";
-  onNavigate?: (tab: "overview" | "restaurants" | "settings" | "ai" | "alerts") => void;
+  activeTab?: "overview" | "restaurants" | "finance" | "settings" | "ai" | "alerts";
+  onNavigate?: (tab: "overview" | "restaurants" | "finance" | "settings" | "ai" | "alerts") => void;
 }) {
   const { dir, language, tr } = useLanguage();
   const [internalTab, setInternalTab] = useState<
-    "overview" | "restaurants" | "settings" | "ai" | "alerts"
+    "overview" | "restaurants" | "finance" | "settings" | "ai" | "alerts"
   >("overview");
   const activeTab = externalTab || internalTab;
 
@@ -413,7 +413,7 @@ export default function AdminDashboard({
 
   return (
     <div className="admin-surface space-y-8" dir={dir}>
-      <AdminSaasConsole />
+      {activeTab === "finance" && <AdminSaasConsole section="finance" />}
       {isOffline && (
         <div className="p-4 bg-amber-50/80 border-r-4 border-brand-gold text-brand-primary text-xs font-sans font-bold flex items-center gap-3 animate-pulse">
           <span className="w-2.5 h-2.5 bg-brand-gold rounded-full shrink-0" />
@@ -479,6 +479,7 @@ export default function AdminDashboard({
         {activeTab === "settings" && (
           <motion.div key="settings" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }} className="space-y-5">
             <div><p className="mb-1 text-xs font-bold text-brand-gold">{tr('ضبط النظام', 'System control')}</p><h2 className="text-2xl font-bold text-brand-primary sm:text-3xl">{tr('الإعدادات', 'Settings')}</h2><p className="mt-1 text-sm text-text-muted">{tr('أسعار الاشتراكات والدعم وهوية النظام في مكان واحد.', 'Subscription pricing, support, and branding in one place.')}</p></div>
+            <AdminSaasConsole section="billing" />
             <AdminSubscriptionSettings onSaved={() => void fetchFinancialOverview()} />
             {/* Support and System Branding Card */}
             <details className="bg-white border border-border-delicate rounded-2xl overflow-hidden group">
@@ -696,6 +697,7 @@ export default function AdminDashboard({
 
         {activeTab === "ai" && (
           <motion.div key="ai" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }} className="space-y-5">
+            <AdminSaasConsole section="ai" />
             <div><p className="text-xs font-bold text-brand-gold mb-1">{tr('إعدادات النظام', 'System settings')}</p><h2 className="text-2xl sm:text-3xl font-display font-bold text-brand-primary">{tr('المساعد الذكي', 'AI assistant')}</h2><p className="text-sm text-text-muted mt-1">{tr('عدّل طريقة مساعدة الزبائن في جميع المطاعم.', 'Set how the assistant helps customers across restaurants.')}</p></div>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <div className="lg:col-span-2 bg-white border border-border-delicate rounded-2xl p-5 sm:p-7 space-y-6">

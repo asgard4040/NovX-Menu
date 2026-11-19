@@ -19,6 +19,7 @@ import {
   Menu as MenuIcon,
   X,
   CreditCard,
+  Wallet,
   MapPin,
   MessageSquare,
   HelpingHand,
@@ -225,6 +226,7 @@ export default function App() {
     admin: [
       { id: 'overview', label: tr('الرئيسية', 'Home'), icon: <LayoutDashboard className="w-5 h-5" /> },
       { id: 'restaurants', label: tr('المطاعم', 'Restaurants'), icon: <Building2 className="w-5 h-5" /> },
+      { id: 'finance', label: tr('المالية', 'Finance'), icon: <Wallet className="w-5 h-5" /> },
       { id: 'settings', label: tr('الإعدادات', 'Settings'), icon: <Settings className="w-5 h-5" /> },
       { id: 'ai', label: tr('إدارة AI', 'AI'), icon: <Cpu className="w-5 h-5" /> },
       { id: 'alerts', label: tr('التنبيهات', 'Alerts'), icon: <Bell className="w-5 h-5" /> },
