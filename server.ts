@@ -280,7 +280,8 @@ async function reconcileWaylPayment(referenceId: string) {
     try { prices = await readPlanPrices(); }
     catch { return res.status(503).json({ error: "pricing_unavailable" }); }
     const monthlyPrice = planMonthlyPrice(restaurant.subscription_type, restaurant.monthly_cost, prices);
-    const renewal = monthlyPrice === null ? null : renewalAmount(monthlyPrice, restaurant.subscription_duration);
+    const managedQuote = await supabaseAdmin.rpc("saas_gateway_quote", { p_restaurant: restaurantId });
+    const renewal = managedQuote.error ? null : managedQuote.data ? Number(managedQuote.data.amount) : monthlyPrice === null ? null : renewalAmount(monthlyPrice, restaurant.subscription_duration);
     return res.json({ allowed: access.allowed, reason: access.reason, restaurantName: restaurant.restaurant_name,
       endDate: restaurant.end_date, gracePeriodDays: restaurant.grace_period_days,
       amountIqd: role === "owner" || role === "manager" ? renewal : null,
@@ -311,13 +312,17 @@ async function reconcileWaylPayment(referenceId: string) {
     try { prices = await readPlanPrices(); }
     catch { return res.status(503).json({ error: "pricing_unavailable" }); }
     const monthlyPrice = planMonthlyPrice(restaurant.subscription_type, restaurant.monthly_cost, prices);
-    const amount = monthlyPrice === null ? null : renewalAmount(monthlyPrice, restaurant.subscription_duration);
+    const managedQuote = await supabaseAdmin.rpc("saas_gateway_quote", { p_restaurant: restaurantId });
+    if (managedQuote.error) return res.status(409).json({ error: "managed_manual_payment_required" });
+    const managed = managedQuote.data;
+    const duration = managed ? "month" : restaurant.subscription_duration;
+    const amount = managed ? Number(managed.amount) : monthlyPrice === null ? null : renewalAmount(monthlyPrice, duration);
     if (amount === null) return res.status(409).json({ error: "plan_price_not_configured" });
     const { data: pending } = await supabaseAdmin.from("subscription_payments")
-      .select("reference_id,checkout_url,amount_iqd,duration,environment,created_at")
+      .select("reference_id,checkout_url,amount_iqd,duration,environment,created_at,saas_snapshot")
       .eq("restaurant_id", restaurantId).eq("status", "pending").maybeSingle();
     if (pending && Date.now() - Date.parse(pending.created_at) < 2 * 60 * 60 * 1000
-      && Number(pending.amount_iqd) === amount && pending.duration === restaurant.subscription_duration
+      && Number(pending.amount_iqd) === amount && pending.duration === duration && JSON.stringify(pending.saas_snapshot || null) === JSON.stringify(managed?.snapshot || null)
       && pending.environment === process.env.WAYL_ENV) {
       if (!pending.checkout_url) return res.status(409).json({ error: "checkout_preparing" });
       return res.json({ url: pending.checkout_url, referenceId: pending.reference_id });
@@ -328,7 +333,7 @@ async function reconcileWaylPayment(referenceId: string) {
     const inserted = await supabaseAdmin.from("subscription_payments").insert({
       reference_id: referenceId, restaurant_id: restaurantId, amount_iqd: amount,
       environment: process.env.WAYL_ENV,
-      duration: restaurant.subscription_duration, webhook_secret: webhookSecret,
+      duration, webhook_secret: webhookSecret, saas_snapshot: managed?.snapshot || null,
     });
     if (inserted.error) return res.status(inserted.error.code === "23505" ? 409 : 503).json({ error: "checkout_preparing" });
     try {

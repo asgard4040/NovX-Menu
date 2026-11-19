@@ -2,8 +2,10 @@
 
 ## Status
 
-Implemented in the working repository. The migration has NOT been applied to
-production and this upgrade has NOT been deployed. Existing restaurant access,
+The foundation was pushed as a5a0161 and deployed to rest.ordova.cc on November 19,
+2026. Its first migration is applied in production. The lifecycle/recurring
+extension below is tested separately and requires its second migration before
+its application release. Existing restaurant access,
 WAYL renewals, staff orders and Gupshup onboarding are retained. No production
 financial data or sample subscription prices were inserted. No paid API calls
 were made during verification.
@@ -118,12 +120,9 @@ usage remains null/unmeasured, never fabricated as actual zero expense.
 
 ## Remaining work before the entire requested specification is complete
 
-- Unified legacy WAYL-to-invoice allocation and subscription/access-lifecycle
-  reconciliation. The managed commercial period does not yet renew/change the
-  existing restaurant's operational end_date. Keep existing renewal controls until
-  this integration is completed; do not treat a commercial assignment as payment.
-- Recurring-expense materialization/scheduling, receipt upload/storage, automatic
-  provider invoice imports and billing-event reconciliation. Actual vendor bills
+- Non-monthly or USD managed gateway renewals require manual payment recording;
+  managed automatic WAYL checkout currently supports monthly, whole-IQD agreements.
+- Receipt upload/storage, automatic provider invoice imports and billing-event reconciliation. Actual vendor bills
   must currently be entered manually with unique references.
 - Provider country/category rate schedules, verified Meta billable categories,
   contractual free allowances, verified messaging cost meters and FX gain/loss
@@ -153,3 +152,54 @@ subscription restrictions, session caps, overlapping reservation requests,
 explicit quota overrides and runtime model cost/parameter enforcement.
 The in-process database serializes client queries; this is not a substitute for
 multi-connection load testing against PostgreSQL before production rollout.
+
+## Lifecycle and recurring-expense extension
+
+Migration: `20261119030506_saas_lifecycle_recurring_expenses.sql`.
+New test: `scripts/saas-lifecycle.test.ts`. Server checkout integration is in
+`server.ts`; the console includes the new recurring/settlement/reconciliation forms.
+
+Managed assignment synchronizes the existing restaurant start/end/status fields;
+this is an explicit administrative access grant, not a manufactured cash payment.
+Active/trial/suspended retain the agreed end, grace uses grace_end when supplied,
+and past_due/cancelled/expired end access immediately. Suspensions preserve data.
+An independent manual suspension is retained on same-status period updates.
+
+Managed checkout reads the agreed price through a service-only quote RPC. Pending
+payments snapshot the immutable plan version and agreed IQD price. A database
+trigger rejects stale amounts before creating a payment link. A verified live
+settlement renews that agreement, creates one invoice and one linked payment, and
+uses the existing operational renewal function. Retries cannot extend twice.
+Cancelled/suspended/changed agreements and invoice overlaps remain unallocated for
+staff review; they do not silently grant a different entitlement. Test gateway
+payments never create real finance receipts. Unmanaged restaurants keep legacy
+renewal behavior. No live gateway transaction was performed during testing.
+
+The reconciliation action links an already verified, live WAYL collection to the
+same tenant's IQD invoice once. Reports show invoice collections plus unallocated
+gateway cash, counting the same receipt once. Existing payment references are not
+rewritten. Cash dates remain the original receipt dates, including later allocation.
+
+Recurring expenses model documented contractual accruals. Preview uses the same
+calendar as posting. Monthly/yearly dates remain anchored to the original day
+(Jan 31 -> Feb 28 -> Mar 31; Feb 29 annual -> Feb 28 in a non-leap year).
+Each rule/date has a unique expense source_reference. Repeated jobs do not add
+records; missing historical FX rolls back the posting batch. Future expenses are
+not posted. Rules can be paused; posted financial records remain immutable.
+The due posting is bounded to 1,000 entries per run. A daily Cron job is installed
+only if existing pg_cron is available (21:23 UTC / 00:23 Baghdad). Missing rates
+must be configured before enabling USD contract accruals; job failures appear in
+Cron history. No vendor invoice is assumed verified merely because it recurs.
+Record a supplier bill against the generated source reference/settle the existing
+accrual instead of adding a second expense for the same obligation.
+
+Expense settlements are separate immutable cash records in the expense currency.
+They support partial payments, unique references, retry idempotency and a locked
+remaining balance. Settlement reporting uses the expense's frozen book FX rate;
+realized FX gains/losses remain a separate unfinished accounting capability.
+Negative expense settlements reference an original positive settlement; refunds
+are bounded by the unrefunded balance and preserve both records. Record a vendor
+refund only when actually received; this action does not initiate a bank transfer.
+
+Validation: 30 SaaS tests, 63 WhatsApp tests, and 8 renewal/access tests passed.
+These are mocked/in-process tests, not evidence of a real charged gateway renewal.

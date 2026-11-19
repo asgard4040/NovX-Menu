@@ -2431,7 +2431,8 @@ app.get("/api/restaurants/:restaurantId/subscription", async (req, res) => {
     return res.status(503).json({ error: "pricing_unavailable" });
   }
   const monthlyPrice = planMonthlyPrice(restaurant.subscription_type, restaurant.monthly_cost, prices);
-  const renewal = monthlyPrice === null ? null : renewalAmount(monthlyPrice, restaurant.subscription_duration);
+  const managedQuote = await supabaseAdmin.rpc("saas_gateway_quote", { p_restaurant: restaurantId });
+  const renewal = managedQuote.error ? null : managedQuote.data ? Number(managedQuote.data.amount) : monthlyPrice === null ? null : renewalAmount(monthlyPrice, restaurant.subscription_duration);
   return res.json({
     allowed: access.allowed,
     reason: access.reason,
@@ -2465,10 +2466,14 @@ app.post("/api/restaurants/:restaurantId/subscription/checkout", rateLimit, asyn
     return res.status(503).json({ error: "pricing_unavailable" });
   }
   const monthlyPrice = planMonthlyPrice(restaurant.subscription_type, restaurant.monthly_cost, prices);
-  const amount2 = monthlyPrice === null ? null : renewalAmount(monthlyPrice, restaurant.subscription_duration);
+  const managedQuote = await supabaseAdmin.rpc("saas_gateway_quote", { p_restaurant: restaurantId });
+  if (managedQuote.error) return res.status(409).json({ error: "managed_manual_payment_required" });
+  const managed = managedQuote.data;
+  const duration = managed ? "month" : restaurant.subscription_duration;
+  const amount2 = managed ? Number(managed.amount) : monthlyPrice === null ? null : renewalAmount(monthlyPrice, duration);
   if (amount2 === null) return res.status(409).json({ error: "plan_price_not_configured" });
-  const { data: pending } = await supabaseAdmin.from("subscription_payments").select("reference_id,checkout_url,amount_iqd,duration,environment,created_at").eq("restaurant_id", restaurantId).eq("status", "pending").maybeSingle();
-  if (pending && Date.now() - Date.parse(pending.created_at) < 2 * 60 * 60 * 1e3 && Number(pending.amount_iqd) === amount2 && pending.duration === restaurant.subscription_duration && pending.environment === process.env.WAYL_ENV) {
+  const { data: pending } = await supabaseAdmin.from("subscription_payments").select("reference_id,checkout_url,amount_iqd,duration,environment,created_at,saas_snapshot").eq("restaurant_id", restaurantId).eq("status", "pending").maybeSingle();
+  if (pending && Date.now() - Date.parse(pending.created_at) < 2 * 60 * 60 * 1e3 && Number(pending.amount_iqd) === amount2 && pending.duration === duration && JSON.stringify(pending.saas_snapshot || null) === JSON.stringify(managed?.snapshot || null) && pending.environment === process.env.WAYL_ENV) {
     if (!pending.checkout_url) return res.status(409).json({ error: "checkout_preparing" });
     return res.json({ url: pending.checkout_url, referenceId: pending.reference_id });
   }
@@ -2480,8 +2485,9 @@ app.post("/api/restaurants/:restaurantId/subscription/checkout", rateLimit, asyn
     restaurant_id: restaurantId,
     amount_iqd: amount2,
     environment: process.env.WAYL_ENV,
-    duration: restaurant.subscription_duration,
-    webhook_secret: webhookSecret
+    duration,
+    webhook_secret: webhookSecret,
+    saas_snapshot: managed?.snapshot || null
   });
   if (inserted.error) return res.status(inserted.error.code === "23505" ? 409 : 503).json({ error: "checkout_preparing" });
   try {
