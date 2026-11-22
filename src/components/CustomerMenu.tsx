@@ -45,6 +45,7 @@ import { acceptableGpsAccuracyMeters, verifyGeofence } from "../lib/geofence";
 import { DEFAULT_THEME, resolveTheme, themeStyle } from "../lib/themes";
 import { localizeCategory, useLanguage } from "../lib/i18n";
 import { usePublicSystemLogo } from "../lib/use-system-brand";
+import CustomerLoyalty, { useCustomerLoyalty, type SavedOrderItem } from "./CustomerLoyalty";
 
 interface CustomerMenuProps {
   restaurantId: string;
@@ -73,6 +74,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
   const [loading, setLoading] = useState(() => !restaurant);
   const [isExpired, setIsExpired] = useState(false);
   const [cart, setCart] = useState<{ [id: string]: number }>({});
+  const loyalty = useCustomerLoyalty(restaurant?.id);
   const [showCart, setShowCart] = useState(false);
   const [submittingOrder, setSubmittingOrder] = useState(false);
   const [showAIChat, setShowAIChat] = useState(false);
@@ -535,6 +537,33 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
     }
   };
 
+  const reorder = async (previousItems: SavedOrderItem[]) => {
+    if (submittingOrder) return;
+    if (Object.keys(cart).length && !window.confirm(tr("تستبدل السلة الحالية بطلبك السابق؟", "Replace your current cart with the previous order?"))) return;
+    const response = await fetch(`/api/public/restaurants/${encodeURIComponent(restaurantId)}`, { cache: "no-store" });
+    if (!response.ok) throw new Error("menu_unavailable");
+    const { menuItems: currentMenu }: { menuItems: MenuItem[] } = await response.json();
+    const next: Record<string, number> = {};
+    let skipped = false;
+    for (const previous of previousItems) {
+      const item = currentMenu.find(candidate => candidate.id === previous.id);
+      if (!item || item.isAvailable === false || (previous.cheeseSelected && !item.hasCheese)
+        || (previous.spicySelected && !item.isSpicy)) {
+        skipped = true;
+        continue;
+      }
+      const key = getCartKey(item.id, !!previous.cheeseSelected, !!previous.spicySelected);
+      next[key] = previous.quantity;
+    }
+    if (skipped) window.alert(Object.keys(next).length
+      ? tr("بعض الأصناف أو الإضافات صارت غير متوفرة. راجع السلة بالأسعار الحالية.", "Some dishes or options are unavailable. Review your cart with current prices.")
+      : tr("أصناف طلبك السابق غير متوفرة حالياً.", "The items in your previous order are currently unavailable."));
+    if (!Object.keys(next).length) return;
+    setMenuItems(currentMenu);
+    setCart(next);
+    setShowCart(true);
+  };
+
   const addToCart = (id: string) => {
     setCart((prev) => ({ ...prev, [id]: (prev[id] || 0) + 1 }));
   };
@@ -626,6 +655,17 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
     }
   };
 
+  const refreshLoyaltyAfterOrder = (attached?: boolean) => {
+    if (loyalty.collect && !attached) {
+      window.alert(tr(
+        "طلبك انرسل. تعذّر ربط بطاقة الولاء بهذا الطلب.",
+        "Your order was sent. The loyalty card could not be linked to this order.",
+      ));
+    }
+    if (loyalty.wallet?.joined) void loyalty.refresh().catch(() => undefined);
+    loyalty.setOptOut(false);
+  };
+
   const handlePlaceOrder = async () => {
     if (submittingOrder) return;
     if (!(qrTableNumber || tableNumber.trim())) {
@@ -667,7 +707,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       const response = await fetch('/api/orders', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ restaurantId, tableNumber: qrTableNumber || tableNumber.trim(), notes, items: orderItems, idempotencyKey: orderIdempotencyKeyRef.current,
-          trackingToken: orderTrackingTokenRef.current,
+          trackingToken: orderTrackingTokenRef.current, collectLoyalty: loyalty.collect,
           fingerprint: getDeviceFingerprint(), location: { latitude: customerCoords.lat, longitude: customerCoords.lng, accuracy: locationAccuracy } }),
       });
       if (!response.ok) throw new Error((await response.json()).error || 'order_failed');
@@ -677,6 +717,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       localStorage.setItem("novix_active_order_id", orderData.id);
       localStorage.setItem("novix_active_order_token", orderData.trackingToken);
       setOrderComplete(orderData as Order);
+      refreshLoyaltyAfterOrder(orderData.loyaltyAttached);
       setShowOrderTrackingModal(true);
       setCart({});
       setShowCart(false);
@@ -728,7 +769,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ restaurantId, tableNumber: qrTableNumber || orderInfo.tableNumber || tableNumber.trim(),
           notes: orderInfo.notes || "", items: orderItems, fingerprint: getDeviceFingerprint(), idempotencyKey: orderIdempotencyKeyRef.current,
-          trackingToken: orderTrackingTokenRef.current,
+          trackingToken: orderTrackingTokenRef.current, collectLoyalty: loyalty.collect,
           location: { latitude: customerCoords.lat, longitude: customerCoords.lng, accuracy: locationAccuracy } }),
       });
       if (!response.ok) throw new Error((await response.json()).error || 'order_failed');
@@ -738,6 +779,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       localStorage.setItem("novix_active_order_id", orderData.id);
       localStorage.setItem("novix_active_order_token", orderData.trackingToken);
       setOrderComplete(orderData as Order);
+      refreshLoyaltyAfterOrder(orderData.loyaltyAttached);
       setShowOrderTrackingModal(true);
       
       setCustomerName(orderInfo.customerName || '');
@@ -1088,6 +1130,8 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
           </div>
         </div>
       </section>
+
+      <CustomerLoyalty loyalty={loyalty} onReorder={reorder} />
 
       {/* Search and Categories Bar */}
       <div className="menu-filter-bar sticky top-16 sm:top-20 z-30 bg-bg-card/95 backdrop-blur-md border-b border-border-delicate py-3 sm:py-4 space-y-3 mt-4 sm:mt-6">
@@ -1497,6 +1541,12 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
                       {totalPrice.toLocaleString()} <span className="text-xs font-bold">{tr('د.ع', 'IQD')}</span>
                     </span>
                   </div>
+                  {loyalty.wallet?.enabled && loyalty.wallet.joined && (
+                    <label className="mb-3 flex min-h-9 items-center gap-2 text-xs font-medium text-brand-primary">
+                      <input type="checkbox" checked={loyalty.collect} onChange={event => loyalty.setOptOut(!event.target.checked)} />
+                      {tr("اجمع نقاط الولاء على هذا الطلب", "Earn loyalty points on this order")}
+                    </label>
+                  )}
                   <button
                     type="button"
                     onClick={handlePlaceOrder}

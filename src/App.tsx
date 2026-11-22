@@ -20,6 +20,7 @@ import {
   X,
   CreditCard,
   Wallet,
+  Gift,
   MapPin,
   MessageSquare,
   HelpingHand,
@@ -41,6 +42,7 @@ import { supabase } from './lib/supabase';
 import AdminDashboard from './components/AdminDashboard';
 import RestaurantDashboard from './components/RestaurantDashboard';
 const WhatsAppSettings = React.lazy(() => import('./components/WhatsAppSettings'));
+const LoyaltyManagement = React.lazy(() => import('./components/LoyaltyManagement'));
 import WaiterDashboard from './components/WaiterDashboard';
 import KitchenDashboard from './components/KitchenDashboard';
 import CustomerMenu from './components/CustomerMenu';
@@ -236,6 +238,9 @@ export default function App() {
       { id: 'waiters', label: tr('الموظفين', 'Staff'), icon: <Users className="w-5 h-5" /> },
       { id: 'menu', label: tr('المنيو', 'Menu'), icon: <Utensils className="w-5 h-5" /> },
       ...(session.membershipRole === 'owner' ? [{ id: 'whatsapp', label: tr('طلبات واتساب', 'WhatsApp AI'), icon: <MessageSquare className="w-5 h-5" /> }] : []),
+      ...(['owner', 'manager'].includes(session.membershipRole || '') ? [
+        { id: 'loyalty', label: tr('الولاء', 'Loyalty'), icon: <Gift className="w-5 h-5" /> },
+      ] : []),
       { id: 'qr', label: tr('الباركود', 'QR'), icon: <QrCode className="w-5 h-5" /> },
       { id: 'orders', label: tr('الطلبات', 'Orders'), icon: <ClipboardList className="w-5 h-5" /> },
       { id: 'archive', label: tr('الأرشيف', 'Archive'), icon: <History className="w-5 h-5" /> },
@@ -422,6 +427,10 @@ export default function App() {
                 {activeTab === 'whatsapp' && session.membershipRole === 'owner' ? (
                   <React.Suspense fallback={<p role="status">{tr('جارٍ التحميل…', 'Loading…')}</p>}>
                     <WhatsAppSettings key={session.restaurantId} restaurantId={session.restaurantId} />
+                  </React.Suspense>
+                ) : activeTab === 'loyalty' && ['owner', 'manager'].includes(session.membershipRole || '') ? (
+                  <React.Suspense fallback={<p role="status">{tr('جارٍ التحميل…', 'Loading…')}</p>}>
+                    <LoyaltyManagement key={session.restaurantId} restaurantId={session.restaurantId} manage />
                   </React.Suspense>
                 ) : (
                   <RestaurantDashboard restaurantId={session.restaurantId} activeTab={activeTab as any} onThemeChange={(restaurant) => setWorkspaceTheme(resolveTheme(restaurant.themeId, restaurant.themeColors))} />

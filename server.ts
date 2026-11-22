@@ -1,5 +1,6 @@
 import express from "express";
 import { whatsappRouter } from "./whatsapp/routes";
+import { loyaltyCardHash, loyaltyRouter } from "./loyalty/routes";
 import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 import ws from "ws";
@@ -118,6 +119,7 @@ app.use((req: any, _res: any, next: any) => {
 });
 app.use("/api/whatsapp", whatsappRouter(supabaseAdmin));
 app.use(express.json({ limit: "256kb", verify: (req, _res, body) => { (req as any).rawBody = Buffer.from(body); } }));
+app.use("/api/loyalty", loyaltyRouter(supabaseAdmin, rateLimit));
 
 async function waylRequest(path: string, options?: RequestInit) {
   const token = process.env.WAYL_API_KEY;
@@ -690,7 +692,14 @@ async function reconcileWaylPayment(referenceId: string) {
       return res.status(400).json({ error: "invalid_order" });
     const items = body.items.map((item: any) => ({ id: item.id, quantity: item.quantity, cheeseSelected: item.cheeseSelected === true, spicySelected: item.spicySelected === true }));
     const restaurantId = await resolveRestaurantId(String(body.restaurantId));
-    const { data, error } = await supabase.rpc("create_customer_order", { p_restaurant_id: restaurantId, p_customer_name: customerName, p_table_number: tableNumber, p_notes: String(body.notes || ""), p_items: items, p_lat: location.latitude, p_lon: location.longitude, p_accuracy: location.accuracy, p_fingerprint: String(body.fingerprint || ""), p_idempotency_key: idempotencyKey, p_tracking_token: trackingToken });
+    const order = { p_restaurant_id: restaurantId, p_customer_name: customerName, p_table_number: tableNumber,
+      p_notes: String(body.notes || ""), p_items: items, p_lat: location.latitude, p_lon: location.longitude,
+      p_accuracy: location.accuracy, p_fingerprint: String(body.fingerprint || ""),
+      p_idempotency_key: idempotencyKey, p_tracking_token: trackingToken };
+    const card = body.collectLoyalty === true ? loyaltyCardHash(req, restaurantId) : null;
+    const { data, error } = card && supabaseAdmin
+      ? await supabaseAdmin.rpc("loyalty_create_order", { ...order, p_token_hash: card })
+      : await supabase.rpc("create_customer_order", order);
     if (error) return res.status(error.message.includes("subscription") || error.message.includes("location") ? 403 : 400).json({ error: error.message });
     return res.status(201).json(camelRow(data));
   });

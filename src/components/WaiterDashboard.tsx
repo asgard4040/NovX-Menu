@@ -17,6 +17,7 @@ import {
   ShieldAlert,
   Users,
   ShoppingBag,
+  Gift,
 } from "lucide-react";
 import {
   collection,
@@ -39,6 +40,8 @@ import { supabase } from "../lib/supabase";
 import { localizeDeviceType, useLanguage } from "../lib/i18n";
 import { StaffWelcomeCard } from "./StaffWelcomeCard";
 import { useOrderSound } from "../lib/use-order-sound";
+
+const LoyaltyManagement = React.lazy(() => import("./LoyaltyManagement"));
 
 const safeFormatDate = (dateVal: any, formatStr: string, fallback: string = "---") => {
   if (!dateVal) return fallback;
@@ -96,7 +99,7 @@ export default function WaiterDashboard({
   }, []);
 
   // States for table-side ordering menu (Requirement 3)
-  const [view, setView] = useState<"dashboard" | "menu" | "bans" | "requests">("dashboard");
+  const [view, setView] = useState<"dashboard" | "menu" | "bans" | "requests" | "loyalty">("dashboard");
   useEffect(() => {
     const requestId = new URLSearchParams(window.location.search).get("requestId");
     if (!requestId) return;
@@ -425,6 +428,10 @@ export default function WaiterDashboard({
       )}
 
       <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border-delicate bg-white p-3 sm:p-4">
+            <button type="button" onClick={() => setView(view === "loyalty" ? "dashboard" : "loyalty")}
+              aria-pressed={view === "loyalty"} className="flex min-h-11 items-center gap-2 rounded-xl border border-border-delicate px-4 py-2 text-xs font-bold text-brand-primary">
+              <Gift className="h-4 w-4" />{view === "loyalty" ? tr("رجوع للطلبات", "Back to orders") : tr("الولاء والمكافآت", "Loyalty and rewards")}
+            </button>
             <button type="button" onClick={() => { void orderSound.toggle(); }} aria-pressed={orderSound.enabled}
               className="flex items-center gap-2 rounded-xl border border-border-delicate px-4 py-3 text-[10px] font-bold text-brand-primary">
               <Bell className="h-4 w-4" />{orderSound.enabled ? tr('صوت الطلبات: مفعل', 'Order sound: on') : tr('صوت الطلبات: متوقف', 'Order sound: off')}
@@ -526,6 +533,11 @@ export default function WaiterDashboard({
         </button>
       </div>
 
+      {view === "loyalty" && (
+        <React.Suspense fallback={<p role="status">{tr("جارٍ تحميل الولاء…", "Loading loyalty…")}</p>}>
+          <LoyaltyManagement restaurantId={restaurantId} />
+        </React.Suspense>
+      )}
       {view === "menu" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-12 items-start font-sans">
           {/* Main Menu items & filter column */}

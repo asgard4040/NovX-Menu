@@ -548,8 +548,8 @@ var restaurantFields = "restaurant_name,province,area,landmark,latitude,longitud
 function searchTerms(text) {
   return [...new Set(normalizeMessage(text).split(/[^\p{L}\p{N}]+/u).filter((word) => word.length >= 2 && word.length <= 32 && !/^(?:the|me|my|want|please|اريد|عندكم|شنو|شكد|تحب|طلب|for|pickup|price|how|much)$/.test(word)).flatMap((word) => /^[و][\u0600-\u06ff]{3,}$/.test(word) ? [word.slice(1), word] : [word]))].slice(0, 8);
 }
-async function restaurantFacts(db, restaurantId) {
-  return result(await db.from("restaurants").select(restaurantFields).eq("id", restaurantId).single());
+async function restaurantFacts(db, restaurantId2) {
+  return result(await db.from("restaurants").select(restaurantFields).eq("id", restaurantId2).single());
 }
 function factReply(intent, restaurant, settings, locale) {
   if (intent === "hours") return settings.opens_at && settings.closes_at ? (locale === "ar" ? "\u0623\u0648\u0642\u0627\u062A \u0637\u0644\u0628\u0627\u062A \u0627\u0644\u0627\u0633\u062A\u0644\u0627\u0645 " : "Pickup ordering hours ") + settings.opens_at.slice(0, 5) + "\u2013" + settings.closes_at.slice(0, 5) + " (" + settings.timezone + ")" : agentText.noDetails(locale);
@@ -760,9 +760,9 @@ async function deliveryControl(db, job, c, settings, locale) {
 }
 
 // src/lib/qr-tables.ts
-function menuQrUrl(origin, restaurantId, table) {
+function menuQrUrl(origin, restaurantId2, table) {
   const url = new URL("/", origin);
-  url.searchParams.set("restaurantId", restaurantId);
+  url.searchParams.set("restaurantId", restaurantId2);
   if (table !== void 0) url.searchParams.set("table", String(table));
   return url.toString();
 }
@@ -770,8 +770,8 @@ function menuQrUrl(origin, restaurantId, table) {
 // src/lib/public-urls.ts
 var MENU_ORIGIN = "https://menu.ordova.cc";
 var STAFF_ORIGIN = "https://rest.ordova.cc";
-function customerMenuUrl(restaurantId, table) {
-  return menuQrUrl(MENU_ORIGIN, restaurantId, table);
+function customerMenuUrl(restaurantId2, table) {
+  return menuQrUrl(MENU_ORIGIN, restaurantId2, table);
 }
 
 // whatsapp/gupshup.ts
@@ -1377,13 +1377,13 @@ async function debugToken(token, options, fetcher) {
   const messagingAccounts = [...new Set(targets.filter((entry) => ["whatsapp_business_management", "whatsapp_business_messaging"].includes(entry?.scope)).flatMap((entry) => Array.isArray(entry.target_ids) ? entry.target_ids.filter(metaId) : []))];
   return { dates: { token_expires_at: expiry, data_access_expires_at: dataExpiry }, messagingAccounts };
 }
-async function exchangeSignup(db, restaurantId, userId, body, fetcher, sameTab = false) {
+async function exchangeSignup(db, restaurantId2, userId, body, fetcher, sameTab = false) {
   const options = config();
   if (!options) throw new ApiError(503, "meta_not_configured");
   if (!uuid(body?.signupId) || typeof body.code !== "string" || !/^[A-Za-z0-9_./+=-]{10,4096}$/.test(body.code)) {
     throw new ApiError(400, "invalid_signup");
   }
-  const signup = result(await db.from("whatsapp_signup").update({ used_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", body.signupId).eq("restaurant_id", restaurantId).eq("user_id", userId).gt("expires_at", (/* @__PURE__ */ new Date()).toISOString()).is("used_at", null).select("id").maybeSingle());
+  const signup = result(await db.from("whatsapp_signup").update({ used_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", body.signupId).eq("restaurant_id", restaurantId2).eq("user_id", userId).gt("expires_at", (/* @__PURE__ */ new Date()).toISOString()).is("used_at", null).select("id").maybeSingle());
   if (!signup) throw new ApiError(409, "signup_expired");
   const query = new URLSearchParams({ client_id: options.appId, client_secret: options.secret, code: body.code });
   if (sameTab) query.set("redirect_uri", signupCallbackUrl);
@@ -1395,8 +1395,8 @@ async function exchangeSignup(db, restaurantId, userId, body, fetcher, sameTab =
   if (typeof exchanged.access_token !== "string" || !exchanged.access_token) throw new ApiError(422, "meta_token_missing");
   await debugToken(exchanged.access_token, options, fetcher);
   result(await db.from("whatsapp_signup").update({
-    token_ciphertext: seal(exchanged.access_token, options.key, restaurantId + ":" + signup.id)
-  }).eq("id", signup.id).eq("restaurant_id", restaurantId));
+    token_ciphertext: seal(exchanged.access_token, options.key, restaurantId2 + ":" + signup.id)
+  }).eq("id", signup.id).eq("restaurant_id", restaurantId2));
 }
 async function verifiedPhones(waba, token, appSecret, fetcher) {
   const phones = await graph(waba + "/phone_numbers", {
@@ -1417,16 +1417,16 @@ async function verifiedPhones(waba, token, appSecret, fetcher) {
     needsPin: row.is_on_biz_app !== true && row.status !== "CONNECTED"
   }));
 }
-async function signupToken(db, restaurantId, userId, signupId, key) {
-  const signup = result(await db.from("whatsapp_signup").select("token_ciphertext").eq("id", signupId).eq("user_id", userId).eq("restaurant_id", restaurantId).gt("expires_at", (/* @__PURE__ */ new Date()).toISOString()).maybeSingle());
+async function signupToken(db, restaurantId2, userId, signupId, key) {
+  const signup = result(await db.from("whatsapp_signup").select("token_ciphertext").eq("id", signupId).eq("user_id", userId).eq("restaurant_id", restaurantId2).gt("expires_at", (/* @__PURE__ */ new Date()).toISOString()).maybeSingle());
   if (!signup?.token_ciphertext) throw new ApiError(409, "signup_expired");
-  return unseal(signup.token_ciphertext, key, restaurantId + ":" + signupId);
+  return unseal(signup.token_ciphertext, key, restaurantId2 + ":" + signupId);
 }
-async function listSignupPhones(db, restaurantId, userId, signupId, fetcher) {
+async function listSignupPhones(db, restaurantId2, userId, signupId, fetcher) {
   const options = config();
   if (!options) throw new ApiError(503, "meta_not_configured");
   if (!uuid(signupId)) throw new ApiError(400, "invalid_signup");
-  const token = await signupToken(db, restaurantId, userId, signupId, options.key);
+  const token = await signupToken(db, restaurantId2, userId, signupId, options.key);
   const { messagingAccounts } = await debugToken(token, options, fetcher);
   if (!messagingAccounts.length) throw new ApiError(422, "meta_no_phone");
   const accounts = await Promise.all(messagingAccounts.slice(0, 10).map((waba) => verifiedPhones(waba, token, options.secret, fetcher)));
@@ -1437,23 +1437,23 @@ async function listSignupPhones(db, restaurantId, userId, signupId, fetcher) {
 function hasApp(subscriptions, appId) {
   return Array.isArray(subscriptions?.data) && subscriptions.data.some((app2) => String(app2?.whatsapp_business_api_data?.id ?? app2?.id) === appId);
 }
-function manualWebhookToken(restaurantId) {
+function manualWebhookToken(restaurantId2) {
   const key = encryptionKey(process.env.WHATSAPP_CREDENTIAL_KEY);
-  return key ? createHmac2("sha256", key).update("whatsapp-webhook:" + restaurantId).digest("hex") : null;
+  return key ? createHmac2("sha256", key).update("whatsapp-webhook:" + restaurantId2).digest("hex") : null;
 }
-function manualSetup(restaurantId) {
-  const verifyToken = manualWebhookToken(restaurantId);
+function manualSetup(restaurantId2) {
+  const verifyToken = manualWebhookToken(restaurantId2);
   const origin = new URL(process.env.WHATSAPP_WEBHOOK_ORIGIN || STAFF_ORIGIN);
-  return verifyToken && origin.protocol === "https:" && !origin.username && !origin.password ? { callback: origin.origin + "/api/whatsapp/webhook/" + restaurantId, verifyToken } : null;
+  return verifyToken && origin.protocol === "https:" && !origin.username && !origin.password ? { callback: origin.origin + "/api/whatsapp/webhook/" + restaurantId2, verifyToken } : null;
 }
-async function connectManual(db, restaurantId, body, fetcher) {
+async function connectManual(db, restaurantId2, body, fetcher) {
   const key = encryptionKey(process.env.WHATSAPP_CREDENTIAL_KEY);
   if (!key) throw new ApiError(503, "manual_not_configured");
   const { appId, appSecret, waba, phone: phone2, token } = body ?? {};
   if (!metaId(appId) || !metaId(waba) || !metaId(phone2) || typeof appSecret !== "string" || !/^[a-f0-9]{32}$/i.test(appSecret) || typeof token !== "string" || !/^[A-Za-z0-9_-]{20,4096}$/.test(token)) {
     throw new ApiError(400, "invalid_manual_credentials");
   }
-  if (!result(await db.rpc("restaurant_subscription_active", { rid: restaurantId }))) throw new ApiError(403, "subscription_inactive");
+  if (!result(await db.rpc("restaurant_subscription_active", { rid: restaurantId2 }))) throw new ApiError(403, "subscription_inactive");
   const { dates } = await debugToken(token, { appId, secret: appSecret }, fetcher);
   const asset = (await verifiedPhones(waba, token, appSecret, fetcher)).find((row) => row.phone === phone2);
   if (!asset) throw new ApiError(422, "meta_phone_mismatch");
@@ -1466,9 +1466,9 @@ async function connectManual(db, restaurantId, body, fetcher) {
       throw new ApiError(422, "meta_subscription_unverified");
     }
   }
-  const scope2 = restaurantId + ":" + phone2;
+  const scope2 = restaurantId2 + ":" + phone2;
   const saved = result(await db.rpc("whatsapp_save_manual", {
-    p_restaurant: restaurantId,
+    p_restaurant: restaurantId2,
     p_phone: phone2,
     p_waba: waba,
     p_display: asset.display,
@@ -1481,14 +1481,14 @@ async function connectManual(db, restaurantId, body, fetcher) {
   }));
   if (saved !== "connected") throw new ApiError(409, saved);
 }
-async function completeSignup(db, restaurantId, userId, body, fetcher) {
+async function completeSignup(db, restaurantId2, userId, body, fetcher) {
   const options = config();
   if (!options) throw new ApiError(503, "meta_not_configured");
   const { signupId, waba, phone: phone2, pin } = body ?? {};
   if (!uuid(signupId) || !metaId(waba) || !metaId(phone2) || pin != null && !/^\d{6}$/.test(pin)) {
     throw new ApiError(400, "invalid_assets");
   }
-  const token = await signupToken(db, restaurantId, userId, signupId, options.key);
+  const token = await signupToken(db, restaurantId2, userId, signupId, options.key);
   const { dates: credentialDates } = await debugToken(token, options, fetcher);
   const request = { appSecret: options.secret, fetcher, token };
   const asset = (await verifiedPhones(waba, token, options.secret, fetcher)).find((row) => row.phone === phone2);
@@ -1496,7 +1496,7 @@ async function completeSignup(db, restaurantId, userId, body, fetcher) {
   const { coexistence, needsPin } = asset;
   if (needsPin && !/^\d{6}$/.test(pin || "")) throw new ApiError(422, "meta_pin_required");
   const reserved = result(await db.rpc("whatsapp_reserve_account", {
-    p_restaurant: restaurantId,
+    p_restaurant: restaurantId2,
     p_signup: signupId,
     p_phone: phone2,
     p_waba: waba,
@@ -1519,7 +1519,7 @@ async function completeSignup(db, restaurantId, userId, body, fetcher) {
     if (!hasApp(current, options.appId)) throw new ApiError(422, "meta_subscription_unverified");
     const stored = result(await db.from("whatsapp_accounts").update({
       ...credentialDates,
-      token_ciphertext: seal(token, options.key, restaurantId + ":" + phone2),
+      token_ciphertext: seal(token, options.key, restaurantId2 + ":" + phone2),
       meta_app_id: null,
       app_secret_ciphertext: null,
       status: "connected",
@@ -1527,17 +1527,17 @@ async function completeSignup(db, restaurantId, userId, body, fetcher) {
       verified_at: (/* @__PURE__ */ new Date()).toISOString(),
       onboarding_id: null,
       last_error: null
-    }).eq("restaurant_id", restaurantId).eq("phone_id", phone2).eq("status", "connecting").eq("onboarding_id", signupId).select("phone_id").maybeSingle());
+    }).eq("restaurant_id", restaurantId2).eq("phone_id", phone2).eq("status", "connecting").eq("onboarding_id", signupId).select("phone_id").maybeSingle());
     if (!stored) throw new ApiError(409, "signup_expired");
-    result(await db.from("whatsapp_signup").update({ token_ciphertext: null }).eq("id", signupId).eq("restaurant_id", restaurantId));
+    result(await db.from("whatsapp_signup").update({ token_ciphertext: null }).eq("id", signupId).eq("restaurant_id", restaurantId2));
   } catch (error) {
     const code = error instanceof ApiError || error instanceof ProviderError ? error.code : "onboarding_failed";
-    result(await db.from("whatsapp_accounts").update({ status: "reconnect_required", last_error: code, onboarding_id: null }).eq("phone_id", phone2).eq("restaurant_id", restaurantId).eq("status", "connecting").eq("onboarding_id", signupId));
+    result(await db.from("whatsapp_accounts").update({ status: "reconnect_required", last_error: code, onboarding_id: null }).eq("phone_id", phone2).eq("restaurant_id", restaurantId2).eq("status", "connecting").eq("onboarding_id", signupId));
     throw error;
   }
 }
-async function disconnect(db, restaurantId, fetcher) {
-  const reservation = result(await db.rpc("whatsapp_begin_disconnect", { p_restaurant: restaurantId }));
+async function disconnect(db, restaurantId2, fetcher) {
+  const reservation = result(await db.rpc("whatsapp_begin_disconnect", { p_restaurant: restaurantId2 }));
   if (!reservation) throw new ApiError(409, "account_operation_unavailable");
   const { account, unsubscribe } = reservation;
   let warning = null;
@@ -1565,13 +1565,13 @@ async function disconnect(db, restaurantId, fetcher) {
     token_expires_at: null,
     data_access_expires_at: null,
     onboarding_id: null
-  }).eq("phone_id", account.phone_id).eq("restaurant_id", restaurantId).eq("status", "disconnecting"));
+  }).eq("phone_id", account.phone_id).eq("restaurant_id", restaurantId2).eq("status", "disconnecting"));
   return warning;
 }
-async function checkConnection(db, restaurantId, fetcher) {
-  const account = result(await db.from("whatsapp_accounts").select("*").eq("restaurant_id", restaurantId).eq("status", "connected").maybeSingle());
+async function checkConnection(db, restaurantId2, fetcher) {
+  const account = result(await db.from("whatsapp_accounts").select("*").eq("restaurant_id", restaurantId2).eq("status", "connected").maybeSingle());
   if (!account) throw new ApiError(409, "account_disconnected");
-  const update = (changes) => db.from("whatsapp_accounts").update(changes).eq("restaurant_id", restaurantId).eq("phone_id", account.phone_id).eq("token_ciphertext", account.token_ciphertext).eq("status", "connected");
+  const update = (changes) => db.from("whatsapp_accounts").update(changes).eq("restaurant_id", restaurantId2).eq("phone_id", account.phone_id).eq("token_ciphertext", account.token_ciphertext).eq("status", "connected");
   try {
     if (account.provider === "gupshup") {
       await verifyGupshup(account.gupshup_app_id, accountToken(account), fetcher);
@@ -1618,8 +1618,8 @@ var signupCookieOptions = { secure: true, httpOnly: true, sameSite: "lax", path:
 function requireEmbeddedSignup() {
   if (process.env.WHATSAPP_EMBEDDED_SIGNUP_ENABLED !== "true") throw new ApiError(404, "embedded_signup_disabled");
 }
-async function isOwner(db, restaurantId, userId) {
-  return !!result(await db.from("restaurant_members").select("role").eq("restaurant_id", restaurantId).eq("user_id", userId).eq("role", "owner").eq("active", true).maybeSingle());
+async function isOwner(db, restaurantId2, userId) {
+  return !!result(await db.from("restaurant_members").select("role").eq("restaurant_id", restaurantId2).eq("user_id", userId).eq("role", "owner").eq("active", true).maybeSingle());
 }
 function parseSettings(body) {
   if (!body || typeof body !== "object") throw new ApiError(400, "invalid_settings");
@@ -1983,11 +1983,90 @@ function whatsappRouter(db, fetcher = fetch) {
   return router;
 }
 
+// loyalty/routes.ts
+import { createHash, randomBytes as randomBytes3 } from "node:crypto";
+import { Router as Router2 } from "express";
+var restaurantId = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+var cardToken = /^[A-Za-z0-9_-]{43}$/;
+var cardLifetime = 180 * 24 * 60 * 60 * 1e3;
+var secureRequest = (req) => process.env.VERCEL === "1" || req.secure || req.get("X-Forwarded-Proto") === "https";
+var cookieName = (req, id2) => `${secureRequest(req) ? "__Host-" : ""}ordova_loyalty_${id2.toLowerCase()}`;
+var hashToken = (token) => createHash("sha256").update(token).digest("hex");
+function readCardToken(req, id2) {
+  if (!restaurantId.test(id2)) return null;
+  const prefix = cookieName(req, id2) + "=";
+  const token = req.headers.cookie?.split(";").map((part) => part.trim()).find((part) => part.startsWith(prefix))?.slice(prefix.length);
+  return token && cardToken.test(token) ? token : null;
+}
+function loyaltyCardHash(req, id2) {
+  const token = readCardToken(req, id2);
+  return token ? hashToken(token) : null;
+}
+function loyaltyRouter(db, rateLimit2) {
+  const router = Router2();
+  router.use((_req, res, next) => {
+    res.set("Cache-Control", "private, no-store");
+    next();
+  });
+  router.get("/:restaurantId", async (req, res) => {
+    const id2 = req.params.restaurantId;
+    if (!restaurantId.test(id2)) return res.status(400).json({ error: "invalid_restaurant" });
+    if (!db) return res.status(503).json({ error: "loyalty_unavailable" });
+    const { data, error } = await db.rpc("loyalty_guest", {
+      p_restaurant: id2,
+      p_token_hash: loyaltyCardHash(req, id2),
+      p_action: "read"
+    });
+    if (error) return res.status(503).json({ error: "loyalty_unavailable" });
+    return res.json(data);
+  });
+  router.post("/:restaurantId/:action", rateLimit2, async (req, res) => {
+    const { restaurantId: id2, action } = req.params;
+    if (!restaurantId.test(id2) || !["join", "claim"].includes(action)) return res.sendStatus(404);
+    if (!req.is("application/json") || ["cross-site", "same-site"].includes(req.get("Sec-Fetch-Site") || "")) {
+      return res.sendStatus(403);
+    }
+    if (!db) return res.status(503).json({ error: "loyalty_unavailable" });
+    const current = readCardToken(req, id2);
+    if (action === "claim" && !current) return res.status(403).json({ error: "loyalty_card_required" });
+    if (action === "join" && current) {
+      const { data: data2, error: error2 } = await db.rpc("loyalty_guest", {
+        p_restaurant: id2,
+        p_token_hash: hashToken(current),
+        p_action: "read"
+      });
+      if (error2 || !data2?.enabled) return res.status(503).json({ error: "loyalty_unavailable" });
+      if (data2.joined) return res.json(data2);
+    }
+    const token = action === "join" ? randomBytes3(32).toString("base64url") : current;
+    const { data, error } = await db.rpc("loyalty_guest", {
+      p_restaurant: id2,
+      p_token_hash: hashToken(token),
+      p_action: action
+    });
+    if (error) {
+      const code = ["loyalty_card_required", "loyalty_insufficient_points"].includes(error.message) ? error.message : "loyalty_unavailable";
+      return res.status(code === "loyalty_unavailable" ? 503 : 409).json({ error: code });
+    }
+    if (action === "join") {
+      res.cookie(cookieName(req, id2), token, {
+        httpOnly: true,
+        sameSite: "strict",
+        secure: secureRequest(req),
+        path: "/",
+        maxAge: cardLifetime
+      });
+    }
+    return res.json(data);
+  });
+  return router;
+}
+
 // server.ts
 import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 import ws from "ws";
-import { createHmac as createHmac5, randomBytes as randomBytes4, randomUUID as randomUUID3 } from "node:crypto";
+import { createHmac as createHmac5, randomBytes as randomBytes5, randomUUID as randomUUID3 } from "node:crypto";
 
 // src/lib/ai-models.ts
 var DEFAULT_AI_MODEL = "gemini-3.8-flash";
@@ -2009,12 +2088,12 @@ function openAIResponseText(response) {
 }
 
 // passcodes.ts
-import { createCipheriv as createCipheriv2, createDecipheriv as createDecipheriv2, createHash, createHmac as createHmac3, randomBytes as randomBytes3, randomInt } from "node:crypto";
+import { createCipheriv as createCipheriv2, createDecipheriv as createDecipheriv2, createHash as createHash2, createHmac as createHmac3, randomBytes as randomBytes4, randomInt } from "node:crypto";
 var isPasscode = (value) => typeof value === "string" && /^[0-9]{4}$/.test(value);
 var isWeakPasscode = (code) => /^([0-9])\1{3}$/.test(code) || ["0123", "1234", "2345", "3456", "4567", "5678", "6789", "9876", "8765", "7654", "6543", "5432", "4321", "3210", "1212", "2580"].includes(code);
 function passcodeKey(secret) {
   if (!/^[a-f0-9]{64}$/i.test(secret)) throw new Error("passcode_secret_not_configured");
-  return createHash("sha256").update(Buffer.from(secret, "hex")).digest();
+  return createHash2("sha256").update(Buffer.from(secret, "hex")).digest();
 }
 function passcodeDigest(code, key) {
   if (!isPasscode(code)) throw new Error("invalid_passcode");
@@ -2022,7 +2101,7 @@ function passcodeDigest(code, key) {
 }
 function encryptPasscode(code, key) {
   if (!isPasscode(code)) throw new Error("invalid_passcode");
-  const iv = randomBytes3(12);
+  const iv = randomBytes4(12);
   const cipher = createCipheriv2("aes-256-gcm", key, iv);
   const encrypted = Buffer.concat([cipher.update(code, "utf8"), cipher.final()]);
   return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString("base64url")).join(".");
@@ -2170,7 +2249,7 @@ var configuredPasscodeSecret = process.env.PASSCODE_SECRET || "";
 function getPasscodeKey() {
   return passcodeKey(configuredPasscodeSecret);
 }
-async function setMemberPasscode(userId, restaurantId, role, requested) {
+async function setMemberPasscode(userId, restaurantId2, role, requested) {
   if (!supabaseAdmin) throw new Error("service_role_not_configured");
   const key = getPasscodeKey();
   if (requested !== void 0 && !isPasscode(requested)) throw new Error("invalid_passcode");
@@ -2179,7 +2258,7 @@ async function setMemberPasscode(userId, restaurantId, role, requested) {
     const code = requested || generatePasscode();
     const { error } = await supabaseAdmin.from("staff_passcodes").upsert({
       user_id: userId,
-      restaurant_id: restaurantId,
+      restaurant_id: restaurantId2,
       role,
       code_digest: passcodeDigest(code, key),
       code_ciphertext: encryptPasscode(code, key),
@@ -2190,35 +2269,35 @@ async function setMemberPasscode(userId, restaurantId, role, requested) {
       continue;
     }
     if (error) throw new Error(`passcode_save_failed:${error.message}`);
-    const rotated = await supabaseAdmin.auth.admin.updateUserById(userId, { password: randomBytes4(48).toString("base64url") });
+    const rotated = await supabaseAdmin.auth.admin.updateUserById(userId, { password: randomBytes5(48).toString("base64url") });
     if (rotated.error) throw new Error("passcode_account_update_failed");
     return code;
   }
   throw new Error("passcode_space_exhausted");
 }
-async function getOrCreateMemberPasscode(userId, restaurantId, role) {
+async function getOrCreateMemberPasscode(userId, restaurantId2, role) {
   if (!supabaseAdmin) throw new Error("service_role_not_configured");
-  const { data, error } = await supabaseAdmin.from("staff_passcodes").select("code_ciphertext,role").eq("user_id", userId).eq("restaurant_id", restaurantId).maybeSingle();
+  const { data, error } = await supabaseAdmin.from("staff_passcodes").select("code_ciphertext,role").eq("user_id", userId).eq("restaurant_id", restaurantId2).maybeSingle();
   if (error) throw new Error(`passcode_read_failed:${error.message}`);
   if (data?.role === role) return decryptPasscode(data.code_ciphertext, getPasscodeKey());
-  if (data) return setMemberPasscode(userId, restaurantId, role);
+  if (data) return setMemberPasscode(userId, restaurantId2, role);
   const key = getPasscodeKey();
   for (let attempt = 0; attempt < 100; attempt++) {
     const code = generatePasscode();
     const inserted = await supabaseAdmin.from("staff_passcodes").insert({
       user_id: userId,
-      restaurant_id: restaurantId,
+      restaurant_id: restaurantId2,
       role,
       code_digest: passcodeDigest(code, key),
       code_ciphertext: encryptPasscode(code, key)
     });
     if (inserted.error?.code === "23505") {
-      const winner = await supabaseAdmin.from("staff_passcodes").select("code_ciphertext").eq("user_id", userId).eq("restaurant_id", restaurantId).maybeSingle();
+      const winner = await supabaseAdmin.from("staff_passcodes").select("code_ciphertext").eq("user_id", userId).eq("restaurant_id", restaurantId2).maybeSingle();
       if (winner.data) return decryptPasscode(winner.data.code_ciphertext, key);
       continue;
     }
     if (inserted.error) throw new Error(`passcode_save_failed:${inserted.error.message}`);
-    const rotated = await supabaseAdmin.auth.admin.updateUserById(userId, { password: randomBytes4(48).toString("base64url") });
+    const rotated = await supabaseAdmin.auth.admin.updateUserById(userId, { password: randomBytes5(48).toString("base64url") });
     if (rotated.error) throw new Error("passcode_account_update_failed");
     return code;
   }
@@ -2265,6 +2344,7 @@ app.use("/api/whatsapp", whatsappRouter(supabaseAdmin));
 app.use(express.json({ limit: "256kb", verify: (req, _res, body) => {
   req.rawBody = Buffer.from(body);
 } }));
+app.use("/api/loyalty", loyaltyRouter(supabaseAdmin, rateLimit));
 async function waylRequest(path, options) {
   const token = process.env.WAYL_API_KEY;
   if (!token) throw new Error("wayl_not_configured");
@@ -2283,9 +2363,9 @@ async function subscriptionIdentity(req) {
   const { data } = await supabaseAdmin.auth.getUser(bearer);
   return data.user || null;
 }
-async function subscriptionMembership(userId, restaurantId) {
+async function subscriptionMembership(userId, restaurantId2) {
   if (!supabaseAdmin) return null;
-  const { data } = await supabaseAdmin.from("restaurant_members").select("role").eq("user_id", userId).eq("restaurant_id", restaurantId).eq("active", true).maybeSingle();
+  const { data } = await supabaseAdmin.from("restaurant_members").select("role").eq("user_id", userId).eq("restaurant_id", restaurantId2).eq("active", true).maybeSingle();
   return data?.role || null;
 }
 async function readPlanPrices() {
@@ -2313,18 +2393,18 @@ async function reconcileWaylPayment(referenceId) {
   return true;
 }
 app.get("/api/home-screen-manifest", (req, res) => {
-  const restaurantId = String(req.query.restaurantId || "");
+  const restaurantId2 = String(req.query.restaurantId || "");
   const portal = String(req.query.portal || "");
-  if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(restaurantId) || !["menu", "restaurant", "waiter", "kitchen"].includes(portal))
+  if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(restaurantId2) || !["menu", "restaurant", "waiter", "kitchen"].includes(portal))
     return res.status(400).json({ error: "invalid_home_screen_portal" });
   const name = { menu: "ORDOVA Menu", restaurant: "ORDOVA Restaurant", waiter: "ORDOVA Waiter", kitchen: "ORDOVA Kitchen" }[portal];
-  const startUrl = portal === "menu" ? `/?restaurantId=${encodeURIComponent(restaurantId)}` : `/?loginRestaurantId=${encodeURIComponent(restaurantId)}&portal=${portal}`;
+  const startUrl = portal === "menu" ? `/?restaurantId=${encodeURIComponent(restaurantId2)}` : `/?loginRestaurantId=${encodeURIComponent(restaurantId2)}&portal=${portal}`;
   res.setHeader("Cache-Control", "private, no-store");
   res.setHeader("Content-Type", "application/manifest+json; charset=utf-8");
   return res.json({
     name,
     short_name: name,
-    id: `/home/${portal}/${restaurantId}`,
+    id: `/home/${portal}/${restaurantId2}`,
     start_url: startUrl,
     scope: "/",
     display: "standalone",
@@ -2341,15 +2421,15 @@ app.get("/api/public/system-brand", async (_req, res) => {
   return res.json({ logoUrl: data?.logo_url || null });
 });
 app.get("/api/restaurants/:restaurantId/access", async (req, res) => {
-  const restaurantId = await resolveRestaurantId(req.params.restaurantId);
-  const { data, error } = await supabase.rpc("public_restaurant_menu", { p_restaurant_id: restaurantId });
+  const restaurantId2 = await resolveRestaurantId(req.params.restaurantId);
+  const { data, error } = await supabase.rpc("public_restaurant_menu", { p_restaurant_id: restaurantId2 });
   if (error) return res.status(error.message.includes("subscription_inactive") ? 403 : 404).json({ allowed: false, reason: error.message });
   return res.json({ allowed: true, serverTime: Date.now(), geofenceRadiusMeters: data.restaurant.geofence_radius_meters });
 });
 app.get("/api/public/restaurants/:restaurantId", async (req, res) => {
-  const restaurantId = await resolveRestaurantId(req.params.restaurantId);
+  const restaurantId2 = await resolveRestaurantId(req.params.restaurantId);
   const rpc = req.query.branding === "1" ? "public_restaurant_branding" : "public_restaurant_menu";
-  const { data, error } = await supabase.rpc(rpc, { p_restaurant_id: restaurantId });
+  const { data, error } = await supabase.rpc(rpc, { p_restaurant_id: restaurantId2 });
   if (error || !data) return res.status(error?.message.includes("subscription_inactive") ? 403 : 404).json({ error: error?.message || "not_found" });
   return res.json(req.query.branding === "1" ? { restaurant: camelRow(data) } : camelRow(data));
 });
@@ -2412,11 +2492,11 @@ app.get("/api/restaurants/:restaurantId/subscription", async (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
   const user = await subscriptionIdentity(req);
   if (!user) return res.status(401).json({ error: "authentication_required" });
-  const restaurantId = await resolveRestaurantId(req.params.restaurantId);
-  const role = await subscriptionMembership(user.id, restaurantId);
+  const restaurantId2 = await resolveRestaurantId(req.params.restaurantId);
+  const role = await subscriptionMembership(user.id, restaurantId2);
   if (!role) return res.status(403).json({ error: "restaurant_access_denied" });
   if (!supabaseAdmin) return res.status(503).json({ error: "service_role_not_configured" });
-  const { data: restaurant, error } = await supabaseAdmin.from("restaurants").select("restaurant_name,status,start_date,end_date,grace_period_days,subscription_type,subscription_duration,monthly_cost").eq("id", restaurantId).maybeSingle();
+  const { data: restaurant, error } = await supabaseAdmin.from("restaurants").select("restaurant_name,status,start_date,end_date,grace_period_days,subscription_type,subscription_duration,monthly_cost").eq("id", restaurantId2).maybeSingle();
   if (error || !restaurant) return res.status(404).json({ error: "restaurant_not_found" });
   const access = getSubscriptionAccess({
     status: restaurant.status,
@@ -2431,7 +2511,7 @@ app.get("/api/restaurants/:restaurantId/subscription", async (req, res) => {
     return res.status(503).json({ error: "pricing_unavailable" });
   }
   const monthlyPrice = planMonthlyPrice(restaurant.subscription_type, restaurant.monthly_cost, prices);
-  const managedQuote = await supabaseAdmin.rpc("saas_gateway_quote", { p_restaurant: restaurantId });
+  const managedQuote = await supabaseAdmin.rpc("saas_gateway_quote", { p_restaurant: restaurantId2 });
   const renewal = managedQuote.error ? null : managedQuote.data ? Number(managedQuote.data.amount) : monthlyPrice === null ? null : renewalAmount(monthlyPrice, restaurant.subscription_duration);
   return res.json({
     allowed: access.allowed,
@@ -2447,15 +2527,15 @@ app.post("/api/restaurants/:restaurantId/subscription/checkout", rateLimit, asyn
   res.setHeader("Cache-Control", "private, no-store");
   const user = await subscriptionIdentity(req);
   if (!user) return res.status(401).json({ error: "authentication_required" });
-  const restaurantId = await resolveRestaurantId(req.params.restaurantId);
-  const role = await subscriptionMembership(user.id, restaurantId);
+  const restaurantId2 = await resolveRestaurantId(req.params.restaurantId);
+  const role = await subscriptionMembership(user.id, restaurantId2);
   if (role !== "owner" && role !== "manager") return res.status(403).json({ error: "owner_required" });
   if (!supabaseAdmin) return res.status(503).json({ error: "service_role_not_configured" });
   const appUrl = process.env.APP_URL || "https://rest.ordova.cc";
   if (!process.env.WAYL_API_KEY || !["test", "live"].includes(process.env.WAYL_ENV || "") || !appUrl.startsWith("https://")) return res.status(503).json({ error: "payment_not_configured" });
-  if (process.env.WAYL_ENV === "test" && restaurantId !== process.env.WAYL_TEST_RESTAURANT_ID)
+  if (process.env.WAYL_ENV === "test" && restaurantId2 !== process.env.WAYL_TEST_RESTAURANT_ID)
     return res.status(403).json({ error: "test_payment_restaurant_not_allowed" });
-  const { data: restaurant, error } = await supabaseAdmin.from("restaurants").select("id,restaurant_name,status,end_date,subscription_type,subscription_duration,monthly_cost").eq("id", restaurantId).maybeSingle();
+  const { data: restaurant, error } = await supabaseAdmin.from("restaurants").select("id,restaurant_name,status,end_date,subscription_type,subscription_duration,monthly_cost").eq("id", restaurantId2).maybeSingle();
   if (error || !restaurant) return res.status(404).json({ error: "restaurant_not_found" });
   if (restaurant.status !== "active") return res.status(403).json({ error: "restaurant_suspended" });
   if (Date.parse(restaurant.end_date) > Date.now()) return res.status(409).json({ error: "subscription_still_active" });
@@ -2466,23 +2546,23 @@ app.post("/api/restaurants/:restaurantId/subscription/checkout", rateLimit, asyn
     return res.status(503).json({ error: "pricing_unavailable" });
   }
   const monthlyPrice = planMonthlyPrice(restaurant.subscription_type, restaurant.monthly_cost, prices);
-  const managedQuote = await supabaseAdmin.rpc("saas_gateway_quote", { p_restaurant: restaurantId });
+  const managedQuote = await supabaseAdmin.rpc("saas_gateway_quote", { p_restaurant: restaurantId2 });
   if (managedQuote.error) return res.status(409).json({ error: "managed_manual_payment_required" });
   const managed = managedQuote.data;
   const duration = managed ? "month" : restaurant.subscription_duration;
   const amount2 = managed ? Number(managed.amount) : monthlyPrice === null ? null : renewalAmount(monthlyPrice, duration);
   if (amount2 === null) return res.status(409).json({ error: "plan_price_not_configured" });
-  const { data: pending } = await supabaseAdmin.from("subscription_payments").select("reference_id,checkout_url,amount_iqd,duration,environment,created_at,saas_snapshot").eq("restaurant_id", restaurantId).eq("status", "pending").maybeSingle();
+  const { data: pending } = await supabaseAdmin.from("subscription_payments").select("reference_id,checkout_url,amount_iqd,duration,environment,created_at,saas_snapshot").eq("restaurant_id", restaurantId2).eq("status", "pending").maybeSingle();
   if (pending && Date.now() - Date.parse(pending.created_at) < 2 * 60 * 60 * 1e3 && Number(pending.amount_iqd) === amount2 && pending.duration === duration && JSON.stringify(pending.saas_snapshot || null) === JSON.stringify(managed?.snapshot || null) && pending.environment === process.env.WAYL_ENV) {
     if (!pending.checkout_url) return res.status(409).json({ error: "checkout_preparing" });
     return res.json({ url: pending.checkout_url, referenceId: pending.reference_id });
   }
   if (pending) await supabaseAdmin.from("subscription_payments").update({ status: "superseded" }).eq("reference_id", pending.reference_id);
   const referenceId = `renewal-${randomUUID3()}`;
-  const webhookSecret = randomBytes4(32).toString("hex");
+  const webhookSecret = randomBytes5(32).toString("hex");
   const inserted = await supabaseAdmin.from("subscription_payments").insert({
     reference_id: referenceId,
-    restaurant_id: restaurantId,
+    restaurant_id: restaurantId2,
     amount_iqd: amount2,
     environment: process.env.WAYL_ENV,
     duration,
@@ -2493,7 +2573,7 @@ app.post("/api/restaurants/:restaurantId/subscription/checkout", rateLimit, asyn
   try {
     const site = new URL(appUrl);
     const redirect = new URL(site.origin + "/");
-    redirect.searchParams.set("loginRestaurantId", restaurantId);
+    redirect.searchParams.set("loginRestaurantId", restaurantId2);
     redirect.searchParams.set("portal", "restaurant");
     redirect.searchParams.set("paymentReturn", "1");
     const link = await waylRequest("", { method: "POST", body: JSON.stringify({
@@ -2501,7 +2581,7 @@ app.post("/api/restaurants/:restaurantId/subscription/checkout", rateLimit, asyn
       referenceId,
       total: amount2,
       currency: "IQD",
-      customParameter: restaurantId,
+      customParameter: restaurantId2,
       lineItem: [{ label: `${restaurant.restaurant_name} subscription renewal`, amount: amount2, type: "increase" }],
       webhookUrl: new URL("/api/payments/wayl/webhook", site.origin).toString(),
       webhookSecret,
@@ -2547,15 +2627,15 @@ app.get("/api/payments/wayl/:referenceId/status", async (req, res) => {
   }
 });
 app.post("/api/public/restaurants/:restaurantId/customer-status", rateLimit, async (req, res) => {
-  const restaurantId = await resolveRestaurantId(req.params.restaurantId);
-  const { data, error } = await supabase.rpc("customer_device_status", { p_restaurant_id: restaurantId, p_fingerprint: String(req.body?.fingerprint || "").slice(0, 128) });
+  const restaurantId2 = await resolveRestaurantId(req.params.restaurantId);
+  const { data, error } = await supabase.rpc("customer_device_status", { p_restaurant_id: restaurantId2, p_fingerprint: String(req.body?.fingerprint || "").slice(0, 128) });
   if (error) return res.status(400).json({ error: error.message });
   return res.json(data);
 });
 app.post("/api/security-alerts", rateLimit, async (req, res) => {
   const body = req.body || {};
-  const restaurantId = await resolveRestaurantId(body.restaurantId);
-  const { error } = await supabase.rpc("create_security_alert", { p_restaurant_id: restaurantId, p_type: body.type, p_title: body.title, p_severity: body.severity, p_customer_name: body.customerName, p_table_number: body.tableNumber, p_fingerprint: body.fingerprint, p_distance: body.distanceMeters });
+  const restaurantId2 = await resolveRestaurantId(body.restaurantId);
+  const { error } = await supabase.rpc("create_security_alert", { p_restaurant_id: restaurantId2, p_type: body.type, p_title: body.title, p_severity: body.severity, p_customer_name: body.customerName, p_table_number: body.tableNumber, p_fingerprint: body.fingerprint, p_distance: body.distanceMeters });
   if (error) return res.status(400).json({ error: error.message });
   return res.status(204).end();
 });
@@ -2662,13 +2742,13 @@ app.get("/api/staff/:staffId/passcode", async (req, res) => {
   const bearer = req.headers.authorization?.replace(/^Bearer /, "") || "";
   const { data: identity } = await supabaseAdmin.auth.getUser(bearer);
   if (!identity.user) return res.status(401).json({ error: "authentication_required" });
-  const restaurantId = String(req.query.restaurantId || "");
-  const { data: owner } = await supabaseAdmin.from("restaurant_members").select("role").eq("restaurant_id", restaurantId).eq("user_id", identity.user.id).eq("active", true).maybeSingle();
+  const restaurantId2 = String(req.query.restaurantId || "");
+  const { data: owner } = await supabaseAdmin.from("restaurant_members").select("role").eq("restaurant_id", restaurantId2).eq("user_id", identity.user.id).eq("active", true).maybeSingle();
   if (!owner || !["owner", "manager"].includes(owner.role)) return res.status(403).json({ error: "owner_required" });
-  const { data: staff } = await supabaseAdmin.from("staff").select("auth_user_id,role").eq("id", req.params.staffId).eq("restaurant_id", restaurantId).maybeSingle();
+  const { data: staff } = await supabaseAdmin.from("staff").select("auth_user_id,role").eq("id", req.params.staffId).eq("restaurant_id", restaurantId2).maybeSingle();
   if (!staff?.auth_user_id) return res.status(404).json({ error: "staff_not_found" });
   try {
-    const passcode = await getOrCreateMemberPasscode(staff.auth_user_id, restaurantId, staff.role);
+    const passcode = await getOrCreateMemberPasscode(staff.auth_user_id, restaurantId2, staff.role);
     res.setHeader("Cache-Control", "private, no-store");
     return res.json({ passcode });
   } catch (error) {
@@ -2682,7 +2762,7 @@ app.post("/api/staff", async (req, res) => {
   const { data: identity } = await supabaseAdmin.auth.getUser(bearer || "");
   if (!identity.user) return res.status(401).json({ error: "authentication_required" });
   const body = req.body || {};
-  const restaurantId = String(body.restaurantId || "");
+  const restaurantId2 = String(body.restaurantId || "");
   const role = body.role === "kitchen" ? "kitchen" : body.role === "waiter" ? "waiter" : null;
   const requestedPasscode = body.passcode === "" || body.passcode == null ? void 0 : body.passcode;
   if (!role) return res.status(400).json({ error: "invalid_staff_role" });
@@ -2693,53 +2773,53 @@ app.post("/api/staff", async (req, res) => {
   } catch {
     return res.status(503).json({ error: "passcode_secret_not_configured" });
   }
-  const { data: membership } = await supabaseAdmin.from("restaurant_members").select("role").eq("restaurant_id", restaurantId).eq("user_id", identity.user.id).eq("active", true).maybeSingle();
+  const { data: membership } = await supabaseAdmin.from("restaurant_members").select("role").eq("restaurant_id", restaurantId2).eq("user_id", identity.user.id).eq("active", true).maybeSingle();
   if (!membership || !["owner", "manager"].includes(membership.role)) return res.status(403).json({ error: "owner_required" });
-  const { data: restaurant } = await supabaseAdmin.from("restaurants").select("status,start_date,end_date,grace_period_days").eq("id", restaurantId).single();
+  const { data: restaurant } = await supabaseAdmin.from("restaurants").select("status,start_date,end_date,grace_period_days").eq("id", restaurantId2).single();
   const now = Date.now();
   const starts = Date.parse(restaurant?.start_date || "");
   const graceEnd = Date.parse(restaurant?.end_date || "") + Number(restaurant?.grace_period_days || 0) * 864e5;
   if (!restaurant || restaurant.status !== "active" || now < starts || now >= graceEnd) return res.status(403).json({ error: "subscription_inactive" });
   if (body.id) {
-    const { data: staff } = await supabaseAdmin.from("staff").select("auth_user_id,username,name,phone").eq("id", body.id).eq("restaurant_id", restaurantId).single();
+    const { data: staff } = await supabaseAdmin.from("staff").select("auth_user_id,username,name,phone").eq("id", body.id).eq("restaurant_id", restaurantId2).single();
     if (!staff) return res.status(404).end();
     if (!staff.auth_user_id) return res.status(409).json({ error: "staff_auth_account_missing" });
     const authUpdate = await supabaseAdmin.auth.admin.updateUserById(staff.auth_user_id, {
       user_metadata: { name: body.name },
-      app_metadata: { role, restaurant_id: restaurantId }
+      app_metadata: { role, restaurant_id: restaurantId2 }
     });
     if (authUpdate.error) return res.status(400).json({ error: "staff_auth_update_failed", details: authUpdate.error.message });
     if (requestedPasscode) {
       try {
-        await setMemberPasscode(staff.auth_user_id, restaurantId, role, requestedPasscode);
+        await setMemberPasscode(staff.auth_user_id, restaurantId2, role, requestedPasscode);
       } catch (error2) {
         return res.status(error2 instanceof Error && error2.message === "passcode_taken" ? 409 : 503).json({ error: error2 instanceof Error ? error2.message : "passcode_save_failed" });
       }
     }
-    const { error } = await supabaseAdmin.from("staff").update({ name: body.name, phone: body.phone, role }).eq("id", body.id).eq("restaurant_id", restaurantId);
+    const { error } = await supabaseAdmin.from("staff").update({ name: body.name, phone: body.phone, role }).eq("id", body.id).eq("restaurant_id", restaurantId2);
     if (error) return res.status(400).json({ error: error.message });
     return res.status(204).end();
   }
   const username = `staff-${randomUUID3()}`;
   const email = `${username}@accounts.novx.invalid`;
-  const { data: created, error: authError } = await supabaseAdmin.auth.admin.createUser({ email, password: randomBytes4(48).toString("base64url"), email_confirm: true, user_metadata: { name: body.name }, app_metadata: { role, restaurant_id: restaurantId } });
+  const { data: created, error: authError } = await supabaseAdmin.auth.admin.createUser({ email, password: randomBytes5(48).toString("base64url"), email_confirm: true, user_metadata: { name: body.name }, app_metadata: { role, restaurant_id: restaurantId2 } });
   if (authError || !created.user) return res.status(400).json({ error: authError?.message });
-  const staffInsert = await supabaseAdmin.from("staff").insert({ restaurant_id: restaurantId, auth_user_id: created.user.id, role, name: body.name, phone: body.phone, username }).select().single();
+  const staffInsert = await supabaseAdmin.from("staff").insert({ restaurant_id: restaurantId2, auth_user_id: created.user.id, role, name: body.name, phone: body.phone, username }).select().single();
   if (staffInsert.error) {
     await supabaseAdmin.auth.admin.deleteUser(created.user.id);
     return res.status(400).json({ error: staffInsert.error.message });
   }
-  const membershipInsert = await supabaseAdmin.from("restaurant_members").insert({ restaurant_id: restaurantId, user_id: created.user.id, role });
+  const membershipInsert = await supabaseAdmin.from("restaurant_members").insert({ restaurant_id: restaurantId2, user_id: created.user.id, role });
   if (membershipInsert.error) {
-    await supabaseAdmin.from("staff").delete().eq("id", staffInsert.data.id).eq("restaurant_id", restaurantId);
+    await supabaseAdmin.from("staff").delete().eq("id", staffInsert.data.id).eq("restaurant_id", restaurantId2);
     await supabaseAdmin.auth.admin.deleteUser(created.user.id);
     return res.status(400).json({ error: "staff_membership_failed", details: membershipInsert.error.message });
   }
   try {
-    const passcode = await setMemberPasscode(created.user.id, restaurantId, role, requestedPasscode);
+    const passcode = await setMemberPasscode(created.user.id, restaurantId2, role, requestedPasscode);
     return res.status(201).json({ ...camelRow(staffInsert.data), passcode });
   } catch (error) {
-    await supabaseAdmin.from("staff").delete().eq("id", staffInsert.data.id).eq("restaurant_id", restaurantId);
+    await supabaseAdmin.from("staff").delete().eq("id", staffInsert.data.id).eq("restaurant_id", restaurantId2);
     await supabaseAdmin.auth.admin.deleteUser(created.user.id);
     return res.status(error instanceof Error && error.message === "passcode_taken" ? 409 : 503).json({ error: error instanceof Error ? error.message : "passcode_save_failed" });
   }
@@ -2749,16 +2829,16 @@ app.patch("/api/staff/:staffId/status", async (req, res) => {
   const bearer = req.headers.authorization?.replace(/^Bearer /, "");
   const { data: identity } = await supabaseAdmin.auth.getUser(bearer || "");
   if (!identity.user) return res.status(401).json({ error: "authentication_required" });
-  const restaurantId = String(req.body?.restaurantId || "");
+  const restaurantId2 = String(req.body?.restaurantId || "");
   const status = req.body?.status === "active" ? "active" : req.body?.status === "suspended" ? "suspended" : null;
   if (!status) return res.status(400).json({ error: "invalid_status" });
-  const owner = await supabaseAdmin.from("restaurant_members").select("role").eq("restaurant_id", restaurantId).eq("user_id", identity.user.id).eq("active", true).maybeSingle();
+  const owner = await supabaseAdmin.from("restaurant_members").select("role").eq("restaurant_id", restaurantId2).eq("user_id", identity.user.id).eq("active", true).maybeSingle();
   if (!owner.data || !["owner", "manager"].includes(owner.data.role)) return res.status(403).json({ error: "owner_required" });
-  const staff = await supabaseAdmin.from("staff").select("auth_user_id").eq("id", req.params.staffId).eq("restaurant_id", restaurantId).single();
+  const staff = await supabaseAdmin.from("staff").select("auth_user_id").eq("id", req.params.staffId).eq("restaurant_id", restaurantId2).single();
   if (staff.error || !staff.data) return res.status(404).json({ error: "staff_not_found" });
-  const staffUpdate = await supabaseAdmin.from("staff").update({ status }).eq("id", req.params.staffId).eq("restaurant_id", restaurantId);
+  const staffUpdate = await supabaseAdmin.from("staff").update({ status }).eq("id", req.params.staffId).eq("restaurant_id", restaurantId2);
   if (staffUpdate.error) return res.status(400).json({ error: staffUpdate.error.message });
-  const membershipUpdate = await supabaseAdmin.from("restaurant_members").update({ active: status === "active" }).eq("restaurant_id", restaurantId).eq("user_id", staff.data.auth_user_id);
+  const membershipUpdate = await supabaseAdmin.from("restaurant_members").update({ active: status === "active" }).eq("restaurant_id", restaurantId2).eq("user_id", staff.data.auth_user_id);
   if (membershipUpdate.error) return res.status(400).json({ error: membershipUpdate.error.message });
   return res.status(204).end();
 });
@@ -2767,14 +2847,14 @@ app.delete("/api/staff/:staffId", async (req, res) => {
   const bearer = req.headers.authorization?.replace(/^Bearer /, "");
   const { data: identity } = await supabaseAdmin.auth.getUser(bearer || "");
   if (!identity.user) return res.status(401).json({ error: "authentication_required" });
-  const restaurantId = String(req.query.restaurantId || "");
-  const owner = await supabaseAdmin.from("restaurant_members").select("role").eq("restaurant_id", restaurantId).eq("user_id", identity.user.id).eq("active", true).maybeSingle();
+  const restaurantId2 = String(req.query.restaurantId || "");
+  const owner = await supabaseAdmin.from("restaurant_members").select("role").eq("restaurant_id", restaurantId2).eq("user_id", identity.user.id).eq("active", true).maybeSingle();
   if (!owner.data || !["owner", "manager"].includes(owner.data.role)) return res.status(403).json({ error: "owner_required" });
-  const staff = await supabaseAdmin.from("staff").select("auth_user_id").eq("id", req.params.staffId).eq("restaurant_id", restaurantId).single();
+  const staff = await supabaseAdmin.from("staff").select("auth_user_id").eq("id", req.params.staffId).eq("restaurant_id", restaurantId2).single();
   if (staff.error || !staff.data) return res.status(404).json({ error: "staff_not_found" });
-  const membershipDelete = await supabaseAdmin.from("restaurant_members").delete().eq("restaurant_id", restaurantId).eq("user_id", staff.data.auth_user_id);
+  const membershipDelete = await supabaseAdmin.from("restaurant_members").delete().eq("restaurant_id", restaurantId2).eq("user_id", staff.data.auth_user_id);
   if (membershipDelete.error) return res.status(400).json({ error: membershipDelete.error.message });
-  const staffDelete = await supabaseAdmin.from("staff").delete().eq("id", req.params.staffId).eq("restaurant_id", restaurantId);
+  const staffDelete = await supabaseAdmin.from("staff").delete().eq("id", req.params.staffId).eq("restaurant_id", restaurantId2);
   if (staffDelete.error) return res.status(400).json({ error: staffDelete.error.message });
   if (staff.data.auth_user_id) await supabaseAdmin.auth.admin.deleteUser(staff.data.auth_user_id);
   return res.status(204).end();
@@ -2820,7 +2900,7 @@ app.post("/api/admin/restaurants", async (req, res) => {
     return res.status(204).end();
   }
   const email = `${username}@accounts.novx.invalid`;
-  const authResult = await supabaseAdmin.auth.admin.createUser({ email, password: randomBytes4(48).toString("base64url"), email_confirm: true, user_metadata: { name: body.restaurantName }, app_metadata: { role: "restaurant" } });
+  const authResult = await supabaseAdmin.auth.admin.createUser({ email, password: randomBytes5(48).toString("base64url"), email_confirm: true, user_metadata: { name: body.restaurantName }, app_metadata: { role: "restaurant" } });
   if (authResult.error || !authResult.data.user) return res.status(400).json({ error: "account_creation_failed", details: authResult.error?.message });
   const restaurant = await supabaseAdmin.from("restaurants").insert({ ...row, theme_id: "ordova" }).select().single();
   if (restaurant.error) {
@@ -2858,8 +2938,8 @@ app.post("/api/waiter-requests", rateLimit, async (req, res) => {
   const idempotencyKey = String(body.idempotencyKey || "");
   if (!body.restaurantId || !customerName || !tableNumber || !reason || idempotencyKey.length < 20 || idempotencyKey.length > 200)
     return res.status(400).json({ error: "invalid_request" });
-  const restaurantId = await resolveRestaurantId(String(body.restaurantId));
-  const { data, error } = await supabase.rpc("create_waiter_request", { p_restaurant_id: restaurantId, p_customer_name: customerName, p_table_number: tableNumber, p_reason: reason, p_lat: location.latitude, p_lon: location.longitude, p_accuracy: location.accuracy, p_idempotency_key: idempotencyKey });
+  const restaurantId2 = await resolveRestaurantId(String(body.restaurantId));
+  const { data, error } = await supabase.rpc("create_waiter_request", { p_restaurant_id: restaurantId2, p_customer_name: customerName, p_table_number: tableNumber, p_reason: reason, p_lat: location.latitude, p_lon: location.longitude, p_accuracy: location.accuracy, p_idempotency_key: idempotencyKey });
   if (error) return res.status(error.message.includes("subscription") || error.message.includes("location") ? 403 : 400).json({ error: error.message });
   return res.status(201).json({ id: data, notification: "queued" });
 });
@@ -2875,8 +2955,22 @@ app.post("/api/orders", rateLimit, async (req, res) => {
   if (!body.restaurantId || !customerName || !tableNumber || idempotencyKey.length < 20 || idempotencyKey.length > 200 || !Array.isArray(body.items) || body.items.length < 1 || body.items.length > 100 || body.items.some((item) => !item || typeof item.id !== "string" || !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(item.id) || !Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 99))
     return res.status(400).json({ error: "invalid_order" });
   const items = body.items.map((item) => ({ id: item.id, quantity: item.quantity, cheeseSelected: item.cheeseSelected === true, spicySelected: item.spicySelected === true }));
-  const restaurantId = await resolveRestaurantId(String(body.restaurantId));
-  const { data, error } = await supabase.rpc("create_customer_order", { p_restaurant_id: restaurantId, p_customer_name: customerName, p_table_number: tableNumber, p_notes: String(body.notes || ""), p_items: items, p_lat: location.latitude, p_lon: location.longitude, p_accuracy: location.accuracy, p_fingerprint: String(body.fingerprint || ""), p_idempotency_key: idempotencyKey, p_tracking_token: trackingToken });
+  const restaurantId2 = await resolveRestaurantId(String(body.restaurantId));
+  const order = {
+    p_restaurant_id: restaurantId2,
+    p_customer_name: customerName,
+    p_table_number: tableNumber,
+    p_notes: String(body.notes || ""),
+    p_items: items,
+    p_lat: location.latitude,
+    p_lon: location.longitude,
+    p_accuracy: location.accuracy,
+    p_fingerprint: String(body.fingerprint || ""),
+    p_idempotency_key: idempotencyKey,
+    p_tracking_token: trackingToken
+  };
+  const card = body.collectLoyalty === true ? loyaltyCardHash(req, restaurantId2) : null;
+  const { data, error } = card && supabaseAdmin ? await supabaseAdmin.rpc("loyalty_create_order", { ...order, p_token_hash: card }) : await supabase.rpc("create_customer_order", order);
   if (error) return res.status(error.message.includes("subscription") || error.message.includes("location") ? 403 : 400).json({ error: error.message });
   return res.status(201).json(camelRow(data));
 });
@@ -2890,25 +2984,25 @@ app.post("/api/push-subscriptions", async (req, res) => {
   const bearer = req.headers.authorization?.replace(/^Bearer /, "");
   if (!bearer) return res.status(401).end();
   if (!supabaseUrl || !supabaseAnonKey) return res.status(503).json({ error: "server_config_missing" });
-  const restaurantId = String(req.body?.restaurantId || "");
+  const restaurantId2 = String(req.body?.restaurantId || "");
   const subscription = req.body?.subscription;
-  if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(restaurantId) || typeof subscription?.endpoint !== "string" || subscription.endpoint.length > 2048 || !subscription.endpoint.startsWith("https://") || typeof subscription?.keys?.auth !== "string" || typeof subscription?.keys?.p256dh !== "string")
+  if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(restaurantId2) || typeof subscription?.endpoint !== "string" || subscription.endpoint.length > 2048 || !subscription.endpoint.startsWith("https://") || typeof subscription?.keys?.auth !== "string" || typeof subscription?.keys?.p256dh !== "string")
     return res.status(400).json({ error: "invalid_push_subscription" });
   const userClient = createClient(supabaseUrl, supabaseAnonKey, { global: { headers: { Authorization: `Bearer ${bearer}` } }, auth: { persistSession: false } });
   const { data: identity } = await userClient.auth.getUser(bearer);
   if (!identity.user) return res.status(401).end();
-  const { data: member } = await userClient.from("restaurant_members").select("role").eq("restaurant_id", restaurantId).eq("user_id", identity.user.id).eq("active", true).maybeSingle();
+  const { data: member } = await userClient.from("restaurant_members").select("role").eq("restaurant_id", restaurantId2).eq("user_id", identity.user.id).eq("active", true).maybeSingle();
   if (!member || !["owner", "manager", "waiter", "kitchen"].includes(member.role)) return res.status(403).json({ error: "not_authorized_for_restaurant" });
-  const { error } = await userClient.from("push_subscriptions").upsert({ restaurant_id: restaurantId, user_id: identity.user.id, endpoint: subscription.endpoint, subscription }, { onConflict: "endpoint" });
+  const { error } = await userClient.from("push_subscriptions").upsert({ restaurant_id: restaurantId2, user_id: identity.user.id, endpoint: subscription.endpoint, subscription }, { onConflict: "endpoint" });
   if (error) return res.status(403).json({ error: error.code === "23505" ? "subscription_conflict" : "notification_registration_failed" });
   return res.status(204).end();
 });
 app.post("/api/chat", rateLimit, async (req, res) => {
   try {
-    const { message, restaurantId, history } = req.body;
+    const { message, restaurantId: restaurantId2, history } = req.body;
     const language = req.body?.language === "en" ? "en" : "ar";
     if (typeof message !== "string" || !message.trim()) return res.status(400).json({ reply: language === "en" ? "Message is required." : "\u0627\u0644\u0631\u0633\u0627\u0644\u0629 \u0645\u0637\u0644\u0648\u0628\u0629." });
-    const resolvedId = await resolveRestaurantId(String(restaurantId || ""));
+    const resolvedId = await resolveRestaurantId(String(restaurantId2 || ""));
     const access = await supabase.rpc("public_restaurant_menu", { p_restaurant_id: resolvedId });
     if (access.error) return res.status(403).json({ reply: language === "en" ? "This restaurant's subscription is inactive." : "\u0627\u0634\u062A\u0631\u0627\u0643 \u0647\u0630\u0627 \u0627\u0644\u0645\u0637\u0639\u0645 \u063A\u064A\u0631 \u0646\u0634\u0637 \u062D\u0627\u0644\u064A\u0627\u064B." });
     let aiSettings = null;
