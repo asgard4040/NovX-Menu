@@ -15,11 +15,11 @@ interface LoginPageProps {
 export default function LoginPage({ onLogin }: LoginPageProps) {
   const { dir, isEnglish, setLanguage, tr } = useLanguage();
   const systemLogo = usePublicSystemLogo();
-  const [role, setRole] = useState<'admin' | 'restaurant' | 'waiter' | 'kitchen'>(() => {
+  const [role, setRole] = useState<'admin' | 'restaurant' | 'waiter' | 'kitchen' | 'cashier'>(() => {
     const params = new URLSearchParams(window.location.search);
     if (!params.get('loginRestaurantId')) return 'admin';
     const portal = params.get('portal');
-    return portal === 'waiter' || portal === 'kitchen' ? portal : 'restaurant';
+    return portal === 'waiter' || portal === 'kitchen' || portal === 'cashier' ? portal : 'restaurant';
   });
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -45,7 +45,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     setLoginRestaurantId(rid);
     if (rid) {
       const requestedRole = params.get('portal');
-      setRole(requestedRole === 'waiter' || requestedRole === 'kitchen' ? requestedRole : 'restaurant');
+      setRole(requestedRole === 'waiter' || requestedRole === 'kitchen' || requestedRole === 'cashier' ? requestedRole : 'restaurant');
     }
     updateHomeScreenLink();
 
@@ -210,7 +210,8 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     ? ([
         { id: 'restaurant', label: tr('المالك / المدير', 'Owner / Manager') },
         { id: 'waiter', label: tr('قسم الصالة (ويتر)', 'Waiter') },
-        { id: 'kitchen', label: tr('قسم المطبخ', 'Kitchen') }
+        { id: 'kitchen', label: tr('قسم المطبخ', 'Kitchen') },
+        { id: 'cashier', label: tr('الكاشير', 'Cashier') }
       ] as const)
     : ([
         { id: 'admin', label: tr('المسؤول العام', 'Administrator') }

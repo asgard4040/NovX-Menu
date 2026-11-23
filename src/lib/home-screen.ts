@@ -1,4 +1,4 @@
-export type StaffPortal = 'restaurant' | 'waiter' | 'kitchen';
+export type StaffPortal = 'restaurant' | 'waiter' | 'kitchen' | 'cashier';
 
 export function updateHomeScreenLink() {
   const link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
@@ -11,9 +11,9 @@ export function updateHomeScreenLink() {
     link.href = `/api/home-screen-manifest?restaurantId=${encodeURIComponent(menuId)}&portal=menu`;
     document.title = 'ORDOVA Menu';
   } else if (staffId) {
-    const role = portal === 'waiter' || portal === 'kitchen' ? portal : 'restaurant';
+    const role = portal === 'waiter' || portal === 'kitchen' || portal === 'cashier' ? portal : 'restaurant';
     link.href = `/api/home-screen-manifest?restaurantId=${encodeURIComponent(staffId)}&portal=${role}`;
-    document.title = role === 'waiter' ? 'ORDOVA Waiter' : role === 'kitchen' ? 'ORDOVA Kitchen' : 'ORDOVA Restaurant';
+    document.title = role === 'waiter' ? 'ORDOVA Waiter' : role === 'kitchen' ? 'ORDOVA Kitchen' : role === 'cashier' ? 'ORDOVA Cashier' : 'ORDOVA Restaurant';
   } else {
     link.href = '/manifest.json';
     document.title = window.location.hostname === 'rest.ordova.cc' ? 'ORDOVA Team' : 'ORDOVA Admin';

@@ -1157,7 +1157,7 @@ function WaiterOrderCard({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-1">
           <span className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ${type === 'pending' ? 'bg-blue-50 text-blue-800' : type === 'preparing' ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'}`}>{type === 'pending' ? tr('طلب جديد · يحتاج إرسال', 'New · send to kitchen') : type === 'preparing' ? tr('قيد التحضير في المطبخ', 'Preparing in kitchen') : tr('جاهز · يحتاج تقديم', 'Ready · serve now')}</span>
-          <h3 className="pt-1 text-2xl font-bold text-brand-primary">{order.deviceMetadata?.source === 'whatsapp' ? (order.deviceMetadata.fulfillment === 'delivery' ? tr('واتساب · توصيل', 'WhatsApp · Delivery') : tr('واتساب · استلام', 'WhatsApp · Pickup')) : tr('طاولة', 'Table') + ' ' + order.tableNumber}</h3>
+          <h3 className="pt-1 text-2xl font-bold text-brand-primary">{order.deviceMetadata?.source === 'whatsapp' ? (order.deviceMetadata.fulfillment === 'delivery' ? tr('واتساب · توصيل', 'WhatsApp · Delivery') : tr('واتساب · استلام', 'WhatsApp · Pickup')) : order.deviceMetadata?.source === 'cashier' && order.tableNumber === 'counter' ? tr('طلب كاونتر', 'Counter order') : tr('طاولة', 'Table') + ' ' + order.tableNumber}</h3>
           <p className="text-sm text-text-muted">{order.customerName}</p>
           <div className="flex flex-wrap items-center gap-3 pt-1 text-xs font-semibold text-text-muted">
             <span className="flex items-center gap-2">

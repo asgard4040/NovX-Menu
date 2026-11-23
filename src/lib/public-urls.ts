@@ -7,7 +7,7 @@ export function customerMenuUrl(restaurantId: string, table?: number): string {
   return menuQrUrl(MENU_ORIGIN, restaurantId, table);
 }
 
-export function staffPortalUrl(restaurantId: string, portal?: 'restaurant' | 'waiter' | 'kitchen'): string {
+export function staffPortalUrl(restaurantId: string, portal?: 'restaurant' | 'waiter' | 'kitchen' | 'cashier'): string {
   const url = new URL('/', STAFF_ORIGIN);
   url.searchParams.set('loginRestaurantId', restaurantId);
   if (portal) url.searchParams.set('portal', portal);

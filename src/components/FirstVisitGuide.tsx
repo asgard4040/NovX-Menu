@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { BookOpen, Share2, X } from 'lucide-react';
 import { useLanguage } from '../lib/i18n';
 
-type Role = 'customer' | 'admin' | 'restaurant' | 'waiter' | 'kitchen';
+type Role = 'customer' | 'admin' | 'restaurant' | 'waiter' | 'kitchen' | 'cashier';
 
 export default function FirstVisitGuide({ role, restaurantId }: { role: Role; restaurantId?: string }) {
   const { tr } = useLanguage();
@@ -18,6 +18,7 @@ export default function FirstVisitGuide({ role, restaurantId }: { role: Role; re
     admin: [tr('أنشئ المطاعم وأدر اشتراكاتها من لوحة الإدارة.', 'Create restaurants and manage subscriptions from this dashboard.'), tr('افتح أي قسم من شريط التنقل لإدارة الإعدادات والتنبيهات.', 'Use the navigation to manage settings and notices.')],
     restaurant: [tr('تابع الطلبات والمبيعات من الرئيسية.', 'See orders and sales on the home screen.'), tr('أضف الأطباق والموظفين، وخصص الهوية وبطاقات QR.', 'Manage menu items, staff, branding, and table QR cards.'), tr('راجع التنبيهات وخدمة الطاولات من شريط التنقل.', 'Review alerts and table service from the navigation.')],
     waiter: [tr('ستظهر الطلبات الجديدة ونداءات الطاولات هنا.', 'New orders and table calls appear here.'), tr('اقبل الطلب، تابع حالته، ثم سلّمه للزبون.', 'Accept orders, follow their status, and serve the guest.'), tr('اترك صوت الطلبات مفعلاً، واضغط على الصفحة مرة للسماح بتشغيله.', 'Keep order sound on and tap the page once to allow playback.')],
+    cashier: [tr('اختار طاولة من الخريطة أو سجّل طلب كاونتر.', 'Select a table or enter a counter order.'), tr('راجع الطلبات الواردة وأرسلها للمطبخ.', 'Review incoming orders and send them to the kitchen.')],
     kitchen: [tr('ستظهر الطلبات المحالة إلى المطبخ هنا.', 'Orders sent to the kitchen appear here.'), tr('حدّث الطلب إلى جاهز عندما ينتهي التحضير.', 'Mark an order ready when preparation is complete.'), tr('اترك صوت الطلبات مفعلاً، واضغط على الصفحة مرة للسماح بتشغيله.', 'Keep order sound on and tap the page once to allow playback.')],
   }[role];
   const close = () => { localStorage.setItem(key, 'done'); setOpen(false); };

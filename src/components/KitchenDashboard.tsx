@@ -341,7 +341,7 @@ function KitchenOrderCard({
       <div className="flex flex-wrap items-start justify-between gap-3">
          <div className="space-y-1">
             <span className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ${type === 'preparing' ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'}`}>{type === 'preparing' ? tr('قيد التحضير · أكمل الأصناف', 'Preparing · finish the items') : tr('جاهز للتقديم', 'Ready for service')}</span>
-            <h3 className="pt-1 text-2xl font-bold text-brand-primary">{order.deviceMetadata?.source === 'whatsapp' ? (order.deviceMetadata.fulfillment === 'delivery' ? tr('واتساب · توصيل', 'WhatsApp · Delivery') : tr('واتساب · استلام', 'WhatsApp · Pickup')) : tr('طاولة', 'Table') + ' ' + order.tableNumber}</h3>
+            <h3 className="pt-1 text-2xl font-bold text-brand-primary">{order.deviceMetadata?.source === 'whatsapp' ? (order.deviceMetadata.fulfillment === 'delivery' ? tr('واتساب · توصيل', 'WhatsApp · Delivery') : tr('واتساب · استلام', 'WhatsApp · Pickup')) : order.deviceMetadata?.source === 'cashier' && order.tableNumber === 'counter' ? tr('طلب كاونتر', 'Counter order') : tr('طاولة', 'Table') + ' ' + order.tableNumber}</h3>
             <p className="text-sm text-text-muted">{order.customerName}</p>
             <div className="flex flex-wrap items-center gap-3 pt-1 text-xs font-semibold text-text-muted">
                <span className="flex items-center gap-2"><Timer className="h-4 w-4" />{safeFormatDate(order.createdAt, 'hh:mm a')}</span>

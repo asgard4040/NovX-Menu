@@ -28,7 +28,7 @@ const supabaseAdmin = serviceRoleKey ? createClient(supabaseUrl, serviceRoleKey,
 const configuredPasscodeSecret = process.env.PASSCODE_SECRET || "";
 function getPasscodeKey() { return passcodeKey(configuredPasscodeSecret); }
 
-async function setMemberPasscode(userId: string, restaurantId: string, role: "owner" | "manager" | "waiter" | "kitchen", requested?: string): Promise<string> {
+async function setMemberPasscode(userId: string, restaurantId: string, role: "owner" | "manager" | "waiter" | "kitchen" | "cashier", requested?: string): Promise<string> {
   if (!supabaseAdmin) throw new Error("service_role_not_configured");
   const key = getPasscodeKey();
   if (requested !== undefined && !isPasscode(requested)) throw new Error("invalid_passcode");
@@ -53,7 +53,7 @@ async function setMemberPasscode(userId: string, restaurantId: string, role: "ow
   throw new Error("passcode_space_exhausted");
 }
 
-async function getOrCreateMemberPasscode(userId: string, restaurantId: string, role: "owner" | "manager" | "waiter" | "kitchen"): Promise<string> {
+async function getOrCreateMemberPasscode(userId: string, restaurantId: string, role: "owner" | "manager" | "waiter" | "kitchen" | "cashier"): Promise<string> {
   if (!supabaseAdmin) throw new Error("service_role_not_configured");
   const { data, error } = await supabaseAdmin.from("staff_passcodes").select("code_ciphertext,role").eq("user_id", userId).eq("restaurant_id", restaurantId).maybeSingle();
   if (error) throw new Error(`passcode_read_failed:${error.message}`);
@@ -225,9 +225,9 @@ async function reconcileWaylPayment(referenceId: string) {
     const restaurantId = String(req.query.restaurantId || "");
     const portal = String(req.query.portal || "");
     if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(restaurantId)
-      || !["menu", "restaurant", "waiter", "kitchen"].includes(portal))
+      || !["menu", "restaurant", "waiter", "kitchen", "cashier"].includes(portal))
       return res.status(400).json({ error: "invalid_home_screen_portal" });
-    const name = { menu: "ORDOVA Menu", restaurant: "ORDOVA Restaurant", waiter: "ORDOVA Waiter", kitchen: "ORDOVA Kitchen" }[portal];
+    const name = { menu: "ORDOVA Menu", restaurant: "ORDOVA Restaurant", waiter: "ORDOVA Waiter", kitchen: "ORDOVA Kitchen", cashier: "ORDOVA Cashier" }[portal];
     const startUrl = portal === "menu"
       ? `/?restaurantId=${encodeURIComponent(restaurantId)}`
       : `/?loginRestaurantId=${encodeURIComponent(restaurantId)}&portal=${portal}`;
@@ -464,7 +464,7 @@ async function reconcileWaylPayment(referenceId: string) {
         return res.status(503).json({ error: "auth_service_unavailable" });
       }
     }
-    if (!["restaurant", "waiter", "kitchen"].includes(requestedRole)) return res.status(400).json({ error: "invalid_role" });
+    if (!["restaurant", "waiter", "kitchen", "cashier"].includes(requestedRole)) return res.status(400).json({ error: "invalid_role" });
     if (!supabaseAdmin) return res.status(503).json({ error: "service_role_not_configured" });
     const code = req.body?.passcode;
     if (!isPasscode(code)) return res.status(400).json({ error: "invalid_passcode" });
@@ -573,7 +573,7 @@ async function reconcileWaylPayment(referenceId: string) {
     const { data: identity } = await supabaseAdmin.auth.getUser(bearer || "");
     if (!identity.user) return res.status(401).json({ error: "authentication_required" });
     const body = req.body || {}; const restaurantId = String(body.restaurantId || "");
-    const role = body.role === "kitchen" ? "kitchen" : body.role === "waiter" ? "waiter" : null;
+    const role = ["kitchen", "waiter", "cashier"].includes(body.role) ? body.role as "kitchen" | "waiter" | "cashier" : null;
     const requestedPasscode = body.passcode === "" || body.passcode == null ? undefined : body.passcode;
     if (!role) return res.status(400).json({ error: "invalid_staff_role" });
     if (requestedPasscode !== undefined && !isPasscode(requestedPasscode)) return res.status(400).json({ error: "invalid_passcode" });
@@ -585,9 +585,10 @@ async function reconcileWaylPayment(referenceId: string) {
     const now = Date.now(); const starts = Date.parse(restaurant?.start_date || ""); const graceEnd = Date.parse(restaurant?.end_date || "") + Number(restaurant?.grace_period_days || 0) * 86_400_000;
     if (!restaurant || restaurant.status !== "active" || now < starts || now >= graceEnd) return res.status(403).json({ error: "subscription_inactive" });
     if (body.id) {
-      const { data: staff } = await supabaseAdmin.from("staff").select("auth_user_id,username,name,phone").eq("id", body.id).eq("restaurant_id", restaurantId).single();
+      const { data: staff } = await supabaseAdmin.from("staff").select("auth_user_id,role").eq("id", body.id).eq("restaurant_id", restaurantId).single();
       if (!staff) return res.status(404).end();
       if (!staff.auth_user_id) return res.status(409).json({ error: "staff_auth_account_missing" });
+      if (staff.role !== role) return res.status(409).json({ error: "staff_role_mismatch" });
       const authUpdate = await supabaseAdmin.auth.admin.updateUserById(staff.auth_user_id, {
         user_metadata: { name: body.name },
         app_metadata: { role, restaurant_id: restaurantId },

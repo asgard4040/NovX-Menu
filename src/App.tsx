@@ -55,6 +55,8 @@ const WhatsAppSettings = React.lazy(() => import('./components/WhatsAppSettings'
 const LoyaltyManagement = React.lazy(() => import('./components/LoyaltyManagement'));
 const WaiterDashboard = React.lazy(() => import('./components/WaiterDashboard'));
 const KitchenDashboard = React.lazy(() => import('./components/KitchenDashboard'));
+const CashierDashboard = React.lazy(() => import('./components/CashierDashboard'));
+const FloorPlanSettings = React.lazy(() => import('./components/FloorPlanSettings'));
 const CustomerMenu = React.lazy(() => import('./components/CustomerMenu'));
 const LoginPage = React.lazy(() => import('./components/LoginPage'));
 
@@ -239,6 +241,7 @@ export default function App() {
         { id: 'loyalty', label: tr('الولاء', 'Loyalty'), icon: <Gift className="w-5 h-5" /> },
       ] : []),
       { id: 'qr', label: tr('الباركود', 'QR'), icon: <QrCode className="w-5 h-5" /> },
+      { id: 'floor', label: tr('خريطة الطاولات', 'Table layout'), icon: <MapPin className="w-5 h-5" /> },
       { id: 'orders', label: tr('الطلبات', 'Orders'), icon: <ClipboardList className="w-5 h-5" /> },
       { id: 'archive', label: tr('الأرشيف', 'Archive'), icon: <History className="w-5 h-5" /> },
       { id: 'alerts', label: tr('التنبيهات', 'Alerts'), icon: <ShieldAlert className="w-5 h-5" /> },
@@ -250,7 +253,10 @@ export default function App() {
     ],
     kitchen: [
        { id: 'orders', label: tr('طلبات المطبخ', 'Kitchen orders'), icon: <ChefHat className="w-5 h-5" /> },
-    ]
+    ],
+    cashier: [
+       { id: 'overview', label: tr('الكاشير', 'Cashier'), icon: <Wallet className="w-5 h-5" /> },
+    ],
   };
 
   const currentMenuItems = menuItems[session.role] || [];
@@ -390,7 +396,8 @@ export default function App() {
               <span className="text-[10px] text-brand-gold font-bold uppercase tracking-[0.5em]">{
                 session.role === 'admin' ? tr('الإدارة العامة', 'Administration') :
                 session.role === 'restaurant' ? tr('إدارة المطعم', 'Restaurant management') :
-                session.role === 'waiter' ? tr('قسم الخدمة', 'Service') : tr('لوحة المطبخ', 'Kitchen')
+                session.role === 'waiter' ? tr('قسم الخدمة', 'Service') :
+                session.role === 'cashier' ? tr('قسم الكاشير', 'Cashier') : tr('لوحة المطبخ', 'Kitchen')
               }</span>
            </div>
            
@@ -430,6 +437,8 @@ export default function App() {
                   <React.Suspense fallback={<p role="status">{tr('جارٍ التحميل…', 'Loading…')}</p>}>
                     <LoyaltyManagement key={session.restaurantId} restaurantId={session.restaurantId} manage />
                   </React.Suspense>
+                ) : activeTab === 'floor' ? (
+                  <FloorPlanSettings key={session.restaurantId} restaurantId={session.restaurantId} onQrSettings={() => setActiveTab('qr')} />
                 ) : (
                   <RestaurantDashboard restaurantId={session.restaurantId} activeTab={activeTab as any} onThemeChange={(restaurant) => setWorkspaceTheme(resolveTheme(restaurant.themeId, restaurant.themeColors))} />
                 )}
@@ -455,12 +464,15 @@ export default function App() {
                 <KitchenDashboard restaurantId={session.restaurantId} />
               </motion.div>
             )}
+            {session.role === 'cashier' && session.restaurantId && (
+              <CashierDashboard key={session.restaurantId} restaurantId={session.restaurantId} />
+            )}
           </AnimatePresence>
           </React.Suspense>
         </main>
       </div>
 
-      {session.role !== 'waiter' && session.role !== 'kitchen' && (
+      {session.role !== 'waiter' && session.role !== 'kitchen' && session.role !== 'cashier' && (
         <nav ref={mobileNavRef} className="mobile-bottom-nav lg:hidden fixed bottom-[calc(.5rem+env(safe-area-inset-bottom))] inset-x-3 z-50 flex items-stretch gap-1 overflow-x-auto rounded-2xl border border-border-delicate workspace-shell-panel p-2 shadow-[0_10px_30px_rgba(0,0,0,.16)]" aria-label={tr('التنقل الرئيسي', 'Main navigation')}>
           {currentMenuItems.map((item) => (
             <button

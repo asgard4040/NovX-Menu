@@ -96,7 +96,7 @@ export interface Order {
     screenSize: string;
     language: string;
     fingerprint: string;
-    source?: 'whatsapp';
+    source?: 'whatsapp' | 'cashier';
     fulfillment?: 'pickup' | 'delivery';
     delivery?: {
       address: { city?: string; area?: string; details?: string; latitude?: number; longitude?: number };
@@ -129,8 +129,8 @@ export interface SecurityAlert {
 }
 
 export interface UserSession {
-  membershipRole?: 'owner' | 'manager' | 'waiter' | 'kitchen';
-  role: 'admin' | 'restaurant' | 'waiter' | 'kitchen';
+  membershipRole?: 'owner' | 'manager' | 'waiter' | 'kitchen' | 'cashier';
+  role: 'admin' | 'restaurant' | 'waiter' | 'kitchen' | 'cashier';
   id?: string;
   restaurantId?: string;
   name?: string;

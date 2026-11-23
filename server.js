@@ -2432,9 +2432,9 @@ async function reconcileWaylPayment(referenceId) {
 app.get("/api/home-screen-manifest", (req, res) => {
   const restaurantId2 = String(req.query.restaurantId || "");
   const portal = String(req.query.portal || "");
-  if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(restaurantId2) || !["menu", "restaurant", "waiter", "kitchen"].includes(portal))
+  if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(restaurantId2) || !["menu", "restaurant", "waiter", "kitchen", "cashier"].includes(portal))
     return res.status(400).json({ error: "invalid_home_screen_portal" });
-  const name = { menu: "ORDOVA Menu", restaurant: "ORDOVA Restaurant", waiter: "ORDOVA Waiter", kitchen: "ORDOVA Kitchen" }[portal];
+  const name = { menu: "ORDOVA Menu", restaurant: "ORDOVA Restaurant", waiter: "ORDOVA Waiter", kitchen: "ORDOVA Kitchen", cashier: "ORDOVA Cashier" }[portal];
   const startUrl = portal === "menu" ? `/?restaurantId=${encodeURIComponent(restaurantId2)}` : `/?loginRestaurantId=${encodeURIComponent(restaurantId2)}&portal=${portal}`;
   res.setHeader("Cache-Control", "private, no-store");
   res.setHeader("Content-Type", "application/manifest+json; charset=utf-8");
@@ -2694,7 +2694,7 @@ app.post("/api/auth/login", rateLimit, async (req, res) => {
       return res.status(503).json({ error: "auth_service_unavailable" });
     }
   }
-  if (!["restaurant", "waiter", "kitchen"].includes(requestedRole)) return res.status(400).json({ error: "invalid_role" });
+  if (!["restaurant", "waiter", "kitchen", "cashier"].includes(requestedRole)) return res.status(400).json({ error: "invalid_role" });
   if (!supabaseAdmin) return res.status(503).json({ error: "service_role_not_configured" });
   const code = req.body?.passcode;
   if (!isPasscode(code)) return res.status(400).json({ error: "invalid_passcode" });
@@ -2806,7 +2806,7 @@ app.post("/api/staff", async (req, res) => {
   if (!identity.user) return res.status(401).json({ error: "authentication_required" });
   const body = req.body || {};
   const restaurantId2 = String(body.restaurantId || "");
-  const role = body.role === "kitchen" ? "kitchen" : body.role === "waiter" ? "waiter" : null;
+  const role = ["kitchen", "waiter", "cashier"].includes(body.role) ? body.role : null;
   const requestedPasscode = body.passcode === "" || body.passcode == null ? void 0 : body.passcode;
   if (!role) return res.status(400).json({ error: "invalid_staff_role" });
   if (requestedPasscode !== void 0 && !isPasscode(requestedPasscode)) return res.status(400).json({ error: "invalid_passcode" });
@@ -2824,9 +2824,10 @@ app.post("/api/staff", async (req, res) => {
   const graceEnd = Date.parse(restaurant?.end_date || "") + Number(restaurant?.grace_period_days || 0) * 864e5;
   if (!restaurant || restaurant.status !== "active" || now < starts || now >= graceEnd) return res.status(403).json({ error: "subscription_inactive" });
   if (body.id) {
-    const { data: staff } = await supabaseAdmin.from("staff").select("auth_user_id,username,name,phone").eq("id", body.id).eq("restaurant_id", restaurantId2).single();
+    const { data: staff } = await supabaseAdmin.from("staff").select("auth_user_id,role").eq("id", body.id).eq("restaurant_id", restaurantId2).single();
     if (!staff) return res.status(404).end();
     if (!staff.auth_user_id) return res.status(409).json({ error: "staff_auth_account_missing" });
+    if (staff.role !== role) return res.status(409).json({ error: "staff_role_mismatch" });
     const authUpdate = await supabaseAdmin.auth.admin.updateUserById(staff.auth_user_id, {
       user_metadata: { name: body.name },
       app_metadata: { role, restaurant_id: restaurantId2 }

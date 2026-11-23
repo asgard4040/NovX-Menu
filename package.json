@@ -14,6 +14,7 @@
     "test:backend": "tsx scripts/smoke-backend.ts",
     "migrate:firebase": "tsx scripts/migrate-firebase-to-supabase.ts",
     "create:admin": "tsx scripts/create-admin.ts",
+    "test:cashier": "tsx --test scripts/cashier.test.ts",
     "test:whatsapp": "tsx --test scripts/whatsapp.test.ts scripts/whatsapp-policy.test.ts scripts/whatsapp-delivery.test.ts",
     "test:saas-admin": "tsx --test scripts/saas-admin.test.ts scripts/saas-lifecycle.test.ts"
   },

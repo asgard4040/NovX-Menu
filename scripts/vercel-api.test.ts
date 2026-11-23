@@ -35,7 +35,7 @@ test("Vercel API gateway forwards health, home-screen-manifest, and POST auth ro
     assert.ok([401, 503].includes(postResponse.status));
 
     const restaurantId = "123e4567-e89b-42d3-a456-426614174000";
-    for (const portal of ["menu", "restaurant", "waiter", "kitchen"] as const) {
+    for (const portal of ["menu", "restaurant", "waiter", "kitchen", "cashier"] as const) {
       const manifestResponse = await fetch(`http://127.0.0.1:${address.port}/api/index?route=home-screen-manifest&restaurantId=${restaurantId}&portal=${portal}`);
       assert.equal(manifestResponse.status, 200);
       assert.match(manifestResponse.headers.get("content-type") || "", /application\/manifest\+json/);

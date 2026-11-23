@@ -6,7 +6,7 @@ type QueryRef = { kind: "query"; ref: Ref; constraints: Constraint[] };
 
 const TABLES: Record<string, { table: string; role?: string }> = {
   restaurants: { table: "restaurants" }, waiters: { table: "staff", role: "waiter" },
-  kitchen_staff: { table: "staff", role: "kitchen" }, menuItems: { table: "menu_items" },
+  cashier_staff: { table: "staff", role: "cashier" }, kitchen_staff: { table: "staff", role: "kitchen" }, menuItems: { table: "menu_items" },
   orders: { table: "orders" }, security_alerts: { table: "security_alerts" },
   banned_devices: { table: "banned_devices" }, waiter_requests: { table: "waiter_requests" },
   settings: { table: "app_settings" }, announcements: { table: "announcements" },

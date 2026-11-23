@@ -102,6 +102,7 @@ export default function RestaurantDashboard({
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [kitchenStaff, setKitchenStaff] = useState<Waiter[]>([]);
+  const [cashiers, setCashiers] = useState<Waiter[]>([]);
   const [alerts, setAlerts] = useState<SecurityAlert[]>([]);
   const [bannedDevices, setBannedDevices] = useState<any[]>([]);
   const [announcements, setAnnouncements] = useState<any[]>([]);
@@ -109,7 +110,7 @@ export default function RestaurantDashboard({
   const [restaurantLoadError, setRestaurantLoadError] = useState(false);
   const [showStaffModal, setShowStaffModal] = useState<{
     open: boolean;
-    role: "waiter" | "kitchen";
+    role: "waiter" | "kitchen" | "cashier";
     staff?: Waiter;
   } | null>(null);
   const [staffPasscodeVersion, setStaffPasscodeVersion] = useState(0);
@@ -419,6 +420,11 @@ export default function RestaurantDashboard({
       },
       (err) => console.error("Unable to load kitchen staff", err),
     );
+    const unsubCashiers = onSnapshot(
+      query(collection(db, "cashier_staff"), where("restaurantId", "==", restaurantId)),
+      snapshot => setCashiers(snapshot.docs.map(d => ({ id: d.id, ...d.data() }) as Waiter)),
+      err => console.error("Unable to load cashiers", err),
+    );
 
     const unsubMenu = onSnapshot(
       query(
@@ -499,6 +505,7 @@ export default function RestaurantDashboard({
       unsubRestaurant();
       unsubWaiters();
       unsubKitchen();
+      unsubCashiers();
       unsubMenu();
       unsubOrders();
       unsubAlerts();
@@ -554,7 +561,7 @@ export default function RestaurantDashboard({
   const toggleStaffStatus = async (
     id: string,
     current: string,
-    role: "waiter" | "kitchen",
+    role: "waiter" | "kitchen" | "cashier",
   ) => {
     try {
       const { data } = await supabase.auth.getSession();
@@ -570,7 +577,7 @@ export default function RestaurantDashboard({
     }
   };
 
-  const deleteStaff = async (id: string, role: "waiter" | "kitchen") => {
+  const deleteStaff = async (id: string, role: "waiter" | "kitchen" | "cashier") => {
     if (confirm(tr('حذف هذا الموظف؟', 'Delete this staff member?'))) {
       try {
         const { data } = await supabase.auth.getSession();
@@ -950,7 +957,7 @@ export default function RestaurantDashboard({
               <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
                 <div><p className="mb-2 text-xs font-bold text-brand-gold">{tr('إدارة الفريق', 'Team management')}</p><h2 className="text-2xl font-bold sm:text-3xl">{tr('طاقم مطعمك في مكان واحد', 'Your team in one place')}</h2><p className="mt-2 max-w-xl text-sm leading-6 text-white/65">{tr('تابع موظفي الصالة والمطبخ، وعدّل بياناتهم أو حالة عملهم بسرعة.', 'See your waiter and kitchen teams, and manage their access quickly.')}</p></div>
                 <div className="grid grid-cols-3 gap-2 sm:gap-3">
-                  <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3"><p className="text-xs text-white/60">{tr('الكل', 'Total')}</p><p className="mt-1 text-2xl font-bold">{waiters.length + kitchenStaff.length}</p></div>
+                  <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3"><p className="text-xs text-white/60">{tr('الكل', 'Total')}</p><p className="mt-1 text-2xl font-bold">{waiters.length + kitchenStaff.length + cashiers.length}</p></div>
                   <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3"><p className="text-xs text-white/60">{tr('الصالة', 'Waiters')}</p><p className="mt-1 text-2xl font-bold">{waiters.length}</p></div>
                   <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3"><p className="text-xs text-white/60">{tr('المطبخ', 'Kitchen')}</p><p className="mt-1 text-2xl font-bold">{kitchenStaff.length}</p></div>
                 </div>
@@ -1036,6 +1043,25 @@ export default function RestaurantDashboard({
                 {kitchenStaff.length === 0 && <div className="col-span-full rounded-2xl border border-dashed border-border-delicate bg-white p-10 text-center text-sm text-text-muted">{tr('لا يوجد موظفو مطبخ بعد. أضف أول موظف للبدء.', 'No kitchen staff yet. Add your first team member.')}</div>}
               </div>
             </div>
+            <section className="space-y-4 border-t border-border-delicate pt-8">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-xl font-bold text-brand-primary">{tr('فريق الكاشير', 'Cashier team')}</h2>
+                <button type="button" onClick={() => setShowStaffModal({ open: true, role: "cashier" })}
+                  className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-brand-primary px-4 text-sm font-bold text-white">
+                  <Plus className="size-4" />{tr('إضافة كاشير', 'Add cashier')}
+                </button>
+              </div>
+              <a href={staffPortalUrl(restaurantId, "cashier")} target="_blank" rel="noreferrer" className="inline-block text-sm font-semibold text-brand-primary underline">
+                {tr('رابط دخول الكاشير', 'Cashier sign-in link')}
+              </a>
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {cashiers.map(staff => <StaffCard key={staff.id} staff={staff} restaurantId={restaurantId}
+                  passcodeVersion={staffPasscodeVersion} accent="gold"
+                  onToggle={() => toggleStaffStatus(staff.id, staff.status, "cashier")}
+                  onDelete={() => deleteStaff(staff.id, "cashier")}
+                  onEdit={() => setShowStaffModal({ open: true, role: "cashier", staff })} />)}
+              </div>
+            </section>
           </motion.div>
         )}
 
@@ -2729,7 +2755,7 @@ function StaffModal({
 }: {
   onClose: () => void;
   restaurantId: string;
-  role: "waiter" | "kitchen";
+  role: "waiter" | "kitchen" | "cashier";
   existingStaff?: Waiter;
 }) {
   const { dir, tr } = useLanguage();
@@ -2821,7 +2847,7 @@ function StaffModal({
           <h2 className="text-2xl sm:text-3xl font-display text-brand-primary tracking-tight">
             {existingStaff ? tr('تعديل بيانات', 'Edit') : tr('تسجيل وتعيين', 'Create')}{" "}
             <span className="text-brand-gold">
-              {role === "waiter" ? tr('موظف صالة (ويتر)', 'waiter account') : tr('شيف المطبخ', 'kitchen account')}
+              {role === "cashier" ? tr('الكاشير', 'cashier account') : role === "waiter" ? tr('موظف صالة (ويتر)', 'waiter account') : tr('شيف المطبخ', 'kitchen account')}
             </span>
           </h2>
         </div>

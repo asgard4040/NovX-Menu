@@ -16,7 +16,7 @@
         const menuId = params.get('restaurantId');
         const staffId = params.get('loginRestaurantId');
         const requestedRole = params.get('portal');
-        const role = requestedRole === 'waiter' || requestedRole === 'kitchen' ? requestedRole : 'restaurant';
+        const role = requestedRole === 'waiter' || requestedRole === 'kitchen' || requestedRole === 'cashier' ? requestedRole : 'restaurant';
         const link = document.createElement('link');
         link.rel = 'manifest';
         link.href = menuId
