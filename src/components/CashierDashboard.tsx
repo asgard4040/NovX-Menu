@@ -28,7 +28,7 @@ export default function CashierDashboard({ restaurantId }: { restaurantId: strin
   const [data, setData] = useState<Snapshot | null>(null);
   const [table, setTable] = useState<number | null>(null);
   const [pendingOnly, setPendingOnly] = useState(false);
-  const [newOrder, setNewOrder] = useState<number | "counter" | null>(null);
+  const [newOrder, setNewOrder] = useState<number | "choose" | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [floorError, setFloorError] = useState(false);
@@ -135,7 +135,7 @@ export default function CashierDashboard({ restaurantId }: { restaurantId: strin
       <h2 className="text-2xl font-bold text-brand-primary">{tr("طلبات الصالة والكاونتر", "Dining room and counter")}</h2>
       <div className="flex gap-2">
         <button className={secondary} onClick={() => { refreshOrders.current(); void refreshFloor(); }} type="button"><RefreshCw className="size-4" />{tr("تحديث", "Refresh")}</button>
-        <button className={primary} onClick={() => { setCreatedOrder(null); setNewOrder("counter"); }} type="button"><Plus className="size-4" />{tr("طلب كاونتر", "Counter order")}</button>
+        <button className={primary} onClick={() => { setCreatedOrder(null); setNewOrder("choose"); }} type="button"><Plus className="size-4" />{tr("طلب جديد", "New order")}</button>
       </div>
     </div>
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
@@ -196,7 +196,8 @@ export default function CashierDashboard({ restaurantId }: { restaurantId: strin
         </ul>
       </div>
     </div>
-    {newOrder !== null && <CashierOrderForm restaurantId={restaurantId} table={newOrder}
+    {newOrder !== null && <CashierOrderForm restaurantId={restaurantId}
+      initialTable={newOrder === "choose" ? null : newOrder} tables={floor}
       onClose={() => setNewOrder(null)} onCreated={orderNumber => { setCreatedOrder(orderNumber); setNewOrder(null); refreshOrders.current(); }} />}
   </section>;
 }
