@@ -24,20 +24,6 @@ import {
   Bell,
   Languages,
 } from "lucide-react";
-import {
-  collection,
-  query,
-  where,
-  getDocs,
-  addDoc,
-  doc,
-  getDoc,
-  updateDoc,
-  Timestamp,
-  onSnapshot,
-} from "../lib/supabase-db";
-import { db } from "../lib/supabase-db";
-import { handleFirestoreError, OperationType } from "../lib/firestore-utils";
 import { Restaurant, MenuItem, Order, OrderItem } from "../types";
 import { chatWithAI } from "../lib/gemini";
 import { tableFromQrSearch } from "../lib/qr-tables";
@@ -79,7 +65,6 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
   const [submittingOrder, setSubmittingOrder] = useState(false);
   const [showAIChat, setShowAIChat] = useState(false);
   const [showAIHint, setShowAIHint] = useState(true);
-  const [aiSettings, setAiSettings] = useState<any>(null);
 
   // States & helper functions for item options customization (cheese/spicy)
   const [showCustomizer, setShowCustomizer] = useState<{
@@ -491,17 +476,12 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
 
   const fetchData = async () => {
     try {
-      // Fetch AI settings
-      try {
-        const aiDoc = await getDoc(doc(db, "settings", "ai"));
-        if (aiDoc.exists()) {
-          setAiSettings(aiDoc.data());
-        }
-      } catch (e) {
-        console.warn("Failed to fetch AI settings in customer menu:", e);
-      }
-
-      const publicResponse = await fetch(`/api/public/restaurants/${encodeURIComponent(restaurantId)}`);
+      const restaurantUrl = `/api/public/restaurants/${encodeURIComponent(restaurantId)}`;
+      const statusRequest = fetch(`${restaurantUrl}/customer-status`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fingerprint: getDeviceFingerprint(), restaurantId }),
+      });
+      const [publicResponse, statusResponse] = await Promise.all([fetch(restaurantUrl), statusRequest]);
       if (!publicResponse.ok) {
         if (publicResponse.status === 403) setIsExpired(true);
         throw new Error(`restaurant_load_${publicResponse.status}`);
@@ -515,10 +495,6 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
         } catch (_) {}
       }
 
-      const statusResponse = await fetch(`/api/public/restaurants/${encodeURIComponent(restaurantId)}/customer-status`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fingerprint: getDeviceFingerprint(), restaurantId }),
-      });
       const customerStatus = statusResponse.ok ? await statusResponse.json() : { banned: false };
       if (customerStatus.banned) {
         setIsBanned(true);
@@ -608,6 +584,11 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
     }
     if (code === "subscription_inactive") {
       alert(tr("الطلب الإلكتروني غير متاح حالياً لهذا المطعم. يرجى التواصل مع الموظفين.", "Online ordering is currently unavailable for this restaurant. Please contact staff."));
+      return;
+    }
+    if (code === "device_banned") {
+      setIsBanned(true);
+      setBanReason(tr("الطلب من هذا الجهاز موقوف. يرجى التواصل مع موظفي المطعم.", "Ordering is disabled on this device. Please contact restaurant staff."));
       return;
     }
     alert(requestType === "order"
@@ -729,71 +710,30 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
     }
   };
 
-  const handleAIPlaceOrder = async (orderInfo: {
-    customerName: string;
-    tableNumber: string;
-    notes: string;
-    items: { name: string; quantity: number }[];
-  }) => {
-    const orderItems: OrderItem[] = [];
-    let totalCalculatedPrice = 0;
-
-    for (const item of orderInfo.items) {
-      const menuItem = menuItems.find(
-        (m) =>
-          m.name.trim().toLowerCase() === item.name.trim().toLowerCase() ||
-          m.name.trim().includes(item.name.trim()) ||
-          item.name.trim().includes(m.name.trim())
-      );
-
-      if (menuItem) {
-        orderItems.push({
-          id: menuItem.id,
-          name: menuItem.name,
-          quantity: item.quantity || 1,
-          price: menuItem.price,
-        });
-        totalCalculatedPrice += menuItem.price * (item.quantity || 1);
+  const reviewAIOrder = (suggestions: unknown[]) => {
+    const draft: Record<string, number> = {};
+    if (suggestions.length < 1 || suggestions.length > 100) return;
+    for (const suggestion of suggestions) {
+      if (!suggestion || typeof suggestion !== "object" || !("name" in suggestion) || typeof suggestion.name !== "string"
+        || !("quantity" in suggestion) || typeof suggestion.quantity !== "number" || !Number.isInteger(suggestion.quantity)
+        || suggestion.quantity < 1 || suggestion.quantity > 99) return;
+      const name = suggestion.name.trim().toLowerCase();
+      const matches = menuItems.filter(item => item.isAvailable !== false && item.name.trim().toLowerCase() === name);
+      if (matches.length !== 1) {
+        alert(tr("اختَر الأصناف من المنيو حتى نتأكد من طلبك.", "Select the items from the menu so you can verify your order."));
+        return;
       }
+      const key = getCartKey(matches[0].id, false, false);
+      const quantity = (draft[key] ?? 0) + suggestion.quantity;
+      if (quantity > 99) return;
+      draft[key] = quantity;
     }
-
-    if (orderItems.length === 0) return;
-
-    if (submittingOrder) return;
-    setSubmittingOrder(true);
-    try {
-      if (!isLocationVerified || !customerCoords || locationAccuracy === null) throw new Error("location_required");
-      orderIdempotencyKeyRef.current ||= crypto.randomUUID();
-      orderTrackingTokenRef.current ||= crypto.randomUUID();
-      const response = await fetch('/api/orders', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ restaurantId, tableNumber: qrTableNumber || orderInfo.tableNumber || tableNumber.trim(),
-          notes: orderInfo.notes || "", items: orderItems, fingerprint: getDeviceFingerprint(), idempotencyKey: orderIdempotencyKeyRef.current,
-          trackingToken: orderTrackingTokenRef.current, collectLoyalty: loyalty.collect,
-          location: { latitude: customerCoords.lat, longitude: customerCoords.lng, accuracy: locationAccuracy } }),
-      });
-      if (!response.ok) throw new Error((await response.json()).error || 'order_failed');
-      const orderData = await response.json();
-      orderIdempotencyKeyRef.current = null;
-      orderTrackingTokenRef.current = null;
-      localStorage.setItem("novix_active_order_id", orderData.id);
-      localStorage.setItem("novix_active_order_token", orderData.trackingToken);
-      setOrderComplete(orderData as Order);
-      refreshLoyaltyAfterOrder(orderData.loyaltyAttached);
-      setShowOrderTrackingModal(true);
-      
-      setCustomerName(orderInfo.customerName || '');
-      setTableNumber(qrTableNumber || orderInfo.tableNumber);
-      setNotes(orderInfo.notes || "");
-      
-      setCart({});
-      setShowCart(false);
-    } catch (err) {
-      console.error(err);
-      showSubmissionError(err, "order");
-    } finally {
-      setSubmittingOrder(false);
-    }
+    if (submittingOrder || (Object.keys(cart).length && !window.confirm(tr(
+      "تستبدل السلة الحالية بالطلب المقترح؟", "Replace your current cart with the suggested order?",
+    )))) return;
+    setCart(draft);
+    setShowAIChat(false);
+    setShowCart(true);
   };
 
   const cleanMessageText = (text: string) => {
@@ -824,15 +764,7 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       role: m.role,
       parts: [{ text: m.text }],
     }));
-    const response = await chatWithAI(
-      userText,
-      menuItems,
-      restaurant?.restaurantName || tr("مطعمنا", "our restaurant"),
-      restaurantId,
-      history,
-      aiSettings,
-      language,
-    );
+    const response = await chatWithAI(userText, restaurantId, history, language);
 
     setAiLoading(false);
     setMessages((prev) => [...prev, { role: "model", text: response }]);
@@ -843,8 +775,8 @@ export default function CustomerMenu({ restaurantId }: CustomerMenuProps) {
       const jsonStr = response.substring(startIdx + "[ORDER_JSON_START]".length, endIdx).trim();
       try {
         const orderInfo = JSON.parse(jsonStr);
-        if (orderInfo && orderInfo.items && orderInfo.items.length > 0) {
-          await handleAIPlaceOrder(orderInfo);
+        if (Array.isArray(orderInfo?.items)) {
+          reviewAIOrder(orderInfo.items);
         }
       } catch (e) {
         console.error("Failed to parse AI order JSON:", e);

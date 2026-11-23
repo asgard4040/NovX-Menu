@@ -5,6 +5,7 @@ import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 import ws from "ws";
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
+import { isIP } from "node:net";
 import { DEFAULT_AI_MODEL, openAIResponseText, providerForAIModel } from "./src/lib/ai-models";
 import { decryptPasscode, encryptPasscode, generatePasscode, isPasscode, isWeakPasscode, passcodeDigest, passcodeKey } from "./passcodes";
 import { WAYL_API, renewalAmount, validWaylCheckoutUrl, verifyWaylSignature, waylLinkIsPaid } from "./wayl";
@@ -88,14 +89,56 @@ const camel = (key: string) => key.replace(/_([a-z])/g, (_, value) => value.toUp
 const camelRow = (value: any): any => Array.isArray(value) ? value.map(camelRow) : value && typeof value === "object"
   ? Object.fromEntries(Object.entries(value).map(([key, item]) => [camel(key), camelRow(item)])) : value;
 const rateWindows = new Map<string, { count: number; resetAt: number }>();
+let nextRateCleanup = 0;
+const restaurantUuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+
+function clientAddress(req: express.Request) {
+  const platformAddress = process.env.VERCEL === "1" ? req.get("X-Vercel-Forwarded-For") : undefined;
+  return platformAddress && isIP(platformAddress) ? platformAddress : req.socket.remoteAddress || "unknown";
+}
+
 function rateLimit(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const now = Date.now(); const key = `${req.ip}:${req.path}:${req.body?.restaurantId || ""}`; const current = rateWindows.get(key);
-  if (!current || current.resetAt <= now) rateWindows.set(key, { count: 1, resetAt: now + 60_000 });
+  const now = Date.now();
+  if (now >= nextRateCleanup) {
+    nextRateCleanup = now + 60_000;
+    for (const [key, value] of rateWindows) if (value.resetAt <= now) rateWindows.delete(key);
+  }
+  const key = `${clientAddress(req)}:${req.path}`;
+  const current = rateWindows.get(key);
+  if (!current || current.resetAt <= now) {
+    if (!current && rateWindows.size >= 10_000) return res.set("Retry-After", "60").status(429).json({ error: "too_many_requests" });
+    rateWindows.set(key, { count: 1, resetAt: now + 60_000 });
+  }
   else if (++current.count > 15) return res.status(429).json({ error: "too_many_requests" });
-  if (rateWindows.size > 5000) for (const [entry, value] of rateWindows) if (value.resetAt <= now) rateWindows.delete(entry);
   next();
 }
+
+async function allowRestaurantRequest(req: express.Request, res: express.Response, restaurantId: string, action: string, limit: number) {
+  if (!restaurantUuid.test(restaurantId)) {
+    res.status(400).json({ error: "invalid_restaurant" });
+    return false;
+  }
+  if (!supabaseAdmin) {
+    res.status(503).json({ error: "server_config_missing" });
+    return false;
+  }
+  const clientKey = createHmac("sha256", serviceRoleKey).update(`api:${action}:${clientAddress(req)}`).digest("hex");
+  const { data, error } = await supabaseAdmin.rpc("claim_passcode_attempt", {
+    p_restaurant_id: restaurantId, p_client_key: clientKey, p_limit: limit, p_window_seconds: 60,
+  });
+  if (error) {
+    res.status(error.code === "23503" ? 404 : 503).json({ error: error.code === "23503" ? "restaurant_not_found" : "request_limit_unavailable" });
+    return false;
+  }
+  if (data !== true) {
+    res.set("Retry-After", "60").status(429).json({ error: "too_many_requests" });
+    return false;
+  }
+  return true;
+}
+
 async function resolveRestaurantId(identifier: string) {
+  if (restaurantUuid.test(identifier)) return identifier.toLowerCase();
   const { data } = await supabase.rpc("resolve_restaurant_id", { p_identifier: identifier });
   return data || identifier;
 }
@@ -397,10 +440,11 @@ async function reconcileWaylPayment(referenceId: string) {
     const { data, error } = await supabase.rpc("customer_device_status", { p_restaurant_id: restaurantId, p_fingerprint: String(req.body?.fingerprint || "").slice(0, 128) });
     if (error) return res.status(400).json({ error: error.message }); return res.json(data);
   });
-  app.post("/api/security-alerts", rateLimit, async (req, res) => {
+  app.post("/api/security-alerts", async (req, res) => {
     const body = req.body || {};
-    const restaurantId = await resolveRestaurantId(body.restaurantId);
-    const { error } = await supabase.rpc("create_security_alert", { p_restaurant_id: restaurantId, p_type: body.type, p_title: body.title, p_severity: body.severity, p_customer_name: body.customerName, p_table_number: body.tableNumber, p_fingerprint: body.fingerprint, p_distance: body.distanceMeters });
+    const restaurantId = await resolveRestaurantId(String(body.restaurantId || ""));
+    if (!await allowRestaurantRequest(req, res, restaurantId, "security-alert", 15)) return;
+    const { error } = await supabaseAdmin!.rpc("create_security_alert", { p_restaurant_id: restaurantId, p_type: body.type, p_title: body.title, p_severity: body.severity, p_customer_name: body.customerName, p_table_number: body.tableNumber, p_fingerprint: body.fingerprint, p_distance: body.distanceMeters });
     if (error) return res.status(400).json({ error: error.message }); return res.status(204).end();
   });
   app.post("/api/auth/login", rateLimit, async (req, res) => {
@@ -430,7 +474,7 @@ async function reconcileWaylPayment(referenceId: string) {
     let key: Buffer;
     try { key = getPasscodeKey(); digest = passcodeDigest(code, key); }
     catch { return res.status(503).json({ error: "passcode_secret_not_configured" }); }
-    const ipKey = createHmac("sha256", key).update(`ip:${req.ip || req.socket.remoteAddress || "unknown"}`).digest("hex");
+    const ipKey = createHmac("sha256", key).update(`ip:${clientAddress(req)}`).digest("hex");
     const globalKey = createHmac("sha256", key).update(`restaurant:${requestedRestaurantId}`).digest("hex");
     const [ipLimit, restaurantLimit] = await Promise.all([
       supabaseAdmin.rpc("claim_passcode_attempt", { p_restaurant_id: requestedRestaurantId, p_client_key: ipKey, p_limit: 8, p_window_seconds: 600 }),
@@ -466,16 +510,21 @@ async function reconcileWaylPayment(referenceId: string) {
     }
   });
   app.get("/api/auth/session", async (req, res) => {
+    res.setHeader("Cache-Control", "private, no-store");
     const bearer = req.headers.authorization?.replace(/^Bearer /, "");
     if (!bearer) return res.status(401).end();
     const userClient = createClient(supabaseUrl, supabaseAnonKey, { global: { headers: { Authorization: `Bearer ${bearer}` } }, auth: { persistSession: false, autoRefreshToken: false } });
-    const { data: identity } = await userClient.auth.getUser(bearer);
+    const { data: identity, error: identityError } = await userClient.auth.getUser(bearer);
+    if (identityError && (!identityError.status || identityError.status === 429 || identityError.status >= 500)) {
+      return res.status(503).json({ error: "auth_service_unavailable" });
+    }
     if (!identity.user) return res.status(401).end();
     if (identity.user.app_metadata?.system_role === "admin") return res.json({ role: "admin", id: identity.user.id, name: identity.user.user_metadata?.name || "admin" });
     const preferredRestaurant = identity.user.app_metadata?.restaurant_id;
     let membershipQuery = userClient.from("restaurant_members").select("role,restaurant_id").eq("user_id", identity.user.id).eq("active", true);
     if (preferredRestaurant) membershipQuery = membershipQuery.eq("restaurant_id", preferredRestaurant);
-    const { data: memberships } = await membershipQuery.limit(1);
+    const { data: memberships, error: membershipError } = await membershipQuery.limit(1);
+    if (membershipError) return res.status(503).json({ error: "auth_service_unavailable" });
     const membership = memberships?.[0]; if (!membership) return res.status(403).end();
     const role = membership.role === "owner" || membership.role === "manager" ? "restaurant" : membership.role;
     return res.json({ role, membershipRole: membership.role, id: identity.user.id, restaurantId: membership.restaurant_id, name: identity.user.user_metadata?.name || "user" });
@@ -663,7 +712,7 @@ async function reconcileWaylPayment(referenceId: string) {
       return res.status(error instanceof Error && error.message === "passcode_taken" ? 409 : 503).json({ error: error instanceof Error ? error.message : "passcode_save_failed" });
     }
   });
-  app.post("/api/waiter-requests", rateLimit, async (req, res) => {
+  app.post("/api/waiter-requests", async (req, res) => {
     const body = req.body || {}; const location = parseCustomerLocation(body.location);
     if (!location) return res.status(400).json({ error: "invalid_location" });
     const customerName = String(body.customerName || "").trim() || "Guest";
@@ -673,11 +722,12 @@ async function reconcileWaylPayment(referenceId: string) {
     if (!body.restaurantId || !customerName || !tableNumber || !reason || idempotencyKey.length < 20 || idempotencyKey.length > 200)
       return res.status(400).json({ error: "invalid_request" });
     const restaurantId = await resolveRestaurantId(String(body.restaurantId));
-    const { data, error } = await supabase.rpc("create_waiter_request", { p_restaurant_id: restaurantId, p_customer_name: customerName, p_table_number: tableNumber, p_reason: reason, p_lat: location.latitude, p_lon: location.longitude, p_accuracy: location.accuracy, p_idempotency_key: idempotencyKey });
+    if (!await allowRestaurantRequest(req, res, restaurantId, "waiter-request", 30)) return;
+    const { data, error } = await supabaseAdmin!.rpc("create_waiter_request", { p_restaurant_id: restaurantId, p_customer_name: customerName, p_table_number: tableNumber, p_reason: reason, p_lat: location.latitude, p_lon: location.longitude, p_accuracy: location.accuracy, p_idempotency_key: idempotencyKey });
     if (error) return res.status(error.message.includes("subscription") || error.message.includes("location") ? 403 : 400).json({ error: error.message });
     return res.status(201).json({ id: data, notification: "queued" });
   });
-  app.post("/api/orders", rateLimit, async (req, res) => {
+  app.post("/api/orders", async (req, res) => {
     const body = req.body || {}; const location = parseCustomerLocation(body.location);
     if (!location) return res.status(400).json({ error: "invalid_location" });
     const trackingToken = String(body.trackingToken || "");
@@ -692,15 +742,16 @@ async function reconcileWaylPayment(referenceId: string) {
       return res.status(400).json({ error: "invalid_order" });
     const items = body.items.map((item: any) => ({ id: item.id, quantity: item.quantity, cheeseSelected: item.cheeseSelected === true, spicySelected: item.spicySelected === true }));
     const restaurantId = await resolveRestaurantId(String(body.restaurantId));
+    if (!await allowRestaurantRequest(req, res, restaurantId, "order", 60)) return;
     const order = { p_restaurant_id: restaurantId, p_customer_name: customerName, p_table_number: tableNumber,
       p_notes: String(body.notes || ""), p_items: items, p_lat: location.latitude, p_lon: location.longitude,
       p_accuracy: location.accuracy, p_fingerprint: String(body.fingerprint || ""),
       p_idempotency_key: idempotencyKey, p_tracking_token: trackingToken };
     const card = body.collectLoyalty === true ? loyaltyCardHash(req, restaurantId) : null;
-    const { data, error } = card && supabaseAdmin
-      ? await supabaseAdmin.rpc("loyalty_create_order", { ...order, p_token_hash: card })
-      : await supabase.rpc("create_customer_order", order);
-    if (error) return res.status(error.message.includes("subscription") || error.message.includes("location") ? 403 : 400).json({ error: error.message });
+    const { data, error } = card
+      ? await supabaseAdmin!.rpc("loyalty_create_order", { ...order, p_token_hash: card })
+      : await supabaseAdmin!.rpc("create_customer_order", order);
+    if (error) return res.status(error.code === "42501" || error.message.includes("subscription") || error.message.includes("location") ? 403 : 400).json({ error: error.message });
     return res.status(201).json(camelRow(data));
   });
   app.get("/api/orders/:orderId/status", async (req, res) => {
@@ -725,13 +776,14 @@ async function reconcileWaylPayment(referenceId: string) {
     const { error } = await userClient.from("push_subscriptions").upsert({ restaurant_id: restaurantId, user_id: identity.user.id, endpoint: subscription.endpoint, subscription }, { onConflict: "endpoint" });
     if (error) return res.status(403).json({ error: error.code === "23505" ? "subscription_conflict" : "notification_registration_failed" }); return res.status(204).end();
   });
-  app.post("/api/chat", rateLimit, async (req, res) => {
+  app.post("/api/chat", async (req, res) => {
     try {
       const { message, restaurantId, history } = req.body;
       const language = req.body?.language === "en" ? "en" : "ar";
       if (typeof message !== "string" || !message.trim()) return res.status(400).json({ reply: language === "en" ? "Message is required." : "الرسالة مطلوبة." });
 
       const resolvedId = await resolveRestaurantId(String(restaurantId || ""));
+      if (!await allowRestaurantRequest(req, res, resolvedId, "menu-chat", 15)) return;
       const access = await supabase.rpc("public_restaurant_menu", { p_restaurant_id: resolvedId });
       if (access.error) return res.status(403).json({ reply: language === "en" ? "This restaurant's subscription is inactive." : "اشتراك هذا المطعم غير نشط حالياً." });
 

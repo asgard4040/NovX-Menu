@@ -33,10 +33,16 @@ export default function AdminSaasConsole({section='finance'}:{section?:'finance'
  const [scenario,setScenario]=useState({restaurants:'10',price:'0',fixed:'0',variable:'0'});
  const generation=useRef(0);
  const load=useCallback(async()=>{const id=++generation.current;setBusy(true);setError('');setReport(null);try{
- const [r,list]=await Promise.all([rpc('saas_admin_report',{p_start:start,p_end:end,p_restaurant:restaurant||null,p_offset:offset}),rpc('saas_admin_list',{p_resource:resource,p_offset:offset})]);if(id===generation.current){setReport(r);setRows(list);}
- }catch(e){if(id===generation.current)setError((e as Error).message);}finally{if(id===generation.current)setBusy(false);}},[start,end,restaurant,offset,tab,resource]);
+ const [r,list]=await Promise.all([rpc('saas_admin_report',{p_start:start,p_end:end,p_restaurant:restaurant||null,p_offset:offset}),rpc('saas_admin_list',{p_resource:resource,p_offset:offset})]);
+ if(!r?.alerts||!r.ai||!r.messaging||!Array.isArray(r.series)||!Array.isArray(r.expense_categories)
+   ||!Array.isArray(r.profitability)||!Array.isArray(list)) throw new Error(tr('تعذّر تحميل التقرير. أعد المحاولة.', 'Could not load the report. Try again.'));
+ if(id===generation.current){setReport(r);setRows(list);}
+ }catch(e){if(id===generation.current)setError((e as Error).message);}finally{if(id===generation.current)setBusy(false);}},[start,end,restaurant,offset,tab,resource,tr]);
  useEffect(()=>{if(open)void load();},[open,load]);
- useEffect(()=>{if(!open)return;Promise.all(['restaurants','plans','invoices'].map(p_resource=>rpc('saas_admin_list',{p_resource,p_offset:0}))).then(([r,p,i])=>{setRestaurants(r);setPlans(p);setInvoices(i);}).catch(e=>setError(e.message));},[open,message]);
+ useEffect(()=>{if(!open)return;Promise.all(['restaurants','plans','invoices'].map(p_resource=>rpc('saas_admin_list',{p_resource,p_offset:0}))).then(([r,p,i])=>{
+  if(!Array.isArray(r)||!Array.isArray(p)||!Array.isArray(i)) throw new Error(tr('تعذّر تحميل خيارات التقرير.', 'Could not load report options.'));
+  setRestaurants(r);setPlans(p);setInvoices(i);
+ }).catch(e=>setError(e.message));},[open,message,tr]);
  const money=(v:unknown)=>v==null?'—':Number(v).toLocaleString(undefined,{maximumFractionDigits:2});
  const save=async(e:FormEvent)=>{e.preventDefault();if(!window.confirm(tr('تأكيد تسجيل التغيير؟ تحفظ العمليات المالية بسجل تدقيق.','Confirm this change? Financial writes are audited.')))return;setBusy(true);setError('');setMessage('');try{
  const data:Row={...form};for(const field of fields[action]){if(data[field.key]==='')data[field.key]=null;if(field.type==='datetime-local'&&data[field.key])data[field.key]+='+03:00';}

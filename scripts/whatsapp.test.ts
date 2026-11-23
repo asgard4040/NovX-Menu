@@ -502,7 +502,7 @@ test("WhatsApp flows through HTTP ingress, PostgreSQL, worker and staff workflow
   await t.test("the shared order writer preserves the QR geofence and idempotency", async () => {
     await db.query("update public.restaurants set latitude=33.3,longitude=44.4 where id=$1", [a]);
     const place = (latitude: number) => db.transaction(async tx => {
-      await tx.exec("set local role anon");
+      await tx.exec("set local role service_role");
       const order = await tx.query<{ result: { id: string; total_amount: number } }>(
         "select public.create_customer_order($1,'QR customer','1',null,$2,$3,44.4,20,'fixture',$4,$5) as result",
         [a, [item(burger, 1, true)], latitude, "test-qr-customer-order", "test-qr-tracking-token"]);

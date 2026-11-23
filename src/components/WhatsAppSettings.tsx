@@ -91,6 +91,8 @@ export default function WhatsAppSettings({ restaurantId, connectionOnly = false 
       return;
     }
     const data = await api<Dashboard>();
+    if (!data.settings || !data.usage || !Array.isArray(data.conversations)
+      || !Array.isArray(data.orders) || !Array.isArray(data.failures)) throw new Error("whatsapp_unavailable");
     if (!live.current) return;
     setDashboard(data);
     setConnection(data);

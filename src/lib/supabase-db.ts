@@ -103,14 +103,25 @@ export async function deleteDoc(ref: Ref) {
 export function onSnapshot(ref: Ref | QueryRef, next: (snapshot: any) => void, error?: (error: any) => void) {
   let active = true;
   let inFlight = false;
+  let refreshPending = false;
   const emit = async () => {
-    if (!active || inFlight) return;
+    if (!active) return;
+    if (inFlight) {
+      refreshPending = true;
+      return;
+    }
     inFlight = true;
     try {
       const snapshot = (ref as any).kind === "doc" ? await getDoc(ref as Ref) : await getDocs(ref);
       if (active) next(snapshot);
     } catch (reason) { if (active) error?.(reason); }
-    finally { inFlight = false; }
+    finally {
+      inFlight = false;
+      if (active && refreshPending) {
+        refreshPending = false;
+        void emit();
+      }
+    }
   };
   emit();
   const base = (ref as any).kind === "query" ? (ref as QueryRef).ref : ref as Ref;
@@ -120,18 +131,29 @@ export function onSnapshot(ref: Ref | QueryRef, next: (snapshot: any) => void, e
   const realtimeFilter = base.id
     ? `${base.source === "settings" ? "key" : "id"}=eq.${base.id}`
     : tenantConstraint ? `restaurant_id=eq.${tenantConstraint.value}` : undefined;
+  const operational = base.table === "orders" || base.table === "waiter_requests";
+  let refreshOperationalData: number | undefined;
+  const poll = (interval: number) => {
+    window.clearInterval(refreshOperationalData);
+    refreshOperationalData = window.setInterval(() => {
+      if (navigator.onLine && document.visibilityState === "visible" && !inFlight) void emit();
+    }, interval);
+  };
+  if (operational) poll(2_000);
   const channel = supabase.channel(`db:${base.table}:${base.id || crypto.randomUUID()}`)
     .on("postgres_changes", { event: "*", schema: "public", table: base.table, ...(realtimeFilter ? { filter: realtimeFilter } : {}) }, emit)
-    .subscribe((status) => { if (status === "SUBSCRIBED") void emit(); });
-  const refreshOperationalData = base.table === "orders" || base.table === "waiter_requests"
-    ? window.setInterval(emit, 15_000) : null;
+    .subscribe(status => {
+      if (!active) return;
+      if (operational) poll(status === "SUBSCRIBED" ? 15_000 : 2_000);
+      if (status === "SUBSCRIBED") void emit();
+    });
   const onOnline = () => { void emit(); };
   const onVisible = () => { if (document.visibilityState === "visible") void emit(); };
   window.addEventListener("online", onOnline);
   document.addEventListener("visibilitychange", onVisible);
   return () => {
     active = false;
-    if (refreshOperationalData !== null) window.clearInterval(refreshOperationalData);
+    window.clearInterval(refreshOperationalData);
     window.removeEventListener("online", onOnline);
     document.removeEventListener("visibilitychange", onVisible);
     supabase.removeChannel(channel);

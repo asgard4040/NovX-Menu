@@ -171,7 +171,10 @@ export default function AdminDashboard({
         headers: { Authorization: `Bearer ${data.session.access_token}` }, cache: 'no-store',
       });
       if (!response.ok) throw new Error('financial_data_unavailable');
-      setFinance(await response.json());
+      const overview = await response.json() as FinancialOverview;
+      if (!overview || !Number.isFinite(overview.paidTotal) || !Number.isFinite(overview.paidThisMonth)
+        || !Array.isArray(overview.monthlySeries)) throw new Error('financial_data_unavailable');
+      setFinance(overview);
     } catch { setFinance(null); }
   };
 

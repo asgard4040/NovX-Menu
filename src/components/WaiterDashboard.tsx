@@ -1237,18 +1237,9 @@ function WaiterOrderCard({
 
       <div className="space-y-2">
         {isPreparing ? (
-          <div className="space-y-3">
-            <div className="flex w-full items-center justify-center gap-3 rounded-xl border border-amber-100 bg-amber-50 px-4 py-4 text-sm font-bold text-amber-900">
-              <Clock className="w-4 h-4 animate-spin" />
-              {tr('جاري تحضير وطهي الطلب بالمطبخ...', 'The kitchen is preparing this order...')}
-            </div>
-            <button
-              type="button"
-              onClick={onReject}
-              className="flex min-h-10 w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 text-xs font-bold text-red-700 hover:bg-red-100"
-            >
-              {tr('رفض وإلغاء هذا الطلب', 'Reject order')}
-            </button>
+          <div className="flex w-full items-center justify-center gap-3 rounded-xl border border-amber-100 bg-amber-50 px-4 py-4 text-sm font-bold text-amber-900">
+            <Clock className="w-4 h-4 animate-spin" />
+            {tr('جاري تحضير وطهي الطلب بالمطبخ...', 'The kitchen is preparing this order...')}
           </div>
         ) : (
           <div className="flex flex-col sm:flex-row gap-3">
@@ -1265,13 +1256,13 @@ function WaiterOrderCard({
                 : tr('تأكيد تقديم الطلب للطاولة وتوصيله', 'Mark served')}
               <ChevronLeft className="w-4 h-4" />
             </button>
-            <button
+            {type === "pending" && <button
               type="button"
               onClick={onReject}
               className="flex min-h-12 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 text-xs font-bold text-red-700 hover:bg-red-100"
             >
               {tr('رفض الطلب', 'Reject')}
-            </button>
+            </button>}
           </div>
         )}
 

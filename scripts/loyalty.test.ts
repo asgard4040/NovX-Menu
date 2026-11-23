@@ -59,7 +59,7 @@ test("restaurant loyalty from guest enrollment through paid orders and single-us
     await tx.query("update public.orders set status=$2 where id=$1", [id, status]);
   });
   const createOrder = (params: unknown[], cardHash = hash, loyalty = true) => db.transaction(async tx => {
-    await tx.exec(`set local role ${loyalty ? "service_role" : "anon"}`);
+    await tx.exec("set local role service_role");
     const fn = loyalty ? "loyalty_create_order" : "create_customer_order";
     const call = [ ...params, ...(loyalty ? [cardHash] : []) ];
     return (await tx.query<any>(`select public.${fn}(${call.map((_, i) => "$" + (i + 1)).join(",")}) result`, call)).rows[0].result;

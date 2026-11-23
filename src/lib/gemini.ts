@@ -1,12 +1,7 @@
-import { MenuItem } from "../types";
-
 export async function chatWithAI(
   message: string,
-  menuItems: MenuItem[],
-  restaurantName: string,
   restaurantId: string,
   history: { role: "user" | "model"; parts: { text: string }[] }[] = [],
-  aiSettings?: { model?: string; prompt?: string; temperature?: number },
   language: "ar" | "en" = "ar",
 ): Promise<string> {
   try {

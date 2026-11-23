@@ -28,7 +28,7 @@ console.log(JSON.stringify({
 }));
 
 for (const accuracy of [100, 139]) {
-  const result = await publicClient.rpc("create_customer_order", {
+  const result = await admin.rpc("create_customer_order", {
     p_restaurant_id: restaurantId,
     p_customer_name: "__diagnostic__",
     p_table_number: "__diagnostic__",

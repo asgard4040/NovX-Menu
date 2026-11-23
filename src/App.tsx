@@ -39,14 +39,6 @@ import {
 } from 'lucide-react';
 import { UserSession } from './types';
 import { supabase } from './lib/supabase';
-import AdminDashboard from './components/AdminDashboard';
-import RestaurantDashboard from './components/RestaurantDashboard';
-const WhatsAppSettings = React.lazy(() => import('./components/WhatsAppSettings'));
-const LoyaltyManagement = React.lazy(() => import('./components/LoyaltyManagement'));
-import WaiterDashboard from './components/WaiterDashboard';
-import KitchenDashboard from './components/KitchenDashboard';
-import CustomerMenu from './components/CustomerMenu';
-import LoginPage from './components/LoginPage';
 import SubscriptionGuard from './components/SubscriptionGuard';
 import FirstVisitGuide from './components/FirstVisitGuide';
 import { db, doc, onSnapshot } from './lib/supabase-db';
@@ -57,10 +49,20 @@ import { selectStaffPortal, updateHomeScreenLink } from './lib/home-screen';
 import { BRAND_NAME, DEFAULT_SYSTEM_LOGO } from './lib/brand';
 import { staffPortalUrl } from './lib/public-urls';
 
+const AdminDashboard = React.lazy(() => import('./components/AdminDashboard'));
+const RestaurantDashboard = React.lazy(() => import('./components/RestaurantDashboard'));
+const WhatsAppSettings = React.lazy(() => import('./components/WhatsAppSettings'));
+const LoyaltyManagement = React.lazy(() => import('./components/LoyaltyManagement'));
+const WaiterDashboard = React.lazy(() => import('./components/WaiterDashboard'));
+const KitchenDashboard = React.lazy(() => import('./components/KitchenDashboard'));
+const CustomerMenu = React.lazy(() => import('./components/CustomerMenu'));
+const LoginPage = React.lazy(() => import('./components/LoginPage'));
+
 export default function App() {
   const { dir, isEnglish, toggleLanguage, tr } = useLanguage();
   const [session, setSession] = useState<UserSession | null>(null);
-  const [customerRestaurantId, setCustomerRestaurantId] = useState<string | null>(null);
+  const [customerRestaurantId, setCustomerRestaurantId] = useState(() => new URLSearchParams(window.location.search).get('restaurantId'));
+  const [checkingSession, setCheckingSession] = useState(!customerRestaurantId);
   const [activeTab, setActiveTab] = useState<string>('overview');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [workspaceTheme, setWorkspaceTheme] = useState<MenuTheme>(DEFAULT_THEME);
@@ -90,49 +92,43 @@ export default function App() {
     // Set initial sidebar state based on screen size
     setIsSidebarOpen(window.innerWidth >= 1024);
     
-    // Check for QR code in URL (e.g., ?restaurantId=...)
-    const params = new URLSearchParams(window.location.search);
-    const rid = params.get('restaurantId');
-    if (rid) {
-      setCustomerRestaurantId(rid);
-    }
+  }, []);
     
+  useEffect(() => {
+    if (customerRestaurantId) return;
+    let current = true;
     // Rebuild UI authorization from the authenticated server identity. Never
     // trust the role or restaurant stored by the browser.
-    supabase.auth.getSession().then(async ({ data }) => {
-      if (!data.session) { localStorage.removeItem('novx_session'); return; }
-      try {
-        const response = await fetch('/api/auth/session', { headers: { Authorization: `Bearer ${data.session.access_token}` } });
-        if (response.ok) {
-          const verifiedSession = await response.json() as UserSession;
-          setSession(verifiedSession);
-          localStorage.setItem('novx_session', JSON.stringify(verifiedSession));
-          return;
-        }
-        if (response.status === 401 || response.status === 403) {
-          await supabase.auth.signOut();
-          localStorage.removeItem('novx_session');
-          setSession(null);
-          return;
-        }
-      } catch (e) {
-        console.warn('Session verification network error, trying fallback:', e);
+    void supabase.auth.getSession().then(async ({ data, error }) => {
+      if (error) throw error;
+      if (!current) return;
+      if (!data.session) {
+        localStorage.removeItem('novx_session');
+        return;
       }
-
-      // Fallback verification from client Supabase session
-      const user = data.session.user;
-      if (user.app_metadata?.system_role === 'admin') {
-        const fallbackSession: UserSession = { role: 'admin', id: user.id, name: user.user_metadata?.name || 'admin' };
-        setSession(fallbackSession);
-        localStorage.setItem('novx_session', JSON.stringify(fallbackSession));
-      } else {
-        const cached = localStorage.getItem('novx_session');
-        if (cached) {
-          try { setSession(JSON.parse(cached)); } catch {}
-        }
+      const response = await fetch('/api/auth/session', {
+        headers: { Authorization: `Bearer ${data.session.access_token}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!current) return;
+      if (response.status === 401 || response.status === 403) {
+        localStorage.removeItem('novx_session');
+        setSession(null);
+        await supabase.auth.signOut({ scope: 'local' });
+        return;
       }
-    });
-  }, []);
+      if (!response.ok) throw new Error('session_unavailable');
+      const verifiedSession = await response.json() as UserSession;
+      if (!current) return;
+      setSession(verifiedSession);
+      localStorage.setItem('novx_session', JSON.stringify(verifiedSession));
+    }).catch(() => {
+      if (!current) return;
+      localStorage.removeItem('novx_session');
+      setAppAlert(tr('تعذّر التحقق من الجلسة. حدّث الصفحة أو سجّل الدخول مرة ثانية.', 'Could not verify your session. Refresh the page or sign in again.'));
+    }).finally(() => { if (current) setCheckingSession(false); });
+    return () => { current = false; };
+  }, [customerRestaurantId]);
 
   useEffect(() => {
     // Reset tab to overview on login/logout
@@ -216,12 +212,13 @@ export default function App() {
   };
 
   // If URL has restaurantId, show Customer Menu directly
+  const loadingView = <p className="p-4 text-sm font-semibold text-text-muted" role="status">{tr('جارٍ التحميل…', 'Loading…')}</p>;
   if (customerRestaurantId) {
-    return <div dir={dir}><CustomerMenu restaurantId={customerRestaurantId} /><div key={`customer-${customerRestaurantId}`}><FirstVisitGuide role="customer" restaurantId={customerRestaurantId} /></div><SystemNotice message={appAlert} onClose={() => setAppAlert(null)} /></div>;
+    return <div dir={dir}><React.Suspense fallback={loadingView}><CustomerMenu restaurantId={customerRestaurantId} /><div key={`customer-${customerRestaurantId}`}><FirstVisitGuide role="customer" restaurantId={customerRestaurantId} /></div></React.Suspense><SystemNotice message={appAlert} onClose={() => setAppAlert(null)} /></div>;
   }
 
   if (!session) {
-    return <div dir={dir}><LoginPage onLogin={handleLogin} /><SystemNotice message={appAlert} onClose={() => setAppAlert(null)} /></div>;
+    return <div dir={dir}><React.Suspense fallback={loadingView}>{checkingSession ? loadingView : <LoginPage onLogin={handleLogin} />}</React.Suspense><SystemNotice message={appAlert} onClose={() => setAppAlert(null)} /></div>;
   }
 
   const menuItems = {
@@ -406,6 +403,7 @@ export default function App() {
 
         {/* Viewport for Dashboard Pages */}
         <main className="no-scrollbar flex-1 overflow-y-auto bg-bg-paper px-4 pb-28 pt-5 sm:p-8 lg:px-10 lg:py-8">
+          <React.Suspense fallback={loadingView}>
           <AnimatePresence mode="wait">
             {session.role === 'admin' && (
               <motion.div
@@ -458,6 +456,7 @@ export default function App() {
               </motion.div>
             )}
           </AnimatePresence>
+          </React.Suspense>
         </main>
       </div>
 

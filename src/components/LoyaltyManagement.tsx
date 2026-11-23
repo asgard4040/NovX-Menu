@@ -44,6 +44,7 @@ export default function LoyaltyManagement({ restaurantId, manage = false }: { re
   }, [restaurantId]);
   const load = useCallback(async () => {
     const current: Snapshot = await rpc("read");
+    if (!current || !Array.isArray(current.orders)) throw new Error("loyalty_unavailable");
     setSnapshot(current);
     if (current.program) {
       const saved = current.program;

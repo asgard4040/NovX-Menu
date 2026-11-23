@@ -2067,6 +2067,7 @@ import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 import ws from "ws";
 import { createHmac as createHmac5, randomBytes as randomBytes5, randomUUID as randomUUID3 } from "node:crypto";
+import { isIP } from "node:net";
 
 // src/lib/ai-models.ts
 var DEFAULT_AI_MODEL = "gemini-3.8-flash";
@@ -2312,18 +2313,54 @@ var ai = getGeminiClient();
 var camel = (key) => key.replace(/_([a-z])/g, (_, value) => value.toUpperCase());
 var camelRow = (value) => Array.isArray(value) ? value.map(camelRow) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([key, item]) => [camel(key), camelRow(item)])) : value;
 var rateWindows = /* @__PURE__ */ new Map();
+var nextRateCleanup = 0;
+var restaurantUuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+function clientAddress(req) {
+  const platformAddress = process.env.VERCEL === "1" ? req.get("X-Vercel-Forwarded-For") : void 0;
+  return platformAddress && isIP(platformAddress) ? platformAddress : req.socket.remoteAddress || "unknown";
+}
 function rateLimit(req, res, next) {
   const now = Date.now();
-  const key = `${req.ip}:${req.path}:${req.body?.restaurantId || ""}`;
-  const current = rateWindows.get(key);
-  if (!current || current.resetAt <= now) rateWindows.set(key, { count: 1, resetAt: now + 6e4 });
-  else if (++current.count > 15) return res.status(429).json({ error: "too_many_requests" });
-  if (rateWindows.size > 5e3) {
-    for (const [entry, value] of rateWindows) if (value.resetAt <= now) rateWindows.delete(entry);
+  if (now >= nextRateCleanup) {
+    nextRateCleanup = now + 6e4;
+    for (const [key2, value] of rateWindows) if (value.resetAt <= now) rateWindows.delete(key2);
   }
+  const key = `${clientAddress(req)}:${req.path}`;
+  const current = rateWindows.get(key);
+  if (!current || current.resetAt <= now) {
+    if (!current && rateWindows.size >= 1e4) return res.set("Retry-After", "60").status(429).json({ error: "too_many_requests" });
+    rateWindows.set(key, { count: 1, resetAt: now + 6e4 });
+  } else if (++current.count > 15) return res.status(429).json({ error: "too_many_requests" });
   next();
 }
+async function allowRestaurantRequest(req, res, restaurantId2, action, limit) {
+  if (!restaurantUuid.test(restaurantId2)) {
+    res.status(400).json({ error: "invalid_restaurant" });
+    return false;
+  }
+  if (!supabaseAdmin) {
+    res.status(503).json({ error: "server_config_missing" });
+    return false;
+  }
+  const clientKey = createHmac5("sha256", serviceRoleKey).update(`api:${action}:${clientAddress(req)}`).digest("hex");
+  const { data, error } = await supabaseAdmin.rpc("claim_passcode_attempt", {
+    p_restaurant_id: restaurantId2,
+    p_client_key: clientKey,
+    p_limit: limit,
+    p_window_seconds: 60
+  });
+  if (error) {
+    res.status(error.code === "23503" ? 404 : 503).json({ error: error.code === "23503" ? "restaurant_not_found" : "request_limit_unavailable" });
+    return false;
+  }
+  if (data !== true) {
+    res.set("Retry-After", "60").status(429).json({ error: "too_many_requests" });
+    return false;
+  }
+  return true;
+}
 async function resolveRestaurantId(identifier) {
+  if (restaurantUuid.test(identifier)) return identifier.toLowerCase();
   const { data } = await supabase.rpc("resolve_restaurant_id", { p_identifier: identifier });
   return data || identifier;
 }
@@ -2632,10 +2669,11 @@ app.post("/api/public/restaurants/:restaurantId/customer-status", rateLimit, asy
   if (error) return res.status(400).json({ error: error.message });
   return res.json(data);
 });
-app.post("/api/security-alerts", rateLimit, async (req, res) => {
+app.post("/api/security-alerts", async (req, res) => {
   const body = req.body || {};
-  const restaurantId2 = await resolveRestaurantId(body.restaurantId);
-  const { error } = await supabase.rpc("create_security_alert", { p_restaurant_id: restaurantId2, p_type: body.type, p_title: body.title, p_severity: body.severity, p_customer_name: body.customerName, p_table_number: body.tableNumber, p_fingerprint: body.fingerprint, p_distance: body.distanceMeters });
+  const restaurantId2 = await resolveRestaurantId(String(body.restaurantId || ""));
+  if (!await allowRestaurantRequest(req, res, restaurantId2, "security-alert", 15)) return;
+  const { error } = await supabaseAdmin.rpc("create_security_alert", { p_restaurant_id: restaurantId2, p_type: body.type, p_title: body.title, p_severity: body.severity, p_customer_name: body.customerName, p_table_number: body.tableNumber, p_fingerprint: body.fingerprint, p_distance: body.distanceMeters });
   if (error) return res.status(400).json({ error: error.message });
   return res.status(204).end();
 });
@@ -2670,7 +2708,7 @@ app.post("/api/auth/login", rateLimit, async (req, res) => {
   } catch {
     return res.status(503).json({ error: "passcode_secret_not_configured" });
   }
-  const ipKey = createHmac5("sha256", key).update(`ip:${req.ip || req.socket.remoteAddress || "unknown"}`).digest("hex");
+  const ipKey = createHmac5("sha256", key).update(`ip:${clientAddress(req)}`).digest("hex");
   const globalKey = createHmac5("sha256", key).update(`restaurant:${requestedRestaurantId}`).digest("hex");
   const [ipLimit, restaurantLimit] = await Promise.all([
     supabaseAdmin.rpc("claim_passcode_attempt", { p_restaurant_id: requestedRestaurantId, p_client_key: ipKey, p_limit: 8, p_window_seconds: 600 }),
@@ -2706,16 +2744,21 @@ app.post("/api/auth/login", rateLimit, async (req, res) => {
   }
 });
 app.get("/api/auth/session", async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
   const bearer = req.headers.authorization?.replace(/^Bearer /, "");
   if (!bearer) return res.status(401).end();
   const userClient = createClient(supabaseUrl, supabaseAnonKey, { global: { headers: { Authorization: `Bearer ${bearer}` } }, auth: { persistSession: false, autoRefreshToken: false } });
-  const { data: identity } = await userClient.auth.getUser(bearer);
+  const { data: identity, error: identityError } = await userClient.auth.getUser(bearer);
+  if (identityError && (!identityError.status || identityError.status === 429 || identityError.status >= 500)) {
+    return res.status(503).json({ error: "auth_service_unavailable" });
+  }
   if (!identity.user) return res.status(401).end();
   if (identity.user.app_metadata?.system_role === "admin") return res.json({ role: "admin", id: identity.user.id, name: identity.user.user_metadata?.name || "admin" });
   const preferredRestaurant = identity.user.app_metadata?.restaurant_id;
   let membershipQuery = userClient.from("restaurant_members").select("role,restaurant_id").eq("user_id", identity.user.id).eq("active", true);
   if (preferredRestaurant) membershipQuery = membershipQuery.eq("restaurant_id", preferredRestaurant);
-  const { data: memberships } = await membershipQuery.limit(1);
+  const { data: memberships, error: membershipError } = await membershipQuery.limit(1);
+  if (membershipError) return res.status(503).json({ error: "auth_service_unavailable" });
   const membership = memberships?.[0];
   if (!membership) return res.status(403).end();
   const role = membership.role === "owner" || membership.role === "manager" ? "restaurant" : membership.role;
@@ -2928,7 +2971,7 @@ app.post("/api/admin/restaurants", async (req, res) => {
     return res.status(error instanceof Error && error.message === "passcode_taken" ? 409 : 503).json({ error: error instanceof Error ? error.message : "passcode_save_failed" });
   }
 });
-app.post("/api/waiter-requests", rateLimit, async (req, res) => {
+app.post("/api/waiter-requests", async (req, res) => {
   const body = req.body || {};
   const location = parseCustomerLocation(body.location);
   if (!location) return res.status(400).json({ error: "invalid_location" });
@@ -2939,11 +2982,12 @@ app.post("/api/waiter-requests", rateLimit, async (req, res) => {
   if (!body.restaurantId || !customerName || !tableNumber || !reason || idempotencyKey.length < 20 || idempotencyKey.length > 200)
     return res.status(400).json({ error: "invalid_request" });
   const restaurantId2 = await resolveRestaurantId(String(body.restaurantId));
-  const { data, error } = await supabase.rpc("create_waiter_request", { p_restaurant_id: restaurantId2, p_customer_name: customerName, p_table_number: tableNumber, p_reason: reason, p_lat: location.latitude, p_lon: location.longitude, p_accuracy: location.accuracy, p_idempotency_key: idempotencyKey });
+  if (!await allowRestaurantRequest(req, res, restaurantId2, "waiter-request", 30)) return;
+  const { data, error } = await supabaseAdmin.rpc("create_waiter_request", { p_restaurant_id: restaurantId2, p_customer_name: customerName, p_table_number: tableNumber, p_reason: reason, p_lat: location.latitude, p_lon: location.longitude, p_accuracy: location.accuracy, p_idempotency_key: idempotencyKey });
   if (error) return res.status(error.message.includes("subscription") || error.message.includes("location") ? 403 : 400).json({ error: error.message });
   return res.status(201).json({ id: data, notification: "queued" });
 });
-app.post("/api/orders", rateLimit, async (req, res) => {
+app.post("/api/orders", async (req, res) => {
   const body = req.body || {};
   const location = parseCustomerLocation(body.location);
   if (!location) return res.status(400).json({ error: "invalid_location" });
@@ -2956,6 +3000,7 @@ app.post("/api/orders", rateLimit, async (req, res) => {
     return res.status(400).json({ error: "invalid_order" });
   const items = body.items.map((item) => ({ id: item.id, quantity: item.quantity, cheeseSelected: item.cheeseSelected === true, spicySelected: item.spicySelected === true }));
   const restaurantId2 = await resolveRestaurantId(String(body.restaurantId));
+  if (!await allowRestaurantRequest(req, res, restaurantId2, "order", 60)) return;
   const order = {
     p_restaurant_id: restaurantId2,
     p_customer_name: customerName,
@@ -2970,8 +3015,8 @@ app.post("/api/orders", rateLimit, async (req, res) => {
     p_tracking_token: trackingToken
   };
   const card = body.collectLoyalty === true ? loyaltyCardHash(req, restaurantId2) : null;
-  const { data, error } = card && supabaseAdmin ? await supabaseAdmin.rpc("loyalty_create_order", { ...order, p_token_hash: card }) : await supabase.rpc("create_customer_order", order);
-  if (error) return res.status(error.message.includes("subscription") || error.message.includes("location") ? 403 : 400).json({ error: error.message });
+  const { data, error } = card ? await supabaseAdmin.rpc("loyalty_create_order", { ...order, p_token_hash: card }) : await supabaseAdmin.rpc("create_customer_order", order);
+  if (error) return res.status(error.code === "42501" || error.message.includes("subscription") || error.message.includes("location") ? 403 : 400).json({ error: error.message });
   return res.status(201).json(camelRow(data));
 });
 app.get("/api/orders/:orderId/status", async (req, res) => {
@@ -2997,12 +3042,13 @@ app.post("/api/push-subscriptions", async (req, res) => {
   if (error) return res.status(403).json({ error: error.code === "23505" ? "subscription_conflict" : "notification_registration_failed" });
   return res.status(204).end();
 });
-app.post("/api/chat", rateLimit, async (req, res) => {
+app.post("/api/chat", async (req, res) => {
   try {
     const { message, restaurantId: restaurantId2, history } = req.body;
     const language = req.body?.language === "en" ? "en" : "ar";
     if (typeof message !== "string" || !message.trim()) return res.status(400).json({ reply: language === "en" ? "Message is required." : "\u0627\u0644\u0631\u0633\u0627\u0644\u0629 \u0645\u0637\u0644\u0648\u0628\u0629." });
     const resolvedId = await resolveRestaurantId(String(restaurantId2 || ""));
+    if (!await allowRestaurantRequest(req, res, resolvedId, "menu-chat", 15)) return;
     const access = await supabase.rpc("public_restaurant_menu", { p_restaurant_id: resolvedId });
     if (access.error) return res.status(403).json({ reply: language === "en" ? "This restaurant's subscription is inactive." : "\u0627\u0634\u062A\u0631\u0627\u0643 \u0647\u0630\u0627 \u0627\u0644\u0645\u0637\u0639\u0645 \u063A\u064A\u0631 \u0646\u0634\u0637 \u062D\u0627\u0644\u064A\u0627\u064B." });
     let aiSettings = null;

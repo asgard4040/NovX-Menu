@@ -7,6 +7,7 @@ test("Vercel API gateway forwards health, home-screen-manifest, and POST auth ro
   process.env.VERCEL = "1";
   process.env.SUPABASE_URL = "https://example.supabase.co";
   process.env.SUPABASE_ANON_KEY = "test-public-key";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "";
   const { default: handler } = await import("../api/index");
   const server = createServer((req, res) => handler(req as Request, res as Response));
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -55,7 +56,8 @@ test("Vercel API gateway forwards health, home-screen-manifest, and POST auth ro
     });
     assert.match(chatResponse.headers.get("content-type") || "", /application\/json/);
     const chatData = await chatResponse.json();
-    assert.ok(typeof chatData.reply === "string");
+    assert.equal(chatResponse.status, 503);
+    assert.equal(chatData.error, "server_config_missing");
   } finally {
     server.close();
   }
