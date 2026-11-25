@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ClipboardList, CookingPot, CreditCard, Plus, RefreshCw, Table2 } from "lucide-react";
+import { ClipboardList, CookingPot, CreditCard, Plus, Printer, RefreshCw, Table2 } from "lucide-react";
 import FloorPlan, { type TableActivity } from "./FloorPlan";
 import CashierOrderForm from "./CashierOrderForm";
 import { loadFloor, type TablePlacement } from "../lib/floor-plan";
 import { supabase } from "../lib/supabase";
 import { useLanguage } from "../lib/i18n";
 import type { OrderItem } from "../types";
+import { printCashierReceipt, type ReceiptOrder } from "../lib/cashier-receipt";
 
 type CashierOrder = {
   id: string;
@@ -33,7 +34,12 @@ export default function CashierDashboard({ restaurantId }: { restaurantId: strin
   const [loadError, setLoadError] = useState(false);
   const [floorError, setFloorError] = useState(false);
   const [actionError, setActionError] = useState("");
-  const [createdOrder, setCreatedOrder] = useState<number | null>(null);
+  const [createdOrder, setCreatedOrder] = useState<{ id: string; orderNumber: number } | null>(null);
+  const [receipt, setReceipt] = useState<ReceiptOrder | null>(null);
+  const [receiptError, setReceiptError] = useState(false);
+  const [receiptLoading, setReceiptLoading] = useState(false);
+  const [receiptRetry, setReceiptRetry] = useState(0);
+  const [restaurantName, setRestaurantName] = useState("");
   const refreshOrders = useRef<() => void>(() => undefined);
 
   const refreshFloor = useCallback(async () => {
@@ -89,6 +95,37 @@ export default function CashierDashboard({ restaurantId }: { restaurantId: strin
     };
   }, [restaurantId]);
 
+  useEffect(() => {
+    let current = true;
+    void supabase.from("restaurants").select("restaurant_name").eq("id", restaurantId).maybeSingle()
+      .then(({ data: row }) => { if (current && row) setRestaurantName(row.restaurant_name); });
+    return () => { current = false; };
+  }, [restaurantId]);
+
+  useEffect(() => {
+    if (!createdOrder) return;
+    let current = true;
+    setReceiptLoading(true);
+    setReceiptError(false);
+    void (async () => {
+      try {
+        const { data: row, error } = await supabase.from("orders")
+          .select("order_number,created_at,table_number,total_amount,items")
+          .eq("restaurant_id", restaurantId).eq("id", createdOrder.id).single();
+        if (error || !row || !Array.isArray(row.items)) throw error ?? new Error("receipt_unavailable");
+        if (current) setReceipt(row);
+      } catch { if (current) setReceiptError(true); }
+      finally { if (current) setReceiptLoading(false); }
+    })();
+    return () => { current = false; };
+  }, [createdOrder, receiptRetry, restaurantId]);
+
+  const printReceipt = () => {
+    if (!receipt) { setReceiptRetry(value => value + 1); return; }
+    try { setReceiptError(false); printCashierReceipt(receipt, restaurantName, language); }
+    catch { setReceiptError(true); }
+  };
+
   const advance = async (order: CashierOrder) => {
     if (busy || order.status === "preparing") return;
     setBusy(order.id);
@@ -135,7 +172,7 @@ export default function CashierDashboard({ restaurantId }: { restaurantId: strin
       <h2 className="text-2xl font-bold text-brand-primary">{tr("طلبات الصالة والكاونتر", "Dining room and counter")}</h2>
       <div className="flex gap-2">
         <button className={secondary} onClick={() => { refreshOrders.current(); void refreshFloor(); }} type="button"><RefreshCw className="size-4" />{tr("تحديث", "Refresh")}</button>
-        <button className={primary} onClick={() => { setCreatedOrder(null); setNewOrder("choose"); }} type="button"><Plus className="size-4" />{tr("طلب جديد", "New order")}</button>
+        <button className={primary} onClick={() => setNewOrder("choose")} type="button"><Plus className="size-4" />{tr("طلب جديد", "New order")}</button>
       </div>
     </div>
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
@@ -151,7 +188,15 @@ export default function CashierDashboard({ restaurantId }: { restaurantId: strin
       </article>)}
     </div>
     {loadError && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{tr("تعذّر تحديث الطلبات. راجع الاتصال أو اضغط تحديث.", "Orders could not be refreshed. Check the connection or select Refresh.")}</p>}
-    {createdOrder !== null && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm font-semibold text-emerald-900">{tr(`الطلب #${createdOrder} انرسل للمطبخ.`, `Order #${createdOrder} was sent to the kitchen.`)}</p>}
+    {createdOrder && <div className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-900">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p role="status" className="font-semibold">{tr(`الطلب #${createdOrder.orderNumber} انرسل للمطبخ.`, `Order #${createdOrder.orderNumber} was sent to the kitchen.`)}</p>
+        <button type="button" className={secondary} disabled={receiptLoading || (!receipt && !receiptError)} onClick={printReceipt}>
+          <Printer className="size-4" />{receiptError && !receipt ? tr("إعادة تحميل الوصل", "Reload receipt") : tr("طباعة الوصل", "Print receipt")}
+        </button>
+      </div>
+      {receiptError && <p role="alert" className="mt-2 text-red-800">{tr("تعذّر تجهيز الوصل للطباعة. جرّب مرة ثانية.", "Could not prepare the receipt for printing. Try again.")}</p>}
+    </div>}
     <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]">
       <div className="min-w-0 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -169,7 +214,7 @@ export default function CashierDashboard({ restaurantId }: { restaurantId: strin
       <div className="min-w-0 space-y-3 rounded-2xl border border-border-delicate bg-bg-card p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-base font-bold text-brand-primary">{table === null ? tr("الطلبات النشطة", "Active orders") : tr(`طاولة ${table}`, `Table ${table}`)}</h3>
-          {table !== null && <button className={primary} onClick={() => { setCreatedOrder(null); setNewOrder(table); }} type="button"><Plus className="size-4" />{tr("طلب للطاولة", "New table order")}</button>}
+          {table !== null && <button className={primary} onClick={() => setNewOrder(table)} type="button"><Plus className="size-4" />{tr("طلب للطاولة", "New table order")}</button>}
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" className={secondary} aria-pressed={table === null && !pendingOnly} onClick={() => { setTable(null); setPendingOnly(false); }}>{tr("الكل", "All")}</button>
@@ -198,6 +243,6 @@ export default function CashierDashboard({ restaurantId }: { restaurantId: strin
     </div>
     {newOrder !== null && <CashierOrderForm restaurantId={restaurantId}
       initialTable={newOrder === "choose" ? null : newOrder} tables={floor}
-      onClose={() => setNewOrder(null)} onCreated={orderNumber => { setCreatedOrder(orderNumber); setNewOrder(null); refreshOrders.current(); }} />}
+      onClose={() => setNewOrder(null)} onCreated={order => { setReceipt(null); setReceiptError(false); setCreatedOrder(order); setNewOrder(null); refreshOrders.current(); }} />}
   </section>;
 }

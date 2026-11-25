@@ -175,9 +175,6 @@ html[dir="ltr"] .text-left { text-align: right; }
 
 @media (max-width: 1023px) {
   button, [role="button"] { touch-action: manipulation; }
-  .mobile-bottom-nav { scrollbar-width: none; overscroll-behavior-x: contain; touch-action: pan-x; }
-  .mobile-bottom-nav button { touch-action: pan-x; }
-  .mobile-bottom-nav::-webkit-scrollbar { display: none; }
 }
 
 /* Finance chart: a quiet track with a touch-sized hit area. */

@@ -18,7 +18,7 @@ export function config() {
     ? { appId, configId, secret, key, version: graphVersion() } : null;
 }
 
-export const signupCallbackUrl = STAFF_ORIGIN + "/api/whatsapp/signup/callback";
+export const signupCallbackUrl = "https://menu.novx-team.com/api/whatsapp/signup/callback";
 
 export function signupPage(options: NonNullable<ReturnType<typeof config>>, state: string) {
   const url = new URL("https://www.facebook.com/" + options.version + "/dialog/oauth");

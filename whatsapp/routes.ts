@@ -7,6 +7,7 @@ import { connectGupshup, gupshupSetup, parseGupshup } from "./gupshup";
 import { parsePolicy } from "./policy";
 import { parseDeliveryZones } from "./delivery-data";
 import { waitUntil } from "@vercel/functions";
+import { platformWhatsAppRouter } from "./platform";
 
 // Persist and acknowledge first. Vercel keeps this bounded task alive after the
 // response; leases serialize concurrent wakes and cron remains crash recovery.
@@ -28,6 +29,24 @@ function requireEmbeddedSignup() {
 async function isOwner(db: Db, restaurantId: string, userId: string) {
   return !!result(await db.from("restaurant_members").select("role").eq("restaurant_id", restaurantId)
     .eq("user_id", userId).eq("role", "owner").eq("active", true).maybeSingle());
+}
+
+const ownerSettingsFields = "enabled,ordering_enabled,handoff_enabled,welcome,language,tone,opens_at,closes_at,timezone,delivery_enabled,delivery_zones";
+
+function ownerSettings(settings: Settings) {
+  const { ai_policy, daily_ai_limit, ...operational } = settings;
+  return operational;
+}
+
+function operationalError(code: string | null) {
+  if (!code) return "whatsapp_unavailable";
+  if (/budget|quota|billing|rate_limit|insufficient|subscription/i.test(code)) return "assistant_unavailable";
+  return code;
+}
+
+export function parseOwnerSettings(body: unknown) {
+  if (!body || typeof body !== "object") throw new ApiError(400, "invalid_settings");
+  return ownerSettings(parseSettings({ ...body, ai_policy: undefined, daily_ai_limit: defaultSettings.daily_ai_limit }));
 }
 
 export function parseSettings(body: any): Settings {
@@ -73,6 +92,7 @@ function safeRoute(action: (req: Request, res: Response) => Promise<unknown>): R
 const retryCode = (text: string) => /^(?:[1-9]\d{0,14})$/.test(text);
 export function whatsappRouter(db: Db | null, fetcher = fetch) {
   const router = Router();
+  router.use("/platform", platformWhatsAppRouter(db, fetcher));
   router.post("/gupshup/webhook", raw({ type: "application/json", inflate: false, limit: "256kb" }), safeRoute(async (req, res) => {
     res.set({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
     if (!db) return res.sendStatus(503);
@@ -182,15 +202,21 @@ export function whatsappRouter(db: Db | null, fetcher = fetch) {
     const state = req.query.state;
     const cookie = req.headers.cookie?.split(";").map(value => value.trim())
       .find(value => value.startsWith(signupCookie + "="))?.slice(signupCookie.length + 1);
-    const back = (status: string) => res.redirect(303, "/?" + new URLSearchParams({ whatsappSignup: status }).toString());
+    let restaurantId = "";
+    const back = (status: string) => res.redirect(303, "/?" + new URLSearchParams({
+      whatsappSignup: status, ...(restaurantId ? { whatsappRestaurant: restaurantId } : {}),
+    }).toString());
     if (!uuid(state) || !cookie || !equalSecret(state, cookie)) return back("signup_expired");
     res.clearCookie(signupCookie, signupCookieOptions);
-    if (req.query.error === "access_denied") return back("cancelled");
     try {
       if (!db) throw new ApiError(503, "whatsapp_unavailable");
       const session = result(await db.from("whatsapp_signup").select("restaurant_id,user_id")
         .eq("id", state).gt("expires_at", new Date().toISOString()).is("used_at", null).maybeSingle());
-      if (!session || !await isOwner(db, session.restaurant_id, session.user_id)) return back("signup_expired");
+      if (!session) return back("signup_expired");
+      const identity = await db.auth.admin.getUserById(session.user_id);
+      if (identity.error || identity.data.user?.app_metadata?.system_role !== "admin") return back("signup_expired");
+      restaurantId = session.restaurant_id;
+      if (req.query.error === "access_denied") return back("cancelled");
       if (!result(await db.rpc("restaurant_subscription_active", { rid: session.restaurant_id }))) return back("subscription_inactive");
       await exchangeSignup(db, session.restaurant_id, session.user_id, { signupId: state, code: req.query.code }, fetcher, true);
       return back(state);
@@ -203,7 +229,7 @@ export function whatsappRouter(db: Db | null, fetcher = fetch) {
 
   router.use(json({ limit: "16kb" }));
 
-  function owner(action: (db: Db, rid: string, userId: string, req: Request, res: Response) => Promise<unknown>, allowAdmin = false) {
+  function authorized(action: (db: Db, rid: string, userId: string, req: Request, res: Response) => Promise<unknown>, adminOnly = false) {
     return safeRoute(async (req, res) => {
       res.setHeader("Cache-Control", "no-store");
       if (!db) throw new ApiError(503, "whatsapp_unavailable");
@@ -213,36 +239,58 @@ export function whatsappRouter(db: Db | null, fetcher = fetch) {
       if (!match) throw new ApiError(401, "unauthorized");
       const { data, error } = await db.auth.getUser(match[1]);
       if (error || !data.user) throw new ApiError(401, "unauthorized");
-      if (!(allowAdmin && data.user.app_metadata?.system_role === "admin") && !await isOwner(db, rid, data.user.id)) {
-        throw new ApiError(403, "owner_required");
+      const allowed = adminOnly ? data.user.app_metadata?.system_role === "admin" : await isOwner(db, rid, data.user.id);
+      if (!allowed) {
+        throw new ApiError(403, adminOnly ? "admin_required" : "owner_required");
       }
       return action(db, rid.toLowerCase(), data.user.id, req, res);
     });
   }
+  const owner = (action: Parameters<typeof authorized>[0]) => authorized(action);
+  const admin = (action: Parameters<typeof authorized>[0]) => authorized(action, true);
   const root = "/restaurants/:restaurantId";
   const gupshupConnection = async (db: Db, rid: string) => gupshupSetup(result(await db.from("whatsapp_accounts")
     .select("restaurant_id,phone_id,waba_id,status,provider,gupshup_app_id,webhook_secret_ciphertext")
     .eq("restaurant_id", rid).eq("provider", "gupshup").eq("status", "connected").maybeSingle()) as Account | null);
-  router.get(root + "/connection", owner(async (db, rid, _user, _req, res) => {
-    const accounts = result(await db.from("whatsapp_accounts").select(publicAccount).eq("restaurant_id", rid)
-      .order("operation_at", { ascending: false }).limit(6));
+  router.get(root + "/connection", admin(async (db, rid, _user, _req, res) => {
+    const [accounts, settings, usage] = await Promise.all([
+      db.from("whatsapp_accounts").select(publicAccount).eq("restaurant_id", rid).order("operation_at", { ascending: false }).limit(6),
+      db.from("whatsapp_settings").select("daily_ai_limit,ai_policy").eq("restaurant_id", rid).maybeSingle(),
+      db.rpc("whatsapp_usage_summary", { p_restaurant: rid }),
+    ]);
+    const rows = result(accounts);
+    const account = rows.find(account => account.status !== "disconnected") || rows[0] || null;
+    const configured = process.env.WHATSAPP_EMBEDDED_SIGNUP_ENABLED === "true" ? config() : null;
+    const metrics = result(usage);
+    const rate = Number(process.env.WHATSAPP_GUPSHUP_TEXT_USD_PER_MESSAGE || "0.001");
     return res.json({
-      account: accounts.find(account => account.status !== "disconnected") || accounts[0] || null,
+      account,
       manual: manualSetup(rid),
       gupshup: await gupshupConnection(db, rid),
+      setup: configured ? { appId: configured.appId, configId: configured.configId, version: configured.version } : null,
+      limits: result(settings) || { daily_ai_limit: defaultSettings.daily_ai_limit },
+      usage: { ...metrics, estimated_provider_usd: account?.provider === "gupshup" && Number.isFinite(rate) && rate >= 0
+        ? (metrics.inbound_messages + metrics.outbound_messages) * rate : null },
     });
-  }, true));
-  router.post(root + "/connection", owner(async (db, rid, _user, req, res) => {
+  }));
+  router.put(root + "/limits", admin(async (db, rid, _user, req, res) => {
+    const { daily_ai_limit, ai_policy } = req.body ?? {};
+    if (!Number.isInteger(daily_ai_limit) || daily_ai_limit < 1 || daily_ai_limit > 500) throw new ApiError(400, "invalid_settings");
+    let policy;
+    try { policy = parsePolicy(ai_policy); } catch { throw new ApiError(400, "invalid_policy"); }
+    result(await db.from("whatsapp_settings").upsert({ restaurant_id: rid, daily_ai_limit, ai_policy: policy }));
+    return res.json({ ok: true });
+  }));
+  router.post(root + "/connection", admin(async (db, rid, _user, req, res) => {
     if (req.body?.provider === "gupshup") await connectGupshup(db, rid, req.body, fetcher);
     else if (req.body?.provider == null || req.body.provider === "meta") await connectManual(db, rid, req.body, fetcher);
     else throw new ApiError(400, "invalid_provider");
     return res.json({ ok: true });
-  }, true));
+  }));
   router.get(root, owner(async (db, rid, _user, _req, res) => {
-    const [accounts, settings, chats, orders, failures, usage] = await Promise.all([
-      db.from("whatsapp_accounts").select(publicAccount).eq("restaurant_id", rid)
-        .order("operation_at", { ascending: false }).limit(6),
-      db.from("whatsapp_settings").select("*").eq("restaurant_id", rid).maybeSingle(),
+    const [accounts, settings, chats, orders, failures] = await Promise.all([
+      db.from("whatsapp_accounts").select("status,subscribed").eq("restaurant_id", rid).eq("status", "connected").limit(1),
+      db.from("whatsapp_settings").select(ownerSettingsFields).eq("restaurant_id", rid).maybeSingle(),
       db.from("whatsapp_conversations").select(conversationFields).eq("restaurant_id", rid)
         .order("handoff", { ascending: false }).order("last_inbound_at", { ascending: false }).limit(30),
       db.from("whatsapp_orders").select("order_id,created_at,orders(order_number,status,total_amount)")
@@ -250,30 +298,19 @@ export function whatsappRouter(db: Db | null, fetcher = fetch) {
       db.from("whatsapp_jobs").select("id,seq,conversation_id,direction,kind,state,error_code,provider_id,created_at,payload")
         .eq("restaurant_id", rid).in("state", ["failed", "uncertain", "blocked"])
         .order("seq", { ascending: false }).limit(25),
-      db.rpc("whatsapp_usage_summary", { p_restaurant: rid }),
     ]);
-    const configured = process.env.WHATSAPP_EMBEDDED_SIGNUP_ENABLED === "true" ? config() : null;
-    const accountsList = result(accounts);
-    const usageData = result(usage);
-    const activeAccount = accountsList.find(account => account.status !== "disconnected") || accountsList[0] || null;
-    const rate = Number(process.env.WHATSAPP_GUPSHUP_TEXT_USD_PER_MESSAGE || "0.001");
     return res.json({
-      account: accountsList.find(account => account.status !== "disconnected") || accountsList[0] || null,
-      settings: result(settings) || defaultSettings, conversations: result(chats), orders: result(orders),
+      connected: result(accounts).some(account => account.subscribed),
+      settings: result(settings) || ownerSettings(defaultSettings), conversations: result(chats), orders: result(orders),
       failures: result(failures).map(({ provider_id, payload, ...job }) => ({
-        ...job, order_number: job.kind === "order_status" ? payload?.order_number : undefined,
+        ...job, error_code: operationalError(job.error_code), order_number: job.kind === "order_status" ? payload?.order_number : undefined,
         retryable: retryAllowed({ ...job, provider_id } as Parameters<typeof retryAllowed>[0]),
       })),
-      usage: { ...usageData, estimated_provider_usd: activeAccount?.provider === "gupshup" && Number.isFinite(rate) && rate >= 0
-        ? (usageData.inbound_messages + usageData.outbound_messages) * rate : null },
-      setup: configured ? { appId: configured.appId, configId: configured.configId, version: configured.version } : null,
-      manual: manualSetup(rid),
-      gupshup: await gupshupConnection(db, rid),
       aiConfigured: !!aiCredentials().key,
     });
   }));
   router.put(root + "/settings", owner(async (db, rid, _user, req, res) => {
-    const settings = parseSettings(req.body);
+    const settings = parseOwnerSettings(req.body);
     if (settings.delivery_enabled && settings.delivery_zones === undefined) {
       const current=result(await db.from("whatsapp_settings").select("delivery_zones").eq("restaurant_id",rid).maybeSingle());
       if (!current?.delivery_zones?.length) throw new ApiError(400,"delivery_zones_required");
@@ -284,7 +321,7 @@ export function whatsappRouter(db: Db | null, fetcher = fetch) {
     result(await db.from("whatsapp_settings").upsert({ restaurant_id: rid, ...settings }));
     return res.json({ settings });
   }));
-  router.post(root + "/signup", owner(async (db, rid, userId, req, res) => {
+  router.post(root + "/signup", admin(async (db, rid, userId, req, res) => {
     requireEmbeddedSignup();
     const options = config();
     if (!options) throw new ApiError(503, "meta_not_configured");
@@ -297,25 +334,25 @@ export function whatsappRouter(db: Db | null, fetcher = fetch) {
     }
     return res.json({ id });
   }));
-  router.post(root + "/signup/exchange", owner(async (db, rid, userId, req, res) => {
+  router.post(root + "/signup/exchange", admin(async (db, rid, userId, req, res) => {
     requireEmbeddedSignup();
     await exchangeSignup(db, rid, userId, req.body, fetcher);
     return res.json({ ok: true });
   }));
-  router.post(root + "/signup/complete", owner(async (db, rid, userId, req, res) => {
+  router.post(root + "/signup/complete", admin(async (db, rid, userId, req, res) => {
     requireEmbeddedSignup();
     await completeSignup(db, rid, userId, req.body, fetcher);
     return res.json({ ok: true });
   }));
-  router.get(root + "/signup/:id/phones", owner(async (db, rid, userId, req, res) => {
+  router.get(root + "/signup/:id/phones", admin(async (db, rid, userId, req, res) => {
     requireEmbeddedSignup();
     return res.json({ phones: await listSignupPhones(db, rid, userId, req.params.id, fetcher) });
   }));
-  router.post(root + "/disconnect", owner(async (db, rid, _user, _req, res) => res.json({ warning: await disconnect(db, rid, fetcher) }), true));
-  router.post(root + "/health", owner(async (db, rid, _user, _req, res) => {
+  router.post(root + "/disconnect", admin(async (db, rid, _user, _req, res) => res.json({ warning: await disconnect(db, rid, fetcher) })));
+  router.post(root + "/health", admin(async (db, rid, _user, _req, res) => {
     await checkConnection(db, rid, fetcher);
     return res.json({ ok: true });
-  }, true));
+  }));
   router.get(root + "/conversations/:id", owner(async (db, rid, _user, req, res) => {
     const id = req.params.id;
     if (!uuid(id)) throw new ApiError(400, "invalid_conversation");
@@ -327,13 +364,10 @@ export function whatsappRouter(db: Db | null, fetcher = fetch) {
     const messages = db.from("whatsapp_jobs").select("seq,id,direction,kind,payload,state,error_code,created_at,occurred_at")
       .eq("restaurant_id", rid).eq("conversation_id", id).order("seq", { ascending: false }).limit(40);
     if (before) messages.lt("seq", before);
-    const [history, usage] = await Promise.all([
-      messages,
-      db.rpc("whatsapp_conversation_usage", { p_restaurant: rid, p_conversation: id }),
-    ]);
-    const rows = result(history);
+    const rows = result(await messages);
     return res.json({
-      conversation, messages: rows, usage: result(usage), windowOpen: serviceWindowOpen(conversation.last_inbound_at),
+      conversation, messages: rows.map(row => ({ ...row, error_code: operationalError(row.error_code) })),
+      windowOpen: serviceWindowOpen(conversation.last_inbound_at),
       before: rows.length === 40 ? String(rows.at(-1)?.seq) : null,
     });
   }));

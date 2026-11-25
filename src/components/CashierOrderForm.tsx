@@ -17,7 +17,7 @@ export default function CashierOrderForm({ restaurantId, initialTable, tables, o
   initialTable: number | null;
   tables: TablePlacement[] | null;
   onClose: () => void;
-  onCreated: (orderNumber: number) => void;
+  onCreated: (order: { id: string; orderNumber: number }) => void;
 }) {
   const { tr, language } = useLanguage();
   const modal = useRef<HTMLDialogElement>(null);
@@ -86,8 +86,8 @@ export default function CashierOrderForm({ restaurantId, initialTable, tables, o
         p_items: selected.map(product => ({ id: product.id, ...draft[product.id] })), p_key: attempt.current,
       });
       if (dbError) throw dbError;
-      if (!Number.isFinite(data?.orderNumber)) throw new Error("order_unavailable");
-      onCreated(data.orderNumber);
+      if (typeof data?.id !== "string" || !Number.isFinite(data.orderNumber)) throw new Error("order_unavailable");
+      onCreated({ id: data.id, orderNumber: data.orderNumber });
     } catch (reason) {
       const rejection = reason as { message?: string; code?: string };
       const code = rejection?.message;

@@ -86,4 +86,18 @@ test("cashier floor, menu orders, kitchen handoff and statistics use the existin
     await assert.rejects(run(cashier, "select public.reset_restaurant_shift($1)", [restaurant]), /unauthorized/);
     assert.equal((await run(owner, "select public.reset_restaurant_shift($1) count", [restaurant])).rows[0].count, 2);
   });
+
+  await t.test("receipt reads the saved table and counter orders with verified lines and totals", async () => {
+    for (const table of ["2", "counter"]) {
+      const { id, orderNumber } = (await staffOrder(cashier, table)).rows[0].result;
+      const sql = "select order_number,created_at,table_number,items,total_amount from public.orders where restaurant_id=$1 and id=$2";
+      const { rows: [row] } = await run(cashier, sql, [restaurant, id]);
+      assert.equal(row.order_number, orderNumber);
+      assert(row.created_at);
+      assert.equal(row.table_number, table);
+      assert.equal(row.total_amount, "18000.00");
+      assert.deepEqual(row.items, [{ id: product, name: "Burger", quantity: 2, price: 9000, cheeseSelected: true, spicySelected: false }]);
+      assert.equal((await run(cashier, sql, [other, id])).rows.length, 0);
+    }
+  });
 });

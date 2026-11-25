@@ -153,6 +153,7 @@ test("WhatsApp flows through HTTP ingress, PostgreSQL, worker and staff workflow
       ('${unavailable}','${a}','بيتزا',6000,false,0,false),('${other}','${b}','سمك',4000,false,0,true);
     insert into public.whatsapp_settings(restaurant_id,enabled,ordering_enabled) values ('${a}',true,true),('${b}',true,true);
   `);
+  await db.query("update auth.users set raw_app_meta_data = '{\"system_role\":\"admin\"}' where id=$1", [owners.admin]);
   await db.query(`insert into public.whatsapp_accounts(phone_id,restaurant_id,waba_id,display_phone,status,subscribed,token_ciphertext,operation_at)
     values($1,$2,$3,'+964 111','connected',true,$4,now()-interval '1 day')`, [p1, a, w1, seal("fake-a", key, a + ":" + p1)]);
   const client = fixtureClient(db, owners);
@@ -227,7 +228,7 @@ test("WhatsApp flows through HTTP ingress, PostgreSQL, worker and staff workflow
       createHmac("sha256", manualSecret).update(bearer).digest("hex"));
     if (url.pathname.endsWith("/oauth/access_token")) {
       if (url.searchParams.get("code") === "same-tab-fake-code") {
-        assert.equal(url.searchParams.get("redirect_uri"), "https://rest.ordova.cc/api/whatsapp/signup/callback");
+        assert.equal(url.searchParams.get("redirect_uri"), "https://menu.novx-team.com/api/whatsapp/signup/callback");
       }
       return Response.json({ access_token: "fake-b" });
     }
@@ -315,31 +316,34 @@ test("WhatsApp flows through HTTP ingress, PostgreSQL, worker and staff workflow
     assert.equal((await ownerApi(a, "", "ownerB")).status, 403);
     assert.equal((await ownerApi(a, "", "waiter")).status, 403);
     assert.equal((await ownerApi(a, "", "invalid")).status, 401);
-    const first = await ownerApi(b, "/signup", "ownerB", {});
+    for (const [path, method] of [["/connection","GET"], ["/health","POST"], ["/disconnect","POST"], ["/signup","POST"], ["/limits","PUT"]]) {
+      assert.equal((await ownerApi(a, path, "ownerA", method === "GET" ? undefined : {}, method)).status, 403);
+    }
+    const first = await ownerApi(b, "/signup", "admin", {});
     assert.equal(first.status, 200, await first.clone().text());
     const signupId = (await first.json()).id;
     const code = "fake-code-abcd";
-    assert.equal((await ownerApi(b, "/signup/exchange", "ownerB", { signupId, code })).status, 200);
-    assert.equal((await ownerApi(b, "/signup/exchange", "ownerB", { signupId, code })).status, 409);
-    assert.equal((await ownerApi(b, "/signup/complete", "ownerB", { signupId, waba: w2, phone: p1 })).status, 422);
-    const verified = await ownerApi(b, "/signup/complete", "ownerB", { signupId, waba: w2, phone: p2 });
+    assert.equal((await ownerApi(b, "/signup/exchange", "admin", { signupId, code })).status, 200);
+    assert.equal((await ownerApi(b, "/signup/exchange", "admin", { signupId, code })).status, 409);
+    assert.equal((await ownerApi(b, "/signup/complete", "admin", { signupId, waba: w2, phone: p1 })).status, 422);
+    const verified = await ownerApi(b, "/signup/complete", "admin", { signupId, waba: w2, phone: p2 });
     assert.equal(verified.status, 200, await verified.clone().text());
-    const status = await (await ownerApi(b, "", "ownerB")).json();
+    const status = await (await ownerApi(b, "/connection", "admin")).json();
     assert.equal(status.account.status, "connected");
     assert.equal(status.account.coexistence, true);
     assert.equal(status.account.token_ciphertext, undefined);
-    assert.equal((await ownerApi(b, "/health", "ownerB", {})).status, 200);
+    assert.equal((await ownerApi(b, "/health", "admin", {})).status, 200);
     assert.equal((await sendWebhook(payload(p2, w2, [text("wamid.tenant.b", "Show me the menu")]))).status, 200);
     await run();
     assert.match(last(), /restaurantId=10000000-0000-0000-0000-000000000002/);
     assert.doesNotMatch(last(), /برگر/);
-    assert.equal((await ownerApi(b, "/disconnect", "ownerB", {})).status, 200);
+    assert.equal((await ownerApi(b, "/disconnect", "admin", {})).status, 200);
     assert.equal(unsubscribed, 1);
     assert.equal((await db.query<{ token_ciphertext: string | null }>("select token_ciphertext from public.whatsapp_accounts where phone_id=$1", [p2])).rows[0].token_ciphertext, null);
   });
 
   await t.test("same-tab signup verifies the browser state, returns without the code and keeps phone selection tenant-scoped", async () => {
-    const start = await ownerApi(b, "/signup", "ownerB", { mode: "same_tab" });
+    const start = await ownerApi(b, "/signup", "admin", { mode: "same_tab" });
     assert.equal(start.status, 200, await start.clone().text());
     const setCookie = start.headers.get("set-cookie")!;
     assert.match(setCookie, /; Secure/);
@@ -351,26 +355,26 @@ test("WhatsApp flows through HTTP ingress, PostgreSQL, worker and staff workflow
     assert.equal(meta.origin, "https://www.facebook.com");
     assert.equal(meta.searchParams.get("display"), "page");
     assert.equal(meta.searchParams.get("state"), id);
-    assert.equal(meta.searchParams.get("redirect_uri"), "https://rest.ordova.cc/api/whatsapp/signup/callback");
+    assert.equal(meta.searchParams.get("redirect_uri"), "https://menu.novx-team.com/api/whatsapp/signup/callback");
     const callback = origin + "/signup/callback?state=" + id + "&code=same-tab-fake-code";
     const wrongBrowser = await fetch(callback, { redirect: "manual" });
     assert.equal(wrongBrowser.headers.get("location"), "/?whatsappSignup=signup_expired");
     const response = await fetch(callback, { redirect: "manual", headers: { Cookie: cookie } });
     assert.equal(response.status, 303);
-    assert.equal(response.headers.get("location"), "/?whatsappSignup=" + id);
+    assert.equal(response.headers.get("location"), "/?whatsappSignup=" + id + "&whatsappRestaurant=" + b);
     assert.equal(response.headers.get("referrer-policy"), "no-referrer");
     const replay = await fetch(callback, { redirect: "manual", headers: { Cookie: cookie } });
     assert.equal(replay.headers.get("location"), "/?whatsappSignup=signup_expired");
     const path = "/signup/" + id + "/phones";
-    assert.equal((await ownerApi(a, path)).status, 409);
+    assert.equal((await ownerApi(a, path, "admin")).status, 409);
     assert.equal((await ownerApi(b, path, "ownerA")).status, 403);
-    const authorized = await ownerApi(b, path, "ownerB");
+    const authorized = await ownerApi(b, path, "admin");
     assert.equal(authorized.status, 200, await authorized.clone().text());
     assert.deepEqual(await authorized.json(), { phones: [{ waba: w2, phone: p2, display: "+964 222",
       coexistence: true, needsPin: false }] });
-    const completed = await ownerApi(b, "/signup/complete", "ownerB", { signupId: id, waba: w2, phone: p2 });
+    const completed = await ownerApi(b, "/signup/complete", "admin", { signupId: id, waba: w2, phone: p2 });
     assert.equal(completed.status, 200, await completed.clone().text());
-    assert.equal((await (await ownerApi(b, "", "ownerB")).json()).account.status, "connected");
+    assert.equal((await (await ownerApi(b, "", "ownerB")).json()).connected, true);
   });
   await t.test("menu, corrections, confirmation, replay and existing staff order lifecycle", async () => {
     await say("wamid.greet", "السلام عليكم");
@@ -494,7 +498,10 @@ test("WhatsApp flows through HTTP ingress, PostgreSQL, worker and staff workflow
     assert.equal(sent.length, before);
     assert.equal(interpreted.length, beforeAi);
     const dashboard = await (await ownerApi(a)).json();
-    assert(dashboard.usage.input_tokens > 0);
+    assert.equal(dashboard.usage, undefined);
+    assert((await (await ownerApi(a, "/connection", "admin")).json()).usage.input_tokens > 0);
+    assert.equal(dashboard.settings.ai_policy, undefined);
+    assert.equal(dashboard.settings.daily_ai_limit, undefined);
     const chat = dashboard.conversations.find(row => row.customer_id === recipient);
     const history = await (await ownerApi(a, "/conversations/" + chat.id)).json();
     assert(history.messages.some(row => row.payload.text === "السلام عليكم"));
@@ -542,15 +549,15 @@ test("WhatsApp flows through HTTP ingress, PostgreSQL, worker and staff workflow
     await db.query(`update public.whatsapp_accounts set waba_id=$1,status='connected',subscribed=true,token_ciphertext=$2
       where restaurant_id=$3 and phone_id=$4`, [w1, seal("fake-b", key, b + ":" + p2), b, p2]);
     const before = unsubscribed;
-    assert.equal((await ownerApi(b, "/disconnect", "ownerB", {})).status, 200);
+    assert.equal((await ownerApi(b, "/disconnect", "admin", {})).status, 200);
     assert.equal(unsubscribed, before);
-    assert.equal((await (await ownerApi(a)).json()).account.status, "connected");
+    assert.equal((await (await ownerApi(a)).json()).connected, true);
     const revoked = { object: "whatsapp_business_account", entry: [{ id: w1, time: Number(now()), changes: [{
       field: "account_update", value: { event: "PARTNER_APP_UNINSTALLED", waba_info: { waba_id: w1,
         partner_app_id: process.env.WHATSAPP_META_APP_ID } },
     }] }] };
     assert.equal((await sendWebhook(revoked)).status, 200);
-    assert.equal((await (await ownerApi(a)).json()).account.status, "reconnect_required");
+    assert.equal((await (await ownerApi(a)).json()).connected, false);
     const [account] = (await db.query<{ token_ciphertext: string | null; subscribed: boolean }>(
       "select token_ciphertext,subscribed from public.whatsapp_accounts where restaurant_id=$1", [a])).rows;
     assert.deepEqual(account, { token_ciphertext: null, subscribed: false });
@@ -563,7 +570,7 @@ test("WhatsApp flows through HTTP ingress, PostgreSQL, worker and staff workflow
   await t.test("manual credentials, signed tenant webhooks, order handoff and disconnect without ORDOVA Meta credentials", async () => {
     delete process.env.WHATSAPP_META_APP_ID;
     process.env.WHATSAPP_EMBEDDED_SIGNUP_ENABLED = "false";
-    assert.equal((await ownerApi(b, "/signup", "ownerB", {})).status, 404);
+    assert.equal((await ownerApi(b, "/signup", "admin", {})).status, 404);
     const credentials = { appId: manualApp, appSecret: manualSecret, token: manualToken, waba: w2, phone: p2 };
     assert.equal((await ownerApi(b, "/connection", "waiter", credentials)).status, 403);
     assert.equal((await ownerApi(b, "/connection", "ownerA", credentials)).status, 403);
@@ -571,16 +578,16 @@ test("WhatsApp flows through HTTP ingress, PostgreSQL, worker and staff workflow
     assert.equal(new URL(setup.manual.callback).pathname, "/api/whatsapp/webhook/" + b);
     const challenge = "/webhook/" + b + "?hub.mode=subscribe&hub.challenge=1234&hub.verify_token=";
     assert.equal(await (await fetch(origin + challenge + setup.manual.verifyToken)).text(), "1234");
-    const otherSetup = await (await ownerApi(a, "/connection")).json();
+    const otherSetup = await (await ownerApi(a, "/connection", "admin")).json();
     assert.equal((await fetch(origin + challenge + otherSetup.manual.verifyToken)).status, 403);
-    const mismatch = await ownerApi(b, "/connection", "ownerB", { ...credentials, phone: p1 });
+    const mismatch = await ownerApi(b, "/connection", "admin", { ...credentials, phone: p1 });
     assert.equal((await mismatch.json()).error, "meta_phone_mismatch");
     assert.equal(manualSubscribed, false);
     const connected = await ownerApi(b, "/connection", "admin", credentials);
     assert.equal(connected.status, 200, await connected.clone().text());
-    const replacement = await ownerApi(b, "/connection", "ownerB", { ...credentials, token: replacementToken });
+    const replacement = await ownerApi(b, "/connection", "admin", { ...credentials, token: replacementToken });
     assert.equal(replacement.status, 200, await replacement.clone().text());
-    const dashboard = await (await ownerApi(b, "/connection", "ownerB")).text();
+    const dashboard = await (await ownerApi(b, "/connection", "admin")).text();
     assert(!dashboard.includes(replacementToken) && !dashboard.includes(manualSecret) && !dashboard.includes("ciphertext"));
     assert.equal((await ownerApi(b, "/health", "admin", {})).status, 200);
     const deliver = (rid: string, event: object, signingSecret = manualSecret) => {
@@ -618,8 +625,8 @@ test("WhatsApp flows through HTTP ingress, PostgreSQL, worker and staff workflow
   await t.test("Gupshup callbacks authenticate tenants and hand confirmed orders to existing staff workflow", async () => {
     const credentials = { provider: "gupshup", appId: gsApps[b], appName: "OrdovaB", source: "9647701112222", apiKey: "gupshup-valid-key-b" };
     assert.equal((await ownerApi(b, "/connection", "ownerA", credentials)).status, 403);
-    assert.equal((await ownerApi(b, "/connection", "ownerB", { ...credentials, apiKey: "invalid-key-xxxxxxxx" })).status, 422);
-    const save = await ownerApi(b, "/connection", "ownerB", credentials);
+    assert.equal((await ownerApi(b, "/connection", "admin", { ...credentials, apiKey: "invalid-key-xxxxxxxx" })).status, 422);
+    const save = await ownerApi(b, "/connection", "admin", credentials);
     assert.equal(save.status, 200, await save.clone().text());
     const read = await (await ownerApi(b, "/connection", "admin")).json();
     assert.equal(read.account.provider, "gupshup");
@@ -646,7 +653,7 @@ test("WhatsApp flows through HTTP ingress, PostgreSQL, worker and staff workflow
     assert.equal((await deliver(callback, { ...request, app: "OrdovaA" })).status, 400);
     assert.equal((await deliver(callback, { ...request, appId: gsApps[a] })).status, 400);
     assert.equal((await deliver(callback, event("ignored", {}, { type: "platform-event", payload: { type: "connectivity-check" } }))).status, 200);
-    assert.equal((await ownerApi(b, "/health", "ownerB", {})).status, 200);
+    assert.equal((await ownerApi(b, "/health", "admin", {})).status, 200);
     const post = await deliver(callback, request);
     assert.equal(post.status, 200);
     assert.equal(await post.text(), "");
@@ -720,14 +727,14 @@ test("WhatsApp flows through HTTP ingress, PostgreSQL, worker and staff workflow
       sender: { user_id: "unverified-name" }, type: "text", payload: { text: "Hi" } }))).status, 400);
     const stored = (await db.query<any>("select token_ciphertext,webhook_secret_ciphertext from public.whatsapp_accounts where restaurant_id=$1 and provider='gupshup'", [b])).rows[0];
     assert(!stored.token_ciphertext.includes(credentials.apiKey));
-    assert.equal((await ownerApi(b, "/connection", "ownerB", { ...credentials, apiKey: "gupshup-valid-key-replacement" })).status, 200);
+    assert.equal((await ownerApi(b, "/connection", "admin", { ...credentials, apiKey: "gupshup-valid-key-replacement" })).status, 200);
     assert.equal((await deliver(callback, request)).status, 401);
-    const replaced = await (await ownerApi(b, "/connection", "ownerB")).json();
+    const replaced = await (await ownerApi(b, "/connection", "admin")).json();
     const nextCallback = new URL(replaced.gupshup.callback);
     assert.notEqual(nextCallback.searchParams.get("token"), callback.searchParams.get("token"));
-    assert.equal((await ownerApi(a, "/disconnect", "ownerA", {})).status, 200);
-    assert.equal((await ownerApi(a, "/connection", "ownerA", { ...credentials, appId: gsApps[a], appName: "OrdovaA", source: "9647701113333", apiKey: "gupshup-valid-key-a" })).status, 200);
-    const aCallback = new URL((await (await ownerApi(a, "/connection", "ownerA")).json()).gupshup.callback);
+    assert.equal((await ownerApi(a, "/disconnect", "admin", {})).status, 200);
+    assert.equal((await ownerApi(a, "/connection", "admin", { ...credentials, appId: gsApps[a], appName: "OrdovaA", source: "9647701113333", apiKey: "gupshup-valid-key-a" })).status, 200);
+    const aCallback = new URL((await (await ownerApi(a, "/connection", "admin")).json()).gupshup.callback);
     const stolen = new URL(nextCallback); stolen.searchParams.set("connection", a);
     assert.equal((await deliver(stolen, request)).status, 401);
     assert.equal((await deliver(aCallback, request)).status, 400);

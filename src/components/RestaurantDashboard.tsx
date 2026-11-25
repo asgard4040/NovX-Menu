@@ -2768,6 +2768,8 @@ function StaffModal({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [createdPasscode, setCreatedPasscode] = useState<string | null>(null);
+  const [whatsappConsent, setWhatsAppConsent] = useState(false);
+  const [invitationStatus, setInvitationStatus] = useState("");
 
   useEffect(() => {
     if (!existingStaff?.id) return;
@@ -2794,7 +2796,7 @@ function StaffModal({
       if ((passcode || (existingStaff && passcodeDirty)) && !/^[0-9]{4}$/.test(passcode)) throw new Error('invalid_passcode');
       const { data } = await supabase.auth.getSession();
       if (!data.session) throw new Error("authentication_required");
-      const response = await fetch('/api/staff', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session.access_token}` }, body: JSON.stringify({ ...formData, passcode: (!existingStaff || passcodeDirty) ? passcode : undefined, id: existingStaff?.id, restaurantId, role }) });
+      const response = await fetch('/api/staff', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session.access_token}` }, body: JSON.stringify({ ...formData, whatsappConsent: !existingStaff && whatsappConsent, passcode: (!existingStaff || passcodeDirty) ? passcode : undefined, id: existingStaff?.id, restaurantId, role }) });
       if (!response.ok) {
         const result = await response.json();
         throw new Error(result.error || 'staff_save_failed');
@@ -2802,10 +2804,16 @@ function StaffModal({
       if (existingStaff) {
         onClose();
       } else {
-        setCreatedPasscode((await response.json()).passcode);
+        const result = await response.json();
+        setCreatedPasscode(result.passcode);
+        setInvitationStatus(result.whatsappInvitation || "");
       }
     } catch (err) {
       const code = err instanceof Error ? err.message : 'staff_save_failed';
+      if (code === 'invalid_phone') {
+        setSaveError(tr('أدخل رقم واتساب صحيح للموظف.', 'Enter a valid staff WhatsApp number.'));
+        return;
+      }
       setSaveError(code === 'invalid_passcode'
         ? tr('رمز الدخول يجب أن يتكون من أربعة أرقام.', 'Passcode must be exactly four digits.')
         : code === 'weak_passcode'
@@ -2836,6 +2844,9 @@ function StaffModal({
               <p className="text-xs text-text-muted mt-2">{tr('هذا رمز دخول الموظف. يمكنك عرضه أو تغييره لاحقاً من شاشة التعديل.', 'This is the staff passcode. You can view or change it later in Edit.')}</p>
             </div>
             <p className="rounded-xl bg-bg-paper border border-border-delicate p-5 text-4xl font-bold tracking-[.3em] text-brand-primary" dir="ltr">{createdPasscode}</p>
+            {invitationStatus && <p role="status" className="text-sm text-text-muted">{invitationStatus === 'queued'
+              ? tr('تمت إضافة دعوة واتساب إلى قائمة الإرسال.', 'WhatsApp invitation queued.')
+              : tr('تعذّر جدولة دعوة واتساب. يمكنك مشاركة الرمز يدوياً.', 'Could not queue the WhatsApp invitation. You can share the passcode manually.')}</p>}
             <button type="button" onClick={() => navigator.clipboard.writeText(createdPasscode)} className="w-full py-3 border border-brand-primary text-brand-primary font-bold">{tr('نسخ رمز الدخول', 'Copy passcode')}</button>
             <button type="button" onClick={onClose} className="w-full py-4 bg-brand-primary text-white font-bold">{tr('تم، إغلاق', 'Done')}</button>
           </div>
@@ -2882,6 +2893,10 @@ function StaffModal({
                 }
               />
             </div>
+            {!existingStaff && <label className="flex items-start gap-2 text-sm text-brand-primary">
+              <input type="checkbox" className="mt-1 accent-brand-primary" checked={whatsappConsent} onChange={event => setWhatsAppConsent(event.target.checked)} />
+              {tr('الموظف وافق يستلم بيانات الدخول على واتساب بهذا الرقم.', 'The staff member agreed to receive login details at this WhatsApp number.')}
+            </label>}
             <div className="pt-2">
               <div className="space-y-1 text-right">
                 <label className="text-[9px] font-bold text-brand-gold uppercase tracking-widest block">

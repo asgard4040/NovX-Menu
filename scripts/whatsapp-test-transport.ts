@@ -18,6 +18,11 @@ export function fixtureClient(database: PGlite, users: Record<string, string>) {
       return Response.json(id ? { id, aud: "authenticated", app_metadata: headers.get("authorization") === "Bearer admin" ? { system_role: "admin" } : {} }
         : { msg: "Unauthorized" }, { status: id ? 200 : 401 });
     }
+    if (url.pathname.startsWith("/auth/v1/admin/users/")) {
+      const id = url.pathname.split("/").at(-1);
+      return Response.json(id === users.admin ? { user: { id, aud: "authenticated", app_metadata: { system_role: "admin" } } }
+        : { msg: "Unauthorized" }, { status: id === users.admin ? 200 : 401 });
+    }
     const body = init?.body ? JSON.parse(String(init.body)) : null;
     try {
       const rows = await database.transaction(async tx => {
@@ -38,30 +43,42 @@ export function fixtureClient(database: PGlite, users: Record<string, string>) {
         ).join(",");
         const predicates: string[] = [];
         for (const [key, condition] of url.searchParams) {
-          if (["select", "order", "limit", "on_conflict"].includes(key)) continue;
+          if (["select", "columns", "order", "limit", "offset", "on_conflict"].includes(key)) continue;
           const dot = condition.indexOf(".");
           const op = condition.slice(0, dot);
           const value = condition.slice(dot + 1);
           if (op === "is" && value === "null") predicates.push(identifier(key) + " is null");
           else if (op === "not" && value === "is.null") predicates.push(identifier(key) + " is not null");
           else if (op === "in") predicates.push(identifier(key) + " in (" + value.slice(1, -1).split(",").map(param).join(",") + ")");
-          else predicates.push(identifier(key) + ({ eq: "=", gt: ">", lt: "<" }[op] || " INVALID ") + param(value));
+          else predicates.push(identifier(key) + ({ eq: "=", gt: ">", lt: "<", lte: "<=", ilike: " ilike " }[op] || " INVALID ") + param(value));
         }
         const where = predicates.length ? " where " + predicates.join(" and ") : "";
+        if (method === "DELETE") {
+          return (await tx.query("delete from " + table + where + " returning " + select, values)).rows;
+        }
         if (method === "PATCH") {
           const changes = Object.entries(body).map(([key, value]) => identifier(key) + "=" + param(value));
           return (await tx.query("update " + table + " set " + changes.join(",") + where + " returning " + select, values)).rows;
         }
         if (method === "POST") {
-          const keys = Object.keys(body).map(identifier);
-          const args = Object.values(body).map(param);
-          const conflict = headers.get("prefer")?.includes("resolution=merge-duplicates")
-            && url.pathname.endsWith("/whatsapp_settings")
-            ? " on conflict (restaurant_id) do update set " +
-              keys.filter(key => key !== '"restaurant_id"').map(key => key + "=excluded." + key).join(",")
-            : "";
-          return (await tx.query("insert into " + table + "(" + keys.join(",") + ") values (" +
-            args.join(",") + ")" + conflict + " returning " + select, values)).rows;
+          const records = Array.isArray(body) ? body : [body];
+          const keys = Object.keys(records[0]).map(identifier);
+          const args = records.map(row => "(" + Object.values(row).map(param).join(",") + ")").join(",");
+          const explicitKey = url.searchParams.get("on_conflict");
+          const implicitKeys: Record<string, string> = {
+            whatsapp_settings: "restaurant_id", platform_whatsapp_sender: "id", platform_whatsapp_consents: "restaurant_id,user_id",
+          };
+          const conflictKeys = (explicitKey ?? implicitKeys[url.pathname.split("/").at(-1)!])?.split(",").map(identifier);
+          const preference = headers.get("prefer");
+          let conflict = "";
+          if (conflictKeys && preference?.includes("resolution=merge-duplicates")) {
+            conflict = " on conflict (" + conflictKeys.join(",") + ") do update set " +
+              keys.filter(key => !conflictKeys.includes(key)).map(key => key + "=excluded." + key).join(",");
+          } else if (conflictKeys && preference?.includes("resolution=ignore-duplicates")) {
+            conflict = " on conflict (" + conflictKeys.join(",") + ") do nothing";
+          }
+          return (await tx.query("insert into " + table + "(" + keys.join(",") + ") values " +
+            args + conflict + " returning " + select, values)).rows;
         }
         const order = url.searchParams.get("order")?.split(",").map(column => {
           const [field, direction] = column.split(".");
@@ -69,11 +86,11 @@ export function fixtureClient(database: PGlite, users: Record<string, string>) {
         }).join(",");
         const limit = url.searchParams.get("limit");
         return (await tx.query("select " + select + " from " + table + where + (order ? " order by " + order : "") +
-          (limit ? " limit " + Number(limit) : ""), values)).rows;
+          (limit ? " limit " + Number(limit) : "") + (url.searchParams.has("offset") ? " offset " + Number(url.searchParams.get("offset")) : ""), values)).rows;
       });
       if (url.pathname.startsWith("/rest/v1/rpc/")) {
         const name = url.pathname.split("/").at(-1)!;
-        return Response.json(["whatsapp_claim", "whatsapp_menu_context"].includes(name) ? rows : rows[0]?.[name] ?? null);
+        return Response.json(["whatsapp_claim", "whatsapp_menu_context", "platform_whatsapp_claim"].includes(name) ? rows : rows[0]?.[name] ?? null);
       }
       if (headers.get("accept") === "application/vnd.pgrst.object+json") {
         return rows.length === 1 ? Response.json(rows[0]) : Response.json({ code: "PGRST116", details: "The result contains " + rows.length + " rows" }, { status: 406 });

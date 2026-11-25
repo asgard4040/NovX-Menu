@@ -2,7 +2,7 @@
 import express from "express";
 
 // whatsapp/routes.ts
-import { raw, json, Router } from "express";
+import { raw, json as json2, Router as Router2 } from "express";
 
 // whatsapp/agent.ts
 import { randomUUID } from "node:crypto";
@@ -63,20 +63,20 @@ var providerId = (value) => typeof value === "string" && /^[A-Za-z0-9_+=./:-]{1,
 var time = (value) => typeof value === "string" && /^\d{10}$/.test(value);
 function encryptionKey(value) {
   if (!value || !/^[A-Za-z0-9_-]{43}$/.test(value)) return null;
-  const key = Buffer.from(value, "base64url");
-  return key.length === 32 ? key : null;
+  const key2 = Buffer.from(value, "base64url");
+  return key2.length === 32 ? key2 : null;
 }
-function seal(value, key, scope2) {
+function seal(value, key2, scope2) {
   const nonce = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", key, nonce);
+  const cipher = createCipheriv("aes-256-gcm", key2, nonce);
   cipher.setAAD(Buffer.from("ordova-whatsapp:" + scope2));
   const ciphertext = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
   return ["v1", nonce.toString("base64url"), cipher.getAuthTag().toString("base64url"), ciphertext.toString("base64url")].join(".");
 }
-function unseal(value, key, scope2) {
+function unseal(value, key2, scope2) {
   const [version, nonce, tag, ciphertext] = value.split(".");
   if (version !== "v1" || !nonce || !tag || !ciphertext) throw new Error("credential_invalid");
-  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(nonce, "base64url"));
+  const decipher = createDecipheriv("aes-256-gcm", key2, Buffer.from(nonce, "base64url"));
   decipher.setAAD(Buffer.from("ordova-whatsapp:" + scope2));
   decipher.setAuthTag(Buffer.from(tag, "base64url"));
   return Buffer.concat([decipher.update(Buffer.from(ciphertext, "base64url")), decipher.final()]).toString();
@@ -204,12 +204,12 @@ async function graph(path, options) {
   } catch {
     throw new ProviderError("meta_network", !options.send, !!options.send);
   }
-  const json2 = await response.json().catch(() => null);
-  if (!response.ok || json2?.error) {
-    const code = Number.isSafeInteger(json2?.error?.code) ? json2.error.code : null;
+  const json3 = await response.json().catch(() => null);
+  if (!response.ok || json3?.error) {
+    const code = Number.isSafeInteger(json3?.error?.code) ? json3.error.code : null;
     const limited = response.status === 429 || [4, 17, 32, 613, 130429, 131048, 131056].includes(code);
-    const transient = json2?.error?.is_transient === true || [1, 2, 131016].includes(code);
-    const unknown = response.status >= 500 && !json2?.error;
+    const transient = json3?.error?.is_transient === true || [1, 2, 131016].includes(code);
+    const unknown = response.status >= 500 && !json3?.error;
     const retryAfter = Number(response.headers.get("Retry-After")) || 0;
     throw new ProviderError(
       code ? "meta_" + code : "meta_http_" + response.status,
@@ -218,8 +218,8 @@ async function graph(path, options) {
       retryAfter
     );
   }
-  if (!json2) throw new ProviderError("meta_invalid_response", !options.send, !!options.send);
-  return json2;
+  if (!json3) throw new ProviderError("meta_invalid_response", !options.send, !!options.send);
+  return json3;
 }
 function serviceWindowOpen(lastInbound, now = Date.now()) {
   const timestamp = Date.parse(lastInbound);
@@ -268,11 +268,11 @@ function parsePolicy(value) {
     max_response_chars: [200, 2e3]
   };
   const result2 = { ...defaultPolicy };
-  for (const [key, number] of Object.entries(value)) {
-    if (!(key in ranges) || typeof number !== "number" || !Number.isFinite(number)) throw new Error("invalid_policy");
-    const [min, max] = ranges[key];
-    if (number < min || number > max || !key.endsWith("_usd") && !Number.isInteger(number)) throw new Error("invalid_policy");
-    result2[key] = number;
+  for (const [key2, number] of Object.entries(value)) {
+    if (!(key2 in ranges) || typeof number !== "number" || !Number.isFinite(number)) throw new Error("invalid_policy");
+    const [min, max] = ranges[key2];
+    if (number < min || number > max || !key2.endsWith("_usd") && !Number.isInteger(number)) throw new Error("invalid_policy");
+    result2[key2] = number;
   }
   return result2;
 }
@@ -395,14 +395,14 @@ function requestReservation(input, model, runtime) {
   if (!rates) return null;
   return (Buffer.byteLength(inputData(input) + restaurantInstructions, "utf8") + 3e3) * rates.input / 1e6 + (runtime?.max_output_tokens || outputTokenLimit()) * rates.output / 1e6;
 }
-async function interpret(input, model, key, fetcher = fetch, runtime) {
+async function interpret(input, model, key2, fetcher = fetch, runtime) {
   let response;
   try {
     response = await fetcher("https://api.openai.com/v1/responses", {
       method: "POST",
       redirect: "error",
       signal: AbortSignal.timeout(runtime?.timeout_ms || 16e3),
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + key2 },
       body: JSON.stringify({
         model,
         store: false,
@@ -441,17 +441,17 @@ async function interpret(input, model, key, fetcher = fetch, runtime) {
       !exhausted && (response.status >= 500 || response.status === 429)
     );
   }
-  const json2 = await response.json().catch(() => null);
-  const calls = Array.isArray(json2?.output) ? json2.output.filter((x) => x?.type === "function_call") : [];
+  const json3 = await response.json().catch(() => null);
+  const calls = Array.isArray(json3?.output) ? json3.output.filter((x) => x?.type === "function_call") : [];
   let decision = null;
-  if (json2?.status === "completed" && calls.length === 1 && calls[0].name === "interpret_restaurant_message" && typeof calls[0].arguments === "string" && calls[0].arguments.length <= 5e3) {
+  if (json3?.status === "completed" && calls.length === 1 && calls[0].name === "interpret_restaurant_message" && typeof calls[0].arguments === "string" && calls[0].arguments.length <= 5e3) {
     try {
       decision = JSON.parse(calls[0].arguments);
     } catch {
     }
   }
-  const { input_tokens, output_tokens } = json2?.usage ?? {};
-  const cached = json2?.usage?.input_tokens_details?.cached_tokens;
+  const { input_tokens, output_tokens } = json3?.usage ?? {};
+  const cached = json3?.usage?.input_tokens_details?.cached_tokens;
   const cached_input_tokens = Number.isInteger(cached) && cached >= 0 && cached <= input_tokens ? cached : 0;
   const allowedIds = new Set(input.menu.map((item) => item.id));
   const measured = Number.isInteger(input_tokens) && input_tokens >= 0 && Number.isInteger(output_tokens) && output_tokens >= 0;
@@ -773,6 +773,12 @@ var STAFF_ORIGIN = "https://rest.ordova.cc";
 function customerMenuUrl(restaurantId2, table) {
   return menuQrUrl(MENU_ORIGIN, restaurantId2, table);
 }
+function staffPortalUrl(restaurantId2, portal) {
+  const url = new URL("/", STAFF_ORIGIN);
+  url.searchParams.set("loginRestaurantId", restaurantId2);
+  if (portal) url.searchParams.set("portal", portal);
+  return url.toString();
+}
 
 // whatsapp/gupshup.ts
 import { randomBytes as randomBytes2 } from "node:crypto";
@@ -785,14 +791,14 @@ var incomingPhone = (value) => {
 var scope = (rid, app2) => "gupshup-webhook:" + rid + ":" + app2;
 function gupshupSetup(account) {
   if (account?.provider !== "gupshup" || account.status === "disconnected" || !account.webhook_secret_ciphertext) return null;
-  const key = encryptionKey(process.env.WHATSAPP_CREDENTIAL_KEY);
-  if (!key || !account.gupshup_app_id) return null;
-  const token = unseal(account.webhook_secret_ciphertext, key, scope(account.restaurant_id, account.gupshup_app_id));
+  const key2 = encryptionKey(process.env.WHATSAPP_CREDENTIAL_KEY);
+  if (!key2 || !account.gupshup_app_id) return null;
+  const token2 = unseal(account.webhook_secret_ciphertext, key2, scope(account.restaurant_id, account.gupshup_app_id));
   const origin = new URL(process.env.WHATSAPP_WEBHOOK_ORIGIN || STAFF_ORIGIN);
   if (origin.protocol !== "https:" || origin.username || origin.password) return null;
   const url = new URL("/api/whatsapp/gupshup/webhook", origin);
   url.searchParams.set("connection", account.restaurant_id);
-  url.searchParams.set("token", token);
+  url.searchParams.set("token", token2);
   return { callback: url.toString() };
 }
 async function gupshupRequest(path, apiKey, fetcher, body) {
@@ -827,8 +833,8 @@ async function verifyGupshup(appId, apiKey, fetcher) {
   if (data.status !== "success" || typeof data.business?.id !== "string" || data.business.id.toLowerCase() !== appId.toLowerCase()) throw new ProviderError("gupshup_app_unverified");
 }
 async function connectGupshup(db, rid, body, fetcher) {
-  const key = encryptionKey(process.env.WHATSAPP_CREDENTIAL_KEY);
-  if (!key) throw new ProviderError("manual_not_configured");
+  const key2 = encryptionKey(process.env.WHATSAPP_CREDENTIAL_KEY);
+  if (!key2) throw new ProviderError("manual_not_configured");
   const { appId, appName, source, apiKey } = body ?? {};
   if (!uuid(appId) || typeof appName !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(appName) || !phone(source) || typeof apiKey !== "string" || !/^[A-Za-z0-9_+=.\/-]{16,4096}$/.test(apiKey)) {
     throw new ProviderError("invalid_gupshup_credentials");
@@ -841,8 +847,8 @@ async function connectGupshup(db, rid, body, fetcher) {
     p_app: appId.toLowerCase(),
     p_name: appName,
     p_source: source,
-    p_token: seal(apiKey, key, rid + ":" + connection),
-    p_webhook: seal(randomBytes2(32).toString("base64url"), key, scope(rid, appId.toLowerCase()))
+    p_token: seal(apiKey, key2, rid + ":" + connection),
+    p_webhook: seal(randomBytes2(32).toString("base64url"), key2, scope(rid, appId.toLowerCase()))
   }));
   if (saved !== "connected") throw new ProviderError(saved);
 }
@@ -937,10 +943,10 @@ function tokenExpired(account) {
   return [account.token_expires_at, account.data_access_expires_at].some((time2) => time2 && Date.parse(time2) <= Date.now());
 }
 function accountToken(account) {
-  const key = encryptionKey(process.env.WHATSAPP_CREDENTIAL_KEY);
-  if (!key || !account.token_ciphertext) throw new ProviderError("credential_unavailable");
+  const key2 = encryptionKey(process.env.WHATSAPP_CREDENTIAL_KEY);
+  if (!key2 || !account.token_ciphertext) throw new ProviderError("credential_unavailable");
   try {
-    return unseal(account.token_ciphertext, key, account.restaurant_id + ":" + account.phone_id);
+    return unseal(account.token_ciphertext, key2, account.restaurant_id + ":" + account.phone_id);
   } catch {
     throw new ProviderError("credential_invalid");
   }
@@ -951,10 +957,10 @@ function accountAppSecret(account) {
     if (!secret) throw new ProviderError("meta_not_configured");
     return secret;
   }
-  const key = encryptionKey(process.env.WHATSAPP_CREDENTIAL_KEY);
-  if (!key || !account.app_secret_ciphertext) throw new ProviderError("credential_unavailable");
+  const key2 = encryptionKey(process.env.WHATSAPP_CREDENTIAL_KEY);
+  if (!key2 || !account.app_secret_ciphertext) throw new ProviderError("credential_unavailable");
   try {
-    return unseal(account.app_secret_ciphertext, key, "app:" + account.restaurant_id + ":" + account.phone_id);
+    return unseal(account.app_secret_ciphertext, key2, "app:" + account.restaurant_id + ":" + account.phone_id);
   } catch {
     throw new ProviderError("credential_invalid");
   }
@@ -1051,8 +1057,8 @@ async function inbound(db, job, c, account, settings, fetcher) {
   }
   const credentials = aiCredentials();
   const runtime = settings.runtime_config?.model ? settings.runtime_config : void 0;
-  const model = runtime?.model || credentials.model, key = credentials.key;
-  if (!key) {
+  const model = runtime?.model || credentials.model, key2 = credentials.key;
+  if (!key2) {
     await limitedNotice("ai_unavailable", agentText.quota(fallback));
     return;
   }
@@ -1092,7 +1098,7 @@ async function inbound(db, job, c, account, settings, fetcher) {
   const modelStarted = Date.now();
   let interpretation;
   try {
-    interpretation = await interpret(input, model, key, fetcher, runtime);
+    interpretation = await interpret(input, model, key2, fetcher, runtime);
   } catch (error) {
     if (error instanceof ProviderError && (!error.retryable || job.attempts >= 5)) {
       whatsappLog("ai_unavailable", job, error.code);
@@ -1253,10 +1259,10 @@ async function outbound(db, job, c, account, settings, fetcher) {
     return;
   }
   const body = outboundBody(job, c);
-  const token = accountToken(account);
+  const token2 = accountToken(account);
   if (!await finish(db, job, { state: "sending", run_at: new Date(Date.now() + 55e3).toISOString() })) return;
   try {
-    const providerId2 = account.provider === "gupshup" ? await sendGupshup(account, token, body, job.id, fetcher) : (await graph(account.phone_id + "/messages", { method: "POST", send: true, body, token, appSecret: secret, fetcher }))?.messages?.[0]?.id;
+    const providerId2 = account.provider === "gupshup" ? await sendGupshup(account, token2, body, job.id, fetcher) : (await graph(account.phone_id + "/messages", { method: "POST", send: true, body, token: token2, appSecret: secret, fetcher }))?.messages?.[0]?.id;
     if (typeof providerId2 !== "string" || !providerId2 || providerId2.length > 256) throw new ProviderError("meta_missing_message_id", false, true);
     await finish(db, job, { state: "accepted", provider_id: providerId2, lease: null, error_code: null }, "sending");
   } catch (error) {
@@ -1336,11 +1342,11 @@ function config() {
   const appId = process.env.WHATSAPP_META_APP_ID;
   const configId = process.env.WHATSAPP_META_SIGNUP_CONFIG_ID;
   const secret = process.env.WHATSAPP_META_APP_SECRET;
-  const key = encryptionKey(process.env.WHATSAPP_CREDENTIAL_KEY);
+  const key2 = encryptionKey(process.env.WHATSAPP_CREDENTIAL_KEY);
   const verifyToken = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
-  return metaId(appId) && metaId(configId) && secret && verifyToken && key ? { appId, configId, secret, key, version: graphVersion() } : null;
+  return metaId(appId) && metaId(configId) && secret && verifyToken && key2 ? { appId, configId, secret, key: key2, version: graphVersion() } : null;
 }
-var signupCallbackUrl = STAFF_ORIGIN + "/api/whatsapp/signup/callback";
+var signupCallbackUrl = "https://menu.novx-team.com/api/whatsapp/signup/callback";
 function signupPage(options, state) {
   const url = new URL("https://www.facebook.com/" + options.version + "/dialog/oauth");
   url.search = new URLSearchParams({
@@ -1359,12 +1365,12 @@ function signupPage(options, state) {
 function expireAt(timestamp) {
   return typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp > 0 ? new Date(timestamp * 1e3).toISOString() : null;
 }
-async function debugToken(token, options, fetcher) {
+async function debugToken(token2, options, fetcher) {
   const response = await graph("debug_token", {
     appSecret: options.secret,
     token: options.appId + "|" + options.secret,
     fetcher,
-    query: new URLSearchParams({ input_token: token })
+    query: new URLSearchParams({ input_token: token2 })
   });
   const details = response.data;
   if (!details?.is_valid || String(details.app_id) !== options.appId || !Array.isArray(details.scopes) || !["whatsapp_business_management", "whatsapp_business_messaging"].every((scope2) => details.scopes?.includes(scope2))) {
@@ -1398,11 +1404,11 @@ async function exchangeSignup(db, restaurantId2, userId, body, fetcher, sameTab 
     token_ciphertext: seal(exchanged.access_token, options.key, restaurantId2 + ":" + signup.id)
   }).eq("id", signup.id).eq("restaurant_id", restaurantId2));
 }
-async function verifiedPhones(waba, token, appSecret, fetcher) {
+async function verifiedPhones(waba, token2, appSecret, fetcher) {
   const phones = await graph(waba + "/phone_numbers", {
     appSecret,
     fetcher,
-    token,
+    token: token2,
     query: new URLSearchParams({
       fields: "id,display_phone_number,status,is_on_biz_app,platform_type",
       limit: "100"
@@ -1417,19 +1423,19 @@ async function verifiedPhones(waba, token, appSecret, fetcher) {
     needsPin: row.is_on_biz_app !== true && row.status !== "CONNECTED"
   }));
 }
-async function signupToken(db, restaurantId2, userId, signupId, key) {
+async function signupToken(db, restaurantId2, userId, signupId, key2) {
   const signup = result(await db.from("whatsapp_signup").select("token_ciphertext").eq("id", signupId).eq("user_id", userId).eq("restaurant_id", restaurantId2).gt("expires_at", (/* @__PURE__ */ new Date()).toISOString()).maybeSingle());
   if (!signup?.token_ciphertext) throw new ApiError(409, "signup_expired");
-  return unseal(signup.token_ciphertext, key, restaurantId2 + ":" + signupId);
+  return unseal(signup.token_ciphertext, key2, restaurantId2 + ":" + signupId);
 }
 async function listSignupPhones(db, restaurantId2, userId, signupId, fetcher) {
   const options = config();
   if (!options) throw new ApiError(503, "meta_not_configured");
   if (!uuid(signupId)) throw new ApiError(400, "invalid_signup");
-  const token = await signupToken(db, restaurantId2, userId, signupId, options.key);
-  const { messagingAccounts } = await debugToken(token, options, fetcher);
+  const token2 = await signupToken(db, restaurantId2, userId, signupId, options.key);
+  const { messagingAccounts } = await debugToken(token2, options, fetcher);
   if (!messagingAccounts.length) throw new ApiError(422, "meta_no_phone");
-  const accounts = await Promise.all(messagingAccounts.slice(0, 10).map((waba) => verifiedPhones(waba, token, options.secret, fetcher)));
+  const accounts = await Promise.all(messagingAccounts.slice(0, 10).map((waba) => verifiedPhones(waba, token2, options.secret, fetcher)));
   const phones = accounts.flat();
   if (!phones.length) throw new ApiError(422, "meta_no_phone");
   return phones;
@@ -1438,8 +1444,8 @@ function hasApp(subscriptions, appId) {
   return Array.isArray(subscriptions?.data) && subscriptions.data.some((app2) => String(app2?.whatsapp_business_api_data?.id ?? app2?.id) === appId);
 }
 function manualWebhookToken(restaurantId2) {
-  const key = encryptionKey(process.env.WHATSAPP_CREDENTIAL_KEY);
-  return key ? createHmac2("sha256", key).update("whatsapp-webhook:" + restaurantId2).digest("hex") : null;
+  const key2 = encryptionKey(process.env.WHATSAPP_CREDENTIAL_KEY);
+  return key2 ? createHmac2("sha256", key2).update("whatsapp-webhook:" + restaurantId2).digest("hex") : null;
 }
 function manualSetup(restaurantId2) {
   const verifyToken = manualWebhookToken(restaurantId2);
@@ -1447,18 +1453,18 @@ function manualSetup(restaurantId2) {
   return verifyToken && origin.protocol === "https:" && !origin.username && !origin.password ? { callback: origin.origin + "/api/whatsapp/webhook/" + restaurantId2, verifyToken } : null;
 }
 async function connectManual(db, restaurantId2, body, fetcher) {
-  const key = encryptionKey(process.env.WHATSAPP_CREDENTIAL_KEY);
-  if (!key) throw new ApiError(503, "manual_not_configured");
-  const { appId, appSecret, waba, phone: phone2, token } = body ?? {};
-  if (!metaId(appId) || !metaId(waba) || !metaId(phone2) || typeof appSecret !== "string" || !/^[a-f0-9]{32}$/i.test(appSecret) || typeof token !== "string" || !/^[A-Za-z0-9_-]{20,4096}$/.test(token)) {
+  const key2 = encryptionKey(process.env.WHATSAPP_CREDENTIAL_KEY);
+  if (!key2) throw new ApiError(503, "manual_not_configured");
+  const { appId, appSecret, waba, phone: phone2, token: token2 } = body ?? {};
+  if (!metaId(appId) || !metaId(waba) || !metaId(phone2) || typeof appSecret !== "string" || !/^[a-f0-9]{32}$/i.test(appSecret) || typeof token2 !== "string" || !/^[A-Za-z0-9_-]{20,4096}$/.test(token2)) {
     throw new ApiError(400, "invalid_manual_credentials");
   }
   if (!result(await db.rpc("restaurant_subscription_active", { rid: restaurantId2 }))) throw new ApiError(403, "subscription_inactive");
-  const { dates } = await debugToken(token, { appId, secret: appSecret }, fetcher);
-  const asset = (await verifiedPhones(waba, token, appSecret, fetcher)).find((row) => row.phone === phone2);
+  const { dates } = await debugToken(token2, { appId, secret: appSecret }, fetcher);
+  const asset = (await verifiedPhones(waba, token2, appSecret, fetcher)).find((row) => row.phone === phone2);
   if (!asset) throw new ApiError(422, "meta_phone_mismatch");
   if (asset.needsPin) throw new ApiError(422, "meta_register_in_meta");
-  const request = { appSecret, fetcher, token };
+  const request = { appSecret, fetcher, token: token2 };
   const path = waba + "/subscribed_apps";
   if (!hasApp(await graph(path, request), appId)) {
     const subscribed = await graph(path, { ...request, method: "POST" });
@@ -1474,8 +1480,8 @@ async function connectManual(db, restaurantId2, body, fetcher) {
     p_display: asset.display,
     p_coexistence: asset.coexistence,
     p_app: appId,
-    p_secret: seal(appSecret, key, "app:" + scope2),
-    p_token: seal(token, key, scope2),
+    p_secret: seal(appSecret, key2, "app:" + scope2),
+    p_token: seal(token2, key2, scope2),
     p_expires: dates.token_expires_at,
     p_data_expires: dates.data_access_expires_at
   }));
@@ -1488,10 +1494,10 @@ async function completeSignup(db, restaurantId2, userId, body, fetcher) {
   if (!uuid(signupId) || !metaId(waba) || !metaId(phone2) || pin != null && !/^\d{6}$/.test(pin)) {
     throw new ApiError(400, "invalid_assets");
   }
-  const token = await signupToken(db, restaurantId2, userId, signupId, options.key);
-  const { dates: credentialDates } = await debugToken(token, options, fetcher);
-  const request = { appSecret: options.secret, fetcher, token };
-  const asset = (await verifiedPhones(waba, token, options.secret, fetcher)).find((row) => row.phone === phone2);
+  const token2 = await signupToken(db, restaurantId2, userId, signupId, options.key);
+  const { dates: credentialDates } = await debugToken(token2, options, fetcher);
+  const request = { appSecret: options.secret, fetcher, token: token2 };
+  const asset = (await verifiedPhones(waba, token2, options.secret, fetcher)).find((row) => row.phone === phone2);
   if (!asset) throw new ApiError(422, "meta_phone_mismatch");
   const { coexistence, needsPin } = asset;
   if (needsPin && !/^\d{6}$/.test(pin || "")) throw new ApiError(422, "meta_pin_required");
@@ -1519,7 +1525,7 @@ async function completeSignup(db, restaurantId2, userId, body, fetcher) {
     if (!hasApp(current, options.appId)) throw new ApiError(422, "meta_subscription_unverified");
     const stored = result(await db.from("whatsapp_accounts").update({
       ...credentialDates,
-      token_ciphertext: seal(token, options.key, restaurantId2 + ":" + phone2),
+      token_ciphertext: seal(token2, options.key, restaurantId2 + ":" + phone2),
       meta_app_id: null,
       app_secret_ciphertext: null,
       status: "connected",
@@ -1581,10 +1587,10 @@ async function checkConnection(db, restaurantId2, fetcher) {
     const appId = account.meta_app_id || process.env.WHATSAPP_META_APP_ID;
     if (!metaId(appId)) throw new ApiError(503, "meta_not_configured");
     const secret = accountAppSecret(account);
-    const token = accountToken(account);
-    const { dates } = await debugToken(token, { appId, secret }, fetcher);
-    if (account.meta_app_id && !(await verifiedPhones(account.waba_id, token, secret, fetcher)).some((phone2) => phone2.phone === account.phone_id && !phone2.needsPin)) throw new ApiError(422, "meta_phone_mismatch");
-    const current = await graph(account.waba_id + "/subscribed_apps", { token, appSecret: secret, fetcher });
+    const token2 = accountToken(account);
+    const { dates } = await debugToken(token2, { appId, secret }, fetcher);
+    if (account.meta_app_id && !(await verifiedPhones(account.waba_id, token2, secret, fetcher)).some((phone2) => phone2.phone === account.phone_id && !phone2.needsPin)) throw new ApiError(422, "meta_phone_mismatch");
+    const current = await graph(account.waba_id + "/subscribed_apps", { token: token2, appSecret: secret, fetcher });
     if (!hasApp(current, appId)) throw new ApiError(422, "meta_subscription_unverified");
     result(await update({ ...dates, verified_at: (/* @__PURE__ */ new Date()).toISOString(), last_error: null, subscribed: true }));
   } catch (error) {
@@ -1607,6 +1613,447 @@ async function checkConnection(db, restaurantId2, fetcher) {
 
 // whatsapp/routes.ts
 import { waitUntil } from "@vercel/functions";
+
+// whatsapp/platform.ts
+import { randomBytes as randomBytes4 } from "node:crypto";
+import { json, Router } from "express";
+
+// passcodes.ts
+import { createCipheriv as createCipheriv2, createDecipheriv as createDecipheriv2, createHash, createHmac as createHmac3, randomBytes as randomBytes3, randomInt } from "node:crypto";
+var isPasscode = (value) => typeof value === "string" && /^[0-9]{4}$/.test(value);
+var isWeakPasscode = (code) => /^([0-9])\1{3}$/.test(code) || ["0123", "1234", "2345", "3456", "4567", "5678", "6789", "9876", "8765", "7654", "6543", "5432", "4321", "3210", "1212", "2580"].includes(code);
+function passcodeKey(secret) {
+  if (!/^[a-f0-9]{64}$/i.test(secret)) throw new Error("passcode_secret_not_configured");
+  return createHash("sha256").update(Buffer.from(secret, "hex")).digest();
+}
+function passcodeDigest(code, key2) {
+  if (!isPasscode(code)) throw new Error("invalid_passcode");
+  return createHmac3("sha256", key2).update(`lookup:${code}`).digest("hex");
+}
+function encryptPasscode(code, key2) {
+  if (!isPasscode(code)) throw new Error("invalid_passcode");
+  const iv = randomBytes3(12);
+  const cipher = createCipheriv2("aes-256-gcm", key2, iv);
+  const encrypted = Buffer.concat([cipher.update(code, "utf8"), cipher.final()]);
+  return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString("base64url")).join(".");
+}
+function decryptPasscode(value, key2) {
+  const parts = value.split(".");
+  if (parts.length !== 3) throw new Error("invalid_passcode_record");
+  const decipher = createDecipheriv2("aes-256-gcm", key2, Buffer.from(parts[0], "base64url"));
+  decipher.setAuthTag(Buffer.from(parts[1], "base64url"));
+  const code = Buffer.concat([decipher.update(Buffer.from(parts[2], "base64url")), decipher.final()]).toString("utf8");
+  if (!isPasscode(code)) throw new Error("invalid_passcode_record");
+  return code;
+}
+function generatePasscode() {
+  let code;
+  do {
+    code = randomInt(0, 1e4).toString().padStart(4, "0");
+  } while (isWeakPasscode(code));
+  return code;
+}
+
+// src/lib/platform-whatsapp-templates.ts
+var invitationTemplate = {
+  ar: "\u0623\u0647\u0644\u0627\u064B \u0628\u0643 \u0641\u064A {{1}} \u0639\u0644\u0649 ORDOVA.\n\u0631\u0627\u0628\u0637 \u0627\u0644\u062F\u062E\u0648\u0644 \u0644\u062D\u0633\u0627\u0628\u0643: {{2}}\n\u0631\u0645\u0632 \u0627\u0644\u062F\u062E\u0648\u0644 \u0627\u0644\u062E\u0627\u0635 \u0628\u0643: {{3}}",
+  en: "Welcome to {{1}} on ORDOVA.\nYour account sign-in link: {{2}}\nYour sign-in passcode: {{3}}"
+};
+
+// whatsapp/platform.ts
+var senderKey = (app2) => "platform-key:" + app2;
+var callbackKey = (app2) => "platform-webhook:" + app2;
+var callbackPath = "/api/whatsapp/platform/webhook";
+var kinds = ["invite", "renewed", "expired"];
+var identifier = (value) => typeof value === "string" && /^[A-Za-z0-9_+=./:-]{1,256}$/.test(value);
+function platformPhone(value) {
+  if (typeof value !== "string" || value.length > 50) return null;
+  let digits = value.trim().replace(/[٠-٩۰-۹]/g, (char) => String(char.charCodeAt(0) >= 1776 ? char.charCodeAt(0) - 1776 : char.charCodeAt(0) - 1632)).replace(/[\s()-]/g, "").replace(/^(?:\+|00)/, "");
+  if (/^07\d{9}$/.test(digits)) digits = "964" + digits.slice(1);
+  return /^[1-9][0-9]{6,14}$/.test(digits) ? digits : null;
+}
+function key() {
+  const value = encryptionKey(process.env.WHATSAPP_CREDENTIAL_KEY);
+  if (!value) throw new ApiError(503, "credential_unavailable");
+  return value;
+}
+function token(sender) {
+  return unseal(sender.key_ciphertext, key(), senderKey(sender.app_id));
+}
+function readSender(db) {
+  return db.from("platform_whatsapp_sender").select("*").eq("id", true).maybeSingle().then((response) => result(response));
+}
+function callbackToken(sender) {
+  return unseal(sender.callback_ciphertext, key(), callbackKey(sender.app_id));
+}
+function callbackUrl(sender) {
+  const url = new URL(callbackPath, process.env.WHATSAPP_WEBHOOK_ORIGIN || STAFF_ORIGIN);
+  if (url.protocol !== "https:" || url.username || url.password) throw new ApiError(503, "invalid_callback_origin");
+  url.searchParams.set("token", callbackToken(sender));
+  return url.toString();
+}
+function asTemplate(value) {
+  const category = String(value?.category ?? "").toUpperCase();
+  if (!uuid(value?.id) || typeof value?.status !== "string" || value.status.toUpperCase() !== "APPROVED" || !["UTILITY", "MARKETING"].includes(category)) return null;
+  const raw2 = value.containerMeta ?? value.data;
+  let content = raw2;
+  if (typeof content === "string") {
+    try {
+      content = JSON.parse(content);
+    } catch {
+      content = void 0;
+    }
+  }
+  const components = Array.isArray(value.components) ? value.components : content?.components;
+  if (Array.isArray(components) && components.some((component) => !["BODY", "FOOTER"].includes(String(component?.type).toUpperCase()))) return null;
+  if (value.buttons?.length || content?.buttons?.length || content?.header || value.templateType != null && String(value.templateType).toUpperCase() !== "TEXT") return null;
+  const body = components?.find((component) => String(component.type).toUpperCase() === "BODY")?.text ?? value.content ?? content?.data ?? content?.body ?? value.body ?? (typeof value.data === "string" && !value.data.includes(" | ") ? value.data : null);
+  if (typeof body !== "string" || !body.trim() || body.length > 2048) return null;
+  const indices = [...new Set([...body.matchAll(/{{\s*(\d+)\s*}}/g)].map((match) => Number(match[1])))].sort((a, b) => a - b);
+  if (indices.some((index, i) => index !== i + 1) || /{{/.test(body.replace(/{{\s*\d+\s*}}/g, ""))) return null;
+  const name = value.elementName ?? value.name;
+  return { id: value.id.toLowerCase(), name: typeof name === "string" ? name.slice(0, 100) : value.id, body, count: indices.length, category };
+}
+async function verifiedTemplate(sender, id2, kind, fetcher) {
+  const data = await gupshupRequest("wa/app/" + sender.app_id + "/template/" + id2, token(sender), fetcher);
+  const row = data.template ?? data;
+  const template = asTemplate(row);
+  if (!template || template.id !== id2 || (kind === "manual" ? template.count > 1 : template.category !== "UTILITY" || template.count !== (kind === "invite" ? 3 : 2))) {
+    throw new ApiError(422, "template_not_approved_or_format");
+  }
+  if (kind === "invite" && !Object.values(invitationTemplate).some((body) => body === template.body.replace(/\r\n/g, "\n").trim())) {
+    throw new ApiError(422, "template_not_approved_or_format");
+  }
+  return template;
+}
+function preview(template, params) {
+  return template.body.replace(/{{\s*(\d+)\s*}}/g, (_match, index) => params[Number(index) - 1] ?? "");
+}
+async function ownerOf(db, rid) {
+  const owners = result(await db.from("restaurant_members").select("user_id").eq("restaurant_id", rid).eq("role", "owner").eq("active", true).limit(2));
+  return owners.length === 1 ? owners[0].user_id : null;
+}
+async function recipient(db, rid, uid) {
+  const [venue, membership, consent] = await Promise.all([
+    db.from("restaurants").select("restaurant_name,manager_phone").eq("id", rid).maybeSingle(),
+    db.from("restaurant_members").select("role").eq("restaurant_id", rid).eq("user_id", uid).eq("active", true).maybeSingle(),
+    db.from("platform_whatsapp_consents").select("phone").eq("restaurant_id", rid).eq("user_id", uid).maybeSingle()
+  ]);
+  const restaurant = result(venue), member = result(membership), permitted = result(consent);
+  if (!restaurant || !member || !permitted) return null;
+  const role = member.role;
+  const row = role === "owner" ? null : result(await db.from("staff").select("phone,role,status").eq("restaurant_id", rid).eq("auth_user_id", uid).maybeSingle());
+  if (role !== "owner" && (!row || row.role !== role || row.status !== "active")) return null;
+  const phone2 = platformPhone(role === "owner" ? restaurant.manager_phone : row?.phone);
+  return phone2 && phone2 === permitted.phone ? { phone: phone2, role, name: restaurant.restaurant_name } : null;
+}
+async function recordPlatformConsent(db, options) {
+  const { restaurantId: restaurantId2, userId, actorId, allowed } = options;
+  const phone2 = platformPhone(options.phone);
+  if (!allowed) {
+    result(await db.from("platform_whatsapp_consents").delete().eq("restaurant_id", restaurantId2).eq("user_id", userId));
+    return;
+  }
+  if (!phone2) throw new ApiError(400, "invalid_phone");
+  result(await db.from("platform_whatsapp_consents").upsert({
+    restaurant_id: restaurantId2,
+    user_id: userId,
+    phone: phone2,
+    granted_by: actorId,
+    granted_at: (/* @__PURE__ */ new Date()).toISOString()
+  }));
+}
+async function queuePlatformInvitation(db, options) {
+  try {
+    await recordPlatformConsent(db, { ...options, allowed: true });
+    result(await db.from("platform_whatsapp_outbox").upsert({
+      restaurant_id: options.restaurantId,
+      user_id: options.userId,
+      kind: "invite",
+      event_key: "invite:" + options.restaurantId + ":" + options.userId
+    }, { onConflict: "event_key", ignoreDuplicates: true }));
+    return "queued";
+  } catch {
+    console.warn(JSON.stringify({ subsystem: "platform_whatsapp", event: "invitation_queue_failed" }));
+    return "unavailable";
+  }
+}
+async function currentPin(db, restaurantId2, userId, role) {
+  const row = result(await db.from("staff_passcodes").select("code_ciphertext").eq("restaurant_id", restaurantId2).eq("user_id", userId).eq("role", role).maybeSingle());
+  if (!row) return null;
+  const pin = decryptPasscode(row.code_ciphertext, passcodeKey(process.env.PASSCODE_SECRET || ""));
+  return isPasscode(pin) ? pin : null;
+}
+async function runPlatformWhatsApp(db, fetcher) {
+  const [sender, jobs] = await Promise.all([
+    readSender(db),
+    db.rpc("platform_whatsapp_claim").then((response) => result(response))
+  ]);
+  const templates = /* @__PURE__ */ new Map();
+  await Promise.all(jobs.map(async (job) => {
+    let lastFour = null;
+    const finish2 = async (state, reason, postpone = 0) => {
+      result(await db.from("platform_whatsapp_outbox").update({
+        state,
+        reason,
+        phone_last_four: lastFour,
+        updated_at: (/* @__PURE__ */ new Date()).toISOString(),
+        ...postpone ? { run_at: new Date(Date.now() + postpone * 1e3).toISOString() } : {}
+      }).eq("id", job.id).eq("state", "sending"));
+    };
+    try {
+      if (!sender) return await finish2("skipped", "sender_not_connected");
+      const templateId = job.kind === "manual" ? job.template_id : sender.templates[job.kind];
+      if (!templateId) return await finish2("skipped", "template_not_configured");
+      const cacheKey = job.kind + ":" + templateId;
+      if (!templates.has(cacheKey)) templates.set(cacheKey, verifiedTemplate(sender, templateId, job.kind, fetcher));
+      const template = await templates.get(cacheKey);
+      const currentSender = await readSender(db);
+      if (!currentSender || currentSender.app_id !== sender.app_id || currentSender.key_ciphertext !== sender.key_ciphertext || job.kind !== "manual" && currentSender.templates[job.kind] !== templateId) {
+        return await finish2("skipped", "sender_changed");
+      }
+      const contact = await recipient(db, job.restaurant_id, job.user_id);
+      if (!contact || job.kind !== "invite" && contact.role !== "owner") return await finish2("skipped", "consent_missing");
+      lastFour = contact.phone.slice(-4);
+      const name = contact.name.replace(/\s+/g, " ").trim().slice(0, 160);
+      let params = template.count ? [name] : [];
+      if (job.kind === "invite") {
+        const pin = await currentPin(db, job.restaurant_id, job.user_id, contact.role);
+        if (!pin) return await finish2("skipped", "passcode_unavailable");
+        const portal = contact.role === "owner" || contact.role === "manager" ? "restaurant" : contact.role;
+        params = [name, staffPortalUrl(job.restaurant_id, portal), pin];
+      } else if (job.kind !== "manual") {
+        const date = job.period_end && result(await db.rpc("platform_whatsapp_period_date", {
+          p_restaurant: job.restaurant_id,
+          p_kind: job.kind,
+          p_period: job.period_end
+        }));
+        if (!date) return await finish2("skipped", "subscription_changed");
+        params = [name, new Intl.DateTimeFormat("ar-IQ", { dateStyle: "medium", timeZone: "Asia/Baghdad" }).format(new Date(date))];
+      }
+      result(await db.from("platform_whatsapp_outbox").update({ phone_last_four: lastFour }).eq("id", job.id).eq("state", "sending"));
+      const response = await gupshupRequest("wa/api/v1/template/msg", token(sender), fetcher, new URLSearchParams({
+        channel: "whatsapp",
+        source: sender.source,
+        destination: contact.phone,
+        "src.name": sender.app_name,
+        template: JSON.stringify({ id: template.id, params })
+      }));
+      if (!identifier(response.messageId)) throw new ProviderError("gupshup_missing_message_id", false, true);
+      result(await db.rpc("platform_whatsapp_submitted", { p_job: job.id, p_app: sender.app_id, p_provider: response.messageId }));
+    } catch (error) {
+      if (error instanceof ProviderError && error.uncertain) return await finish2("uncertain", error.code);
+      if (error instanceof ProviderError && error.retryable && job.attempts < 3) {
+        return await finish2("queued", error.code, Math.max(30, Math.min(error.retryAfter || 0, 300)));
+      }
+      if (error instanceof ProviderError || error instanceof ApiError) return await finish2("failed", error.code);
+      return await finish2("uncertain", "worker_error");
+    }
+  }));
+  return jobs.length;
+}
+function route(action) {
+  return (req, res) => {
+    res.set({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
+    void action(req, res).catch((error) => {
+      if (error instanceof ApiError || error instanceof ProviderError) {
+        const status = error instanceof ApiError ? error.status : error.retryable ? 503 : 422;
+        return res.status(status).json({ error: error.code });
+      }
+      console.warn(JSON.stringify({ subsystem: "platform_whatsapp", event: "request_failed" }));
+      return res.status(503).json({ error: "platform_whatsapp_unavailable" });
+    });
+  };
+}
+function platformWhatsAppRouter(db, fetcher) {
+  const router = Router();
+  router.use(json({ limit: "32kb" }));
+  router.post("/worker", route(async (req, res) => {
+    if (!db) throw new ApiError(503, "platform_whatsapp_unavailable");
+    const secret = process.env.WHATSAPP_WORKER_SECRET;
+    if (!secret || !equalSecret(req.headers.authorization, "Bearer " + secret)) throw new ApiError(401, "unauthorized");
+    return res.json({ processed: await runPlatformWhatsApp(db, fetcher) });
+  }));
+  router.get("/webhook", route(async (req, res) => {
+    const sender = db && await readSender(db);
+    if (!sender || !equalSecret(req.query.token, callbackToken(sender))) return res.sendStatus(401);
+    return res.status(200).end();
+  }));
+  router.post("/webhook", route(async (req, res) => {
+    if (!db) throw new ApiError(503, "platform_whatsapp_unavailable");
+    const sender = await readSender(db);
+    if (!sender || !equalSecret(req.query.token, callbackToken(sender))) return res.sendStatus(401);
+    const body = req.body;
+    if (!body?.type && !body?.app) return res.status(200).end();
+    if (body.app !== sender.app_name || body.appId && body.appId !== sender.app_id) return res.sendStatus(401);
+    const event = body.payload;
+    if (body.type === "message-event" && ["sent", "delivered", "read", "failed"].includes(event?.type)) {
+      const id2 = event.gsId || event.id;
+      if (identifier(id2)) result(await db.rpc("platform_whatsapp_delivery", { p_app: sender.app_id, p_provider: id2, p_state: event.type }));
+    }
+    if (body.type === "message" && event?.type === "text" && typeof event.payload?.text === "string" && /^(?:stop|unsubscribe|إيقاف|ايقاف|الغاء الاشتراك|إلغاء الاشتراك)$/i.test(event.payload.text.trim())) {
+      const source = platformPhone(event.source);
+      const senderPhone = platformPhone(event.sender?.phone);
+      const phone2 = source && senderPhone && source !== senderPhone ? null : senderPhone ?? source;
+      const timestamp = Number(body.timestamp);
+      if (phone2 && Number.isSafeInteger(timestamp) && timestamp >= 1e9) {
+        const sent = new Date(Math.min(Date.now(), timestamp < 1e12 ? timestamp * 1e3 : timestamp));
+        result(await db.from("platform_whatsapp_consents").delete().eq("phone", phone2).lte("granted_at", sent.toISOString()));
+      }
+    }
+    return res.status(200).end();
+  }));
+  function admin(action) {
+    return route(async (req, res) => {
+      if (!db) throw new ApiError(503, "platform_whatsapp_unavailable");
+      const bearer = req.headers.authorization?.match(/^Bearer (\S+)$/)?.[1];
+      if (!bearer) throw new ApiError(401, "unauthorized");
+      const identity = await db.auth.getUser(bearer);
+      const user = identity.data?.user;
+      if (!user || user.app_metadata?.system_role !== "admin") throw new ApiError(403, "admin_required");
+      return action(db, user.id, req, res);
+    });
+  }
+  const requiredSender = async (db2) => {
+    const sender = await readSender(db2);
+    if (!sender) throw new ApiError(409, "sender_not_connected");
+    return sender;
+  };
+  router.get("/", admin(async (db2, _user, _req, res) => {
+    const [sender, history] = await Promise.all([
+      readSender(db2),
+      db2.from("platform_whatsapp_outbox").select("id,restaurant_id,kind,state,reason,phone_last_four,created_at").order("created_at", { ascending: false }).limit(50)
+    ]);
+    const rows = result(history);
+    const ids = [...new Set(rows.map((row) => row.restaurant_id).filter(Boolean))];
+    const venues = ids.length ? result(await db2.from("restaurants").select("id,restaurant_name").in("id", ids)) : [];
+    const names = new Map(venues.map((row) => [row.id, row.restaurant_name]));
+    return res.json({ sender: sender ? {
+      appId: sender.app_id,
+      appName: sender.app_name,
+      source: sender.source,
+      templates: sender.templates,
+      callback: callbackUrl(sender),
+      verifiedAt: sender.connected_at
+    } : null, history: rows.map((row) => ({ ...row, restaurant_name: names.get(row.restaurant_id) })) });
+  }));
+  router.put("/connection", admin(async (db2, _user, req, res) => {
+    const { appId, appName, source, apiKey } = req.body ?? {};
+    const phone2 = platformPhone(source);
+    if (!uuid(appId) || typeof appName !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(appName) || !phone2 || typeof apiKey !== "string" || !/^[A-Za-z0-9_+=./-]{16,4096}$/.test(apiKey)) throw new ApiError(400, "invalid_gupshup_credentials");
+    const app2 = appId.toLowerCase();
+    const encryption = key();
+    await verifyGupshup(app2, apiKey, fetcher);
+    const existing = await readSender(db2);
+    const same = existing?.app_id === app2 && existing.source === phone2 && existing.app_name === appName;
+    const saved = await db2.from("platform_whatsapp_sender").upsert({
+      id: true,
+      app_id: app2,
+      app_name: appName,
+      source: phone2,
+      key_ciphertext: seal(apiKey, encryption, senderKey(app2)),
+      callback_ciphertext: same ? existing.callback_ciphertext : seal(randomBytes4(32).toString("base64url"), encryption, callbackKey(app2)),
+      templates: same ? existing.templates : {},
+      connected_at: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    if (saved.error?.message === "platform_sender_already_in_use") throw new ApiError(409, "platform_sender_already_in_use");
+    result(saved);
+    return res.json({ ok: true });
+  }));
+  router.delete("/connection", admin(async (db2, _user, _req, res) => {
+    result(await db2.from("platform_whatsapp_sender").delete().eq("id", true));
+    return res.json({ ok: true });
+  }));
+  router.post("/connection/test", admin(async (db2, _user, _req, res) => {
+    const sender = await requiredSender(db2);
+    await verifyGupshup(sender.app_id, token(sender), fetcher);
+    return res.json({ ok: true });
+  }));
+  router.get("/templates", admin(async (db2, _user, _req, res) => {
+    const sender = await requiredSender(db2);
+    const data = await gupshupRequest("wa/app/" + sender.app_id + "/template?templateStatus=APPROVED&templateType=TEXT&pageSize=100", token(sender), fetcher);
+    const rows = Array.isArray(data.templates) ? data.templates : Array.isArray(data.templates?.content) ? data.templates.content : [];
+    return res.json({ templates: rows.map(asTemplate).filter((row) => row && row.count <= 1) });
+  }));
+  router.put("/templates", admin(async (db2, _user, req, res) => {
+    const sender = await requiredSender(db2);
+    const templates = {};
+    await Promise.all(kinds.map(async (kind) => {
+      const value = req.body?.[kind];
+      if (value == null || value === "") return;
+      if (!uuid(value)) throw new ApiError(400, "invalid_template");
+      templates[kind] = (await verifiedTemplate(sender, value.toLowerCase(), kind, fetcher)).id;
+    }));
+    const updated = result(await db2.from("platform_whatsapp_sender").update({ templates }).eq("app_id", sender.app_id).eq("key_ciphertext", sender.key_ciphertext).select("id").maybeSingle());
+    if (!updated) throw new ApiError(409, "sender_changed");
+    return res.json({ ok: true });
+  }));
+  router.get("/receivers", admin(async (db2, _user, req, res) => {
+    const search = typeof req.query.search === "string" ? req.query.search.trim().slice(0, 80).replace(/[%_\\]/g, "") : "";
+    const offset = typeof req.query.offset === "string" && /^\d{1,5}$/.test(req.query.offset) ? Number(req.query.offset) : 0;
+    const restaurants = db2.from("restaurants").select("id,restaurant_name,manager_phone").order("restaurant_name").order("id").range(offset, offset + 49);
+    if (search) restaurants.ilike("restaurant_name", "%" + search + "%");
+    const rows = result(await restaurants);
+    const ids = rows.map((row) => row.id);
+    const owners = ids.length ? result(await db2.from("restaurant_members").select("restaurant_id,user_id").eq("active", true).eq("role", "owner").in("restaurant_id", ids)) : [];
+    const consents = ids.length ? result(await db2.from("platform_whatsapp_consents").select("restaurant_id,user_id,phone").in("restaurant_id", ids).in("user_id", owners.length ? owners.map((row) => row.user_id) : ["00000000-0000-0000-0000-000000000000"])) : [];
+    return res.json({ receivers: rows.map((row) => {
+      const phone2 = platformPhone(row.manager_phone);
+      const active = owners.filter((owner) => owner.restaurant_id === row.id);
+      const allowed = active.length === 1 && !!phone2 && consents.some((consent) => consent.restaurant_id === row.id && consent.user_id === active[0].user_id && consent.phone === phone2);
+      return { id: row.id, name: row.restaurant_name, lastFour: phone2?.slice(-4) ?? null, allowed, eligible: !!phone2 && active.length === 1 };
+    }), next: rows.length === 50 ? offset + 50 : null });
+  }));
+  router.put("/receivers/:restaurantId", admin(async (db2, userId, req, res) => {
+    const rid = req.params.restaurantId;
+    const allowed = req.body?.allowed;
+    if (!uuid(rid) || typeof allowed !== "boolean") throw new ApiError(400, "invalid_receiver");
+    const [owner, venue] = await Promise.all([
+      ownerOf(db2, rid),
+      db2.from("restaurants").select("manager_phone").eq("id", rid).maybeSingle()
+    ]);
+    if (!owner || !venue.data) throw new ApiError(404, "restaurant_owner_not_found");
+    await recordPlatformConsent(db2, { restaurantId: rid, userId: owner, actorId: userId, allowed, phone: venue.data.manager_phone });
+    return res.json({ ok: true });
+  }));
+  router.post("/manual", admin(async (db2, _user, req, res) => {
+    const { templateId, restaurants, requestId } = req.body ?? {};
+    if (!uuid(templateId) || !Array.isArray(restaurants) || restaurants.length < 1 || restaurants.length > 100 || !restaurants.every(uuid) || requestId != null && !uuid(requestId)) throw new ApiError(400, "invalid_message");
+    const sender = await requiredSender(db2);
+    const template = await verifiedTemplate(sender, templateId.toLowerCase(), "manual", fetcher);
+    const ids = [...new Set(restaurants.map((id2) => id2.toLowerCase()))];
+    const [owners, venues, permissions] = await Promise.all([
+      db2.from("restaurant_members").select("restaurant_id,user_id").eq("role", "owner").eq("active", true).in("restaurant_id", ids),
+      db2.from("restaurants").select("id,restaurant_name,manager_phone").in("id", ids),
+      db2.from("platform_whatsapp_consents").select("restaurant_id,user_id,phone").in("restaurant_id", ids)
+    ]);
+    const members = result(owners), grants = result(permissions);
+    const recipients = result(venues).flatMap((venue) => {
+      const people = members.filter((owner) => owner.restaurant_id === venue.id);
+      if (people.length !== 1 || !grants.some((grant) => grant.restaurant_id === venue.id && grant.user_id === people[0].user_id && grant.phone === platformPhone(venue.manager_phone))) return [];
+      return [{ id: venue.id, uid: people[0].user_id, name: venue.restaurant_name }];
+    });
+    if (!recipients.length) throw new ApiError(409, "consent_missing");
+    if (!requestId) return res.json({
+      count: recipients.length,
+      excluded: ids.length - recipients.length,
+      sample: preview(template, [recipients[0].name]),
+      template: template.name,
+      recipients: recipients.map((contact) => contact.id)
+    });
+    const queued = result(await db2.from("platform_whatsapp_outbox").upsert(recipients.map((contact) => ({
+      restaurant_id: contact.id,
+      user_id: contact.uid,
+      kind: "manual",
+      template_id: template.id,
+      event_key: "manual:" + requestId.toLowerCase() + ":" + contact.id
+    })), { onConflict: "event_key", ignoreDuplicates: true }).select("id"));
+    return res.json({ queued: queued.length, count: recipients.length });
+  }));
+  return router;
+}
+
+// whatsapp/routes.ts
 function wakeWhatsAppWorker(db, fetcher) {
   if (process.env.VERCEL !== "1") return;
   waitUntil(new Promise((resolve) => setTimeout(resolve, 450)).then(() => runWorker(db, fetcher)).catch(() => console.warn(JSON.stringify({ subsystem: "whatsapp", event: "wake_failed" }))));
@@ -1620,6 +2067,20 @@ function requireEmbeddedSignup() {
 }
 async function isOwner(db, restaurantId2, userId) {
   return !!result(await db.from("restaurant_members").select("role").eq("restaurant_id", restaurantId2).eq("user_id", userId).eq("role", "owner").eq("active", true).maybeSingle());
+}
+var ownerSettingsFields = "enabled,ordering_enabled,handoff_enabled,welcome,language,tone,opens_at,closes_at,timezone,delivery_enabled,delivery_zones";
+function ownerSettings(settings) {
+  const { ai_policy, daily_ai_limit, ...operational } = settings;
+  return operational;
+}
+function operationalError(code) {
+  if (!code) return "whatsapp_unavailable";
+  if (/budget|quota|billing|rate_limit|insufficient|subscription/i.test(code)) return "assistant_unavailable";
+  return code;
+}
+function parseOwnerSettings(body) {
+  if (!body || typeof body !== "object") throw new ApiError(400, "invalid_settings");
+  return ownerSettings(parseSettings({ ...body, ai_policy: void 0, daily_ai_limit: defaultSettings.daily_ai_limit }));
 }
 function parseSettings(body) {
   if (!body || typeof body !== "object") throw new ApiError(400, "invalid_settings");
@@ -1683,7 +2144,8 @@ function safeRoute(action) {
 }
 var retryCode = (text) => /^(?:[1-9]\d{0,14})$/.test(text);
 function whatsappRouter(db, fetcher = fetch) {
-  const router = Router();
+  const router = Router2();
+  router.use("/platform", platformWhatsAppRouter(db, fetcher));
   router.post("/gupshup/webhook", raw({ type: "application/json", inflate: false, limit: "256kb" }), safeRoute(async (req, res) => {
     res.set({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
     if (!db) return res.sendStatus(503);
@@ -1713,8 +2175,8 @@ function whatsappRouter(db, fetcher = fetch) {
         if (typeof v !== "object") return typeof v;
         if (Array.isArray(v)) return "array";
         if (depth >= 3) return "object";
-        return Object.fromEntries(Object.entries(v).slice(0, 20).map(([key, item]) => [
-          /^[a-zA-Z_]{1,32}$/.test(key) ? key : "other_field",
+        return Object.fromEntries(Object.entries(v).slice(0, 20).map(([key2, item]) => [
+          /^[a-zA-Z_]{1,32}$/.test(key2) ? key2 : "other_field",
           shape(item, depth + 1)
         ]));
       };
@@ -1750,9 +2212,9 @@ function whatsappRouter(db, fetcher = fetch) {
   }));
   router.get(["/webhook", "/webhook/:restaurantId"], (req, res) => {
     const rid = req.params.restaurantId;
-    const token = rid ? uuid(rid) ? manualWebhookToken(rid.toLowerCase()) : null : process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+    const token2 = rid ? uuid(rid) ? manualWebhookToken(rid.toLowerCase()) : null : process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
     const challenge = req.query["hub.challenge"];
-    if (req.query["hub.mode"] !== "subscribe" || !token || !equalSecret(req.query["hub.verify_token"], token) || typeof challenge !== "string" || !/^\d{1,128}$/.test(challenge)) {
+    if (req.query["hub.mode"] !== "subscribe" || !token2 || !equalSecret(req.query["hub.verify_token"], token2) || typeof challenge !== "string" || !/^\d{1,128}$/.test(challenge)) {
       res.sendStatus(403);
       return;
     }
@@ -1803,14 +2265,21 @@ function whatsappRouter(db, fetcher = fetch) {
     if (process.env.WHATSAPP_EMBEDDED_SIGNUP_ENABLED !== "true") return res.sendStatus(404);
     const state = req.query.state;
     const cookie = req.headers.cookie?.split(";").map((value) => value.trim()).find((value) => value.startsWith(signupCookie + "="))?.slice(signupCookie.length + 1);
-    const back = (status) => res.redirect(303, "/?" + new URLSearchParams({ whatsappSignup: status }).toString());
+    let restaurantId2 = "";
+    const back = (status) => res.redirect(303, "/?" + new URLSearchParams({
+      whatsappSignup: status,
+      ...restaurantId2 ? { whatsappRestaurant: restaurantId2 } : {}
+    }).toString());
     if (!uuid(state) || !cookie || !equalSecret(state, cookie)) return back("signup_expired");
     res.clearCookie(signupCookie, signupCookieOptions);
-    if (req.query.error === "access_denied") return back("cancelled");
     try {
       if (!db) throw new ApiError(503, "whatsapp_unavailable");
       const session = result(await db.from("whatsapp_signup").select("restaurant_id,user_id").eq("id", state).gt("expires_at", (/* @__PURE__ */ new Date()).toISOString()).is("used_at", null).maybeSingle());
-      if (!session || !await isOwner(db, session.restaurant_id, session.user_id)) return back("signup_expired");
+      if (!session) return back("signup_expired");
+      const identity = await db.auth.admin.getUserById(session.user_id);
+      if (identity.error || identity.data.user?.app_metadata?.system_role !== "admin") return back("signup_expired");
+      restaurantId2 = session.restaurant_id;
+      if (req.query.error === "access_denied") return back("cancelled");
       if (!result(await db.rpc("restaurant_subscription_active", { rid: session.restaurant_id }))) return back("subscription_inactive");
       await exchangeSignup(db, session.restaurant_id, session.user_id, { signupId: state, code: req.query.code }, fetcher, true);
       return back(state);
@@ -1820,8 +2289,8 @@ function whatsappRouter(db, fetcher = fetch) {
       return back(code === "signup_expired" ? code : "meta_return_failed");
     }
   });
-  router.use(json({ limit: "16kb" }));
-  function owner(action, allowAdmin = false) {
+  router.use(json2({ limit: "16kb" }));
+  function authorized(action, adminOnly = false) {
     return safeRoute(async (req, res) => {
       res.setHeader("Cache-Control", "no-store");
       if (!db) throw new ApiError(503, "whatsapp_unavailable");
@@ -1831,61 +2300,79 @@ function whatsappRouter(db, fetcher = fetch) {
       if (!match) throw new ApiError(401, "unauthorized");
       const { data, error } = await db.auth.getUser(match[1]);
       if (error || !data.user) throw new ApiError(401, "unauthorized");
-      if (!(allowAdmin && data.user.app_metadata?.system_role === "admin") && !await isOwner(db, rid, data.user.id)) {
-        throw new ApiError(403, "owner_required");
+      const allowed = adminOnly ? data.user.app_metadata?.system_role === "admin" : await isOwner(db, rid, data.user.id);
+      if (!allowed) {
+        throw new ApiError(403, adminOnly ? "admin_required" : "owner_required");
       }
       return action(db, rid.toLowerCase(), data.user.id, req, res);
     });
   }
+  const owner = (action) => authorized(action);
+  const admin = (action) => authorized(action, true);
   const root = "/restaurants/:restaurantId";
   const gupshupConnection = async (db2, rid) => gupshupSetup(result(await db2.from("whatsapp_accounts").select("restaurant_id,phone_id,waba_id,status,provider,gupshup_app_id,webhook_secret_ciphertext").eq("restaurant_id", rid).eq("provider", "gupshup").eq("status", "connected").maybeSingle()));
-  router.get(root + "/connection", owner(async (db2, rid, _user, _req, res) => {
-    const accounts = result(await db2.from("whatsapp_accounts").select(publicAccount).eq("restaurant_id", rid).order("operation_at", { ascending: false }).limit(6));
+  router.get(root + "/connection", admin(async (db2, rid, _user, _req, res) => {
+    const [accounts, settings, usage] = await Promise.all([
+      db2.from("whatsapp_accounts").select(publicAccount).eq("restaurant_id", rid).order("operation_at", { ascending: false }).limit(6),
+      db2.from("whatsapp_settings").select("daily_ai_limit,ai_policy").eq("restaurant_id", rid).maybeSingle(),
+      db2.rpc("whatsapp_usage_summary", { p_restaurant: rid })
+    ]);
+    const rows = result(accounts);
+    const account = rows.find((account2) => account2.status !== "disconnected") || rows[0] || null;
+    const configured = process.env.WHATSAPP_EMBEDDED_SIGNUP_ENABLED === "true" ? config() : null;
+    const metrics = result(usage);
+    const rate = Number(process.env.WHATSAPP_GUPSHUP_TEXT_USD_PER_MESSAGE || "0.001");
     return res.json({
-      account: accounts.find((account) => account.status !== "disconnected") || accounts[0] || null,
+      account,
       manual: manualSetup(rid),
-      gupshup: await gupshupConnection(db2, rid)
+      gupshup: await gupshupConnection(db2, rid),
+      setup: configured ? { appId: configured.appId, configId: configured.configId, version: configured.version } : null,
+      limits: result(settings) || { daily_ai_limit: defaultSettings.daily_ai_limit },
+      usage: { ...metrics, estimated_provider_usd: account?.provider === "gupshup" && Number.isFinite(rate) && rate >= 0 ? (metrics.inbound_messages + metrics.outbound_messages) * rate : null }
     });
-  }, true));
-  router.post(root + "/connection", owner(async (db2, rid, _user, req, res) => {
+  }));
+  router.put(root + "/limits", admin(async (db2, rid, _user, req, res) => {
+    const { daily_ai_limit, ai_policy } = req.body ?? {};
+    if (!Number.isInteger(daily_ai_limit) || daily_ai_limit < 1 || daily_ai_limit > 500) throw new ApiError(400, "invalid_settings");
+    let policy;
+    try {
+      policy = parsePolicy(ai_policy);
+    } catch {
+      throw new ApiError(400, "invalid_policy");
+    }
+    result(await db2.from("whatsapp_settings").upsert({ restaurant_id: rid, daily_ai_limit, ai_policy: policy }));
+    return res.json({ ok: true });
+  }));
+  router.post(root + "/connection", admin(async (db2, rid, _user, req, res) => {
     if (req.body?.provider === "gupshup") await connectGupshup(db2, rid, req.body, fetcher);
     else if (req.body?.provider == null || req.body.provider === "meta") await connectManual(db2, rid, req.body, fetcher);
     else throw new ApiError(400, "invalid_provider");
     return res.json({ ok: true });
-  }, true));
+  }));
   router.get(root, owner(async (db2, rid, _user, _req, res) => {
-    const [accounts, settings, chats, orders, failures, usage] = await Promise.all([
-      db2.from("whatsapp_accounts").select(publicAccount).eq("restaurant_id", rid).order("operation_at", { ascending: false }).limit(6),
-      db2.from("whatsapp_settings").select("*").eq("restaurant_id", rid).maybeSingle(),
+    const [accounts, settings, chats, orders, failures] = await Promise.all([
+      db2.from("whatsapp_accounts").select("status,subscribed").eq("restaurant_id", rid).eq("status", "connected").limit(1),
+      db2.from("whatsapp_settings").select(ownerSettingsFields).eq("restaurant_id", rid).maybeSingle(),
       db2.from("whatsapp_conversations").select(conversationFields).eq("restaurant_id", rid).order("handoff", { ascending: false }).order("last_inbound_at", { ascending: false }).limit(30),
       db2.from("whatsapp_orders").select("order_id,created_at,orders(order_number,status,total_amount)").eq("restaurant_id", rid).order("created_at", { ascending: false }).limit(30),
-      db2.from("whatsapp_jobs").select("id,seq,conversation_id,direction,kind,state,error_code,provider_id,created_at,payload").eq("restaurant_id", rid).in("state", ["failed", "uncertain", "blocked"]).order("seq", { ascending: false }).limit(25),
-      db2.rpc("whatsapp_usage_summary", { p_restaurant: rid })
+      db2.from("whatsapp_jobs").select("id,seq,conversation_id,direction,kind,state,error_code,provider_id,created_at,payload").eq("restaurant_id", rid).in("state", ["failed", "uncertain", "blocked"]).order("seq", { ascending: false }).limit(25)
     ]);
-    const configured = process.env.WHATSAPP_EMBEDDED_SIGNUP_ENABLED === "true" ? config() : null;
-    const accountsList = result(accounts);
-    const usageData = result(usage);
-    const activeAccount = accountsList.find((account) => account.status !== "disconnected") || accountsList[0] || null;
-    const rate = Number(process.env.WHATSAPP_GUPSHUP_TEXT_USD_PER_MESSAGE || "0.001");
     return res.json({
-      account: accountsList.find((account) => account.status !== "disconnected") || accountsList[0] || null,
-      settings: result(settings) || defaultSettings,
+      connected: result(accounts).some((account) => account.subscribed),
+      settings: result(settings) || ownerSettings(defaultSettings),
       conversations: result(chats),
       orders: result(orders),
       failures: result(failures).map(({ provider_id, payload, ...job }) => ({
         ...job,
+        error_code: operationalError(job.error_code),
         order_number: job.kind === "order_status" ? payload?.order_number : void 0,
         retryable: retryAllowed({ ...job, provider_id })
       })),
-      usage: { ...usageData, estimated_provider_usd: activeAccount?.provider === "gupshup" && Number.isFinite(rate) && rate >= 0 ? (usageData.inbound_messages + usageData.outbound_messages) * rate : null },
-      setup: configured ? { appId: configured.appId, configId: configured.configId, version: configured.version } : null,
-      manual: manualSetup(rid),
-      gupshup: await gupshupConnection(db2, rid),
       aiConfigured: !!aiCredentials().key
     });
   }));
   router.put(root + "/settings", owner(async (db2, rid, _user, req, res) => {
-    const settings = parseSettings(req.body);
+    const settings = parseOwnerSettings(req.body);
     if (settings.delivery_enabled && settings.delivery_zones === void 0) {
       const current = result(await db2.from("whatsapp_settings").select("delivery_zones").eq("restaurant_id", rid).maybeSingle());
       if (!current?.delivery_zones?.length) throw new ApiError(400, "delivery_zones_required");
@@ -1896,7 +2383,7 @@ function whatsappRouter(db, fetcher = fetch) {
     result(await db2.from("whatsapp_settings").upsert({ restaurant_id: rid, ...settings }));
     return res.json({ settings });
   }));
-  router.post(root + "/signup", owner(async (db2, rid, userId, req, res) => {
+  router.post(root + "/signup", admin(async (db2, rid, userId, req, res) => {
     requireEmbeddedSignup();
     const options = config();
     if (!options) throw new ApiError(503, "meta_not_configured");
@@ -1909,25 +2396,25 @@ function whatsappRouter(db, fetcher = fetch) {
     }
     return res.json({ id: id2 });
   }));
-  router.post(root + "/signup/exchange", owner(async (db2, rid, userId, req, res) => {
+  router.post(root + "/signup/exchange", admin(async (db2, rid, userId, req, res) => {
     requireEmbeddedSignup();
     await exchangeSignup(db2, rid, userId, req.body, fetcher);
     return res.json({ ok: true });
   }));
-  router.post(root + "/signup/complete", owner(async (db2, rid, userId, req, res) => {
+  router.post(root + "/signup/complete", admin(async (db2, rid, userId, req, res) => {
     requireEmbeddedSignup();
     await completeSignup(db2, rid, userId, req.body, fetcher);
     return res.json({ ok: true });
   }));
-  router.get(root + "/signup/:id/phones", owner(async (db2, rid, userId, req, res) => {
+  router.get(root + "/signup/:id/phones", admin(async (db2, rid, userId, req, res) => {
     requireEmbeddedSignup();
     return res.json({ phones: await listSignupPhones(db2, rid, userId, req.params.id, fetcher) });
   }));
-  router.post(root + "/disconnect", owner(async (db2, rid, _user, _req, res) => res.json({ warning: await disconnect(db2, rid, fetcher) }), true));
-  router.post(root + "/health", owner(async (db2, rid, _user, _req, res) => {
+  router.post(root + "/disconnect", admin(async (db2, rid, _user, _req, res) => res.json({ warning: await disconnect(db2, rid, fetcher) })));
+  router.post(root + "/health", admin(async (db2, rid, _user, _req, res) => {
     await checkConnection(db2, rid, fetcher);
     return res.json({ ok: true });
-  }, true));
+  }));
   router.get(root + "/conversations/:id", owner(async (db2, rid, _user, req, res) => {
     const id2 = req.params.id;
     if (!uuid(id2)) throw new ApiError(400, "invalid_conversation");
@@ -1937,15 +2424,10 @@ function whatsappRouter(db, fetcher = fetch) {
     if (before !== void 0 && (typeof before !== "string" || !retryCode(before))) throw new ApiError(400, "invalid_cursor");
     const messages = db2.from("whatsapp_jobs").select("seq,id,direction,kind,payload,state,error_code,created_at,occurred_at").eq("restaurant_id", rid).eq("conversation_id", id2).order("seq", { ascending: false }).limit(40);
     if (before) messages.lt("seq", before);
-    const [history, usage] = await Promise.all([
-      messages,
-      db2.rpc("whatsapp_conversation_usage", { p_restaurant: rid, p_conversation: id2 })
-    ]);
-    const rows = result(history);
+    const rows = result(await messages);
     return res.json({
       conversation,
-      messages: rows,
-      usage: result(usage),
+      messages: rows.map((row) => ({ ...row, error_code: operationalError(row.error_code) })),
       windowOpen: serviceWindowOpen(conversation.last_inbound_at),
       before: rows.length === 40 ? String(rows.at(-1)?.seq) : null
     });
@@ -1984,26 +2466,26 @@ function whatsappRouter(db, fetcher = fetch) {
 }
 
 // loyalty/routes.ts
-import { createHash, randomBytes as randomBytes3 } from "node:crypto";
-import { Router as Router2 } from "express";
+import { createHash as createHash2, randomBytes as randomBytes5 } from "node:crypto";
+import { Router as Router3 } from "express";
 var restaurantId = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 var cardToken = /^[A-Za-z0-9_-]{43}$/;
 var cardLifetime = 180 * 24 * 60 * 60 * 1e3;
 var secureRequest = (req) => process.env.VERCEL === "1" || req.secure || req.get("X-Forwarded-Proto") === "https";
 var cookieName = (req, id2) => `${secureRequest(req) ? "__Host-" : ""}ordova_loyalty_${id2.toLowerCase()}`;
-var hashToken = (token) => createHash("sha256").update(token).digest("hex");
+var hashToken = (token2) => createHash2("sha256").update(token2).digest("hex");
 function readCardToken(req, id2) {
   if (!restaurantId.test(id2)) return null;
   const prefix = cookieName(req, id2) + "=";
-  const token = req.headers.cookie?.split(";").map((part) => part.trim()).find((part) => part.startsWith(prefix))?.slice(prefix.length);
-  return token && cardToken.test(token) ? token : null;
+  const token2 = req.headers.cookie?.split(";").map((part) => part.trim()).find((part) => part.startsWith(prefix))?.slice(prefix.length);
+  return token2 && cardToken.test(token2) ? token2 : null;
 }
 function loyaltyCardHash(req, id2) {
-  const token = readCardToken(req, id2);
-  return token ? hashToken(token) : null;
+  const token2 = readCardToken(req, id2);
+  return token2 ? hashToken(token2) : null;
 }
 function loyaltyRouter(db, rateLimit2) {
-  const router = Router2();
+  const router = Router3();
   router.use((_req, res, next) => {
     res.set("Cache-Control", "private, no-store");
     next();
@@ -2038,10 +2520,10 @@ function loyaltyRouter(db, rateLimit2) {
       if (error2 || !data2?.enabled) return res.status(503).json({ error: "loyalty_unavailable" });
       if (data2.joined) return res.json(data2);
     }
-    const token = action === "join" ? randomBytes3(32).toString("base64url") : current;
+    const token2 = action === "join" ? randomBytes5(32).toString("base64url") : current;
     const { data, error } = await db.rpc("loyalty_guest", {
       p_restaurant: id2,
-      p_token_hash: hashToken(token),
+      p_token_hash: hashToken(token2),
       p_action: action
     });
     if (error) {
@@ -2049,7 +2531,7 @@ function loyaltyRouter(db, rateLimit2) {
       return res.status(code === "loyalty_unavailable" ? 503 : 409).json({ error: code });
     }
     if (action === "join") {
-      res.cookie(cookieName(req, id2), token, {
+      res.cookie(cookieName(req, id2), token2, {
         httpOnly: true,
         sameSite: "strict",
         secure: secureRequest(req),
@@ -2066,7 +2548,7 @@ function loyaltyRouter(db, rateLimit2) {
 import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 import ws from "ws";
-import { createHmac as createHmac5, randomBytes as randomBytes5, randomUUID as randomUUID3 } from "node:crypto";
+import { createHmac as createHmac5, randomBytes as randomBytes6, randomUUID as randomUUID3 } from "node:crypto";
 import { isIP } from "node:net";
 
 // src/lib/ai-models.ts
@@ -2086,42 +2568,6 @@ function openAIResponseText(response) {
   if (!response || typeof response !== "object") return "";
   const data = response;
   return (data.output || []).filter((item) => item.type === "message").flatMap((item) => item.content || []).filter((content) => content.type === "output_text" && typeof content.text === "string").map((content) => content.text.trim()).filter(Boolean).join("\n");
-}
-
-// passcodes.ts
-import { createCipheriv as createCipheriv2, createDecipheriv as createDecipheriv2, createHash as createHash2, createHmac as createHmac3, randomBytes as randomBytes4, randomInt } from "node:crypto";
-var isPasscode = (value) => typeof value === "string" && /^[0-9]{4}$/.test(value);
-var isWeakPasscode = (code) => /^([0-9])\1{3}$/.test(code) || ["0123", "1234", "2345", "3456", "4567", "5678", "6789", "9876", "8765", "7654", "6543", "5432", "4321", "3210", "1212", "2580"].includes(code);
-function passcodeKey(secret) {
-  if (!/^[a-f0-9]{64}$/i.test(secret)) throw new Error("passcode_secret_not_configured");
-  return createHash2("sha256").update(Buffer.from(secret, "hex")).digest();
-}
-function passcodeDigest(code, key) {
-  if (!isPasscode(code)) throw new Error("invalid_passcode");
-  return createHmac3("sha256", key).update(`lookup:${code}`).digest("hex");
-}
-function encryptPasscode(code, key) {
-  if (!isPasscode(code)) throw new Error("invalid_passcode");
-  const iv = randomBytes4(12);
-  const cipher = createCipheriv2("aes-256-gcm", key, iv);
-  const encrypted = Buffer.concat([cipher.update(code, "utf8"), cipher.final()]);
-  return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString("base64url")).join(".");
-}
-function decryptPasscode(value, key) {
-  const parts = value.split(".");
-  if (parts.length !== 3) throw new Error("invalid_passcode_record");
-  const decipher = createDecipheriv2("aes-256-gcm", key, Buffer.from(parts[0], "base64url"));
-  decipher.setAuthTag(Buffer.from(parts[1], "base64url"));
-  const code = Buffer.concat([decipher.update(Buffer.from(parts[2], "base64url")), decipher.final()]).toString("utf8");
-  if (!isPasscode(code)) throw new Error("invalid_passcode_record");
-  return code;
-}
-function generatePasscode() {
-  let code;
-  do {
-    code = randomInt(0, 1e4).toString().padStart(4, "0");
-  } while (isWeakPasscode(code));
-  return code;
 }
 
 // wayl.ts
@@ -2211,7 +2657,7 @@ function summarizeWaylPayments(paid, pendingCount, now = /* @__PURE__ */ new Dat
     const date = new Date(Date.UTC(year, month - 6 + index, 1));
     return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
   });
-  const totals = Object.fromEntries(months.map((key) => [key, 0]));
+  const totals = Object.fromEntries(months.map((key2) => [key2, 0]));
   let paidTotal = 0;
   let paidCount = 0;
   let lastPaidAt = null;
@@ -2220,8 +2666,8 @@ function summarizeWaylPayments(paid, pendingCount, now = /* @__PURE__ */ new Dat
     if (!Number.isSafeInteger(amount2) || amount2 <= 0 || !Number.isFinite(Date.parse(payment.paid_at))) continue;
     paidCount += 1;
     paidTotal += amount2;
-    const key = baghdadMonth(payment.paid_at);
-    if (key in totals) totals[key] += amount2;
+    const key2 = baghdadMonth(payment.paid_at);
+    if (key2 in totals) totals[key2] += amount2;
     if (!lastPaidAt || payment.paid_at > lastPaidAt) lastPaidAt = payment.paid_at;
   }
   return {
@@ -2252,7 +2698,7 @@ function getPasscodeKey() {
 }
 async function setMemberPasscode(userId, restaurantId2, role, requested) {
   if (!supabaseAdmin) throw new Error("service_role_not_configured");
-  const key = getPasscodeKey();
+  const key2 = getPasscodeKey();
   if (requested !== void 0 && !isPasscode(requested)) throw new Error("invalid_passcode");
   if (requested && isWeakPasscode(requested)) throw new Error("weak_passcode");
   for (let attempt = 0; attempt < (requested ? 1 : 100); attempt++) {
@@ -2261,8 +2707,8 @@ async function setMemberPasscode(userId, restaurantId2, role, requested) {
       user_id: userId,
       restaurant_id: restaurantId2,
       role,
-      code_digest: passcodeDigest(code, key),
-      code_ciphertext: encryptPasscode(code, key),
+      code_digest: passcodeDigest(code, key2),
+      code_ciphertext: encryptPasscode(code, key2),
       updated_at: (/* @__PURE__ */ new Date()).toISOString()
     }, { onConflict: "restaurant_id,user_id" });
     if (error?.code === "23505") {
@@ -2270,7 +2716,7 @@ async function setMemberPasscode(userId, restaurantId2, role, requested) {
       continue;
     }
     if (error) throw new Error(`passcode_save_failed:${error.message}`);
-    const rotated = await supabaseAdmin.auth.admin.updateUserById(userId, { password: randomBytes5(48).toString("base64url") });
+    const rotated = await supabaseAdmin.auth.admin.updateUserById(userId, { password: randomBytes6(48).toString("base64url") });
     if (rotated.error) throw new Error("passcode_account_update_failed");
     return code;
   }
@@ -2282,36 +2728,36 @@ async function getOrCreateMemberPasscode(userId, restaurantId2, role) {
   if (error) throw new Error(`passcode_read_failed:${error.message}`);
   if (data?.role === role) return decryptPasscode(data.code_ciphertext, getPasscodeKey());
   if (data) return setMemberPasscode(userId, restaurantId2, role);
-  const key = getPasscodeKey();
+  const key2 = getPasscodeKey();
   for (let attempt = 0; attempt < 100; attempt++) {
     const code = generatePasscode();
     const inserted = await supabaseAdmin.from("staff_passcodes").insert({
       user_id: userId,
       restaurant_id: restaurantId2,
       role,
-      code_digest: passcodeDigest(code, key),
-      code_ciphertext: encryptPasscode(code, key)
+      code_digest: passcodeDigest(code, key2),
+      code_ciphertext: encryptPasscode(code, key2)
     });
     if (inserted.error?.code === "23505") {
       const winner = await supabaseAdmin.from("staff_passcodes").select("code_ciphertext").eq("user_id", userId).eq("restaurant_id", restaurantId2).maybeSingle();
-      if (winner.data) return decryptPasscode(winner.data.code_ciphertext, key);
+      if (winner.data) return decryptPasscode(winner.data.code_ciphertext, key2);
       continue;
     }
     if (inserted.error) throw new Error(`passcode_save_failed:${inserted.error.message}`);
-    const rotated = await supabaseAdmin.auth.admin.updateUserById(userId, { password: randomBytes5(48).toString("base64url") });
+    const rotated = await supabaseAdmin.auth.admin.updateUserById(userId, { password: randomBytes6(48).toString("base64url") });
     if (rotated.error) throw new Error("passcode_account_update_failed");
     return code;
   }
   throw new Error("passcode_space_exhausted");
 }
 function getGeminiClient() {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) return null;
-  return new GoogleGenAI({ apiKey: key });
+  const key2 = process.env.GEMINI_API_KEY;
+  if (!key2) return null;
+  return new GoogleGenAI({ apiKey: key2 });
 }
 var ai = getGeminiClient();
-var camel = (key) => key.replace(/_([a-z])/g, (_, value) => value.toUpperCase());
-var camelRow = (value) => Array.isArray(value) ? value.map(camelRow) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([key, item]) => [camel(key), camelRow(item)])) : value;
+var camel = (key2) => key2.replace(/_([a-z])/g, (_, value) => value.toUpperCase());
+var camelRow = (value) => Array.isArray(value) ? value.map(camelRow) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([key2, item]) => [camel(key2), camelRow(item)])) : value;
 var rateWindows = /* @__PURE__ */ new Map();
 var nextRateCleanup = 0;
 var restaurantUuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
@@ -2323,13 +2769,13 @@ function rateLimit(req, res, next) {
   const now = Date.now();
   if (now >= nextRateCleanup) {
     nextRateCleanup = now + 6e4;
-    for (const [key2, value] of rateWindows) if (value.resetAt <= now) rateWindows.delete(key2);
+    for (const [key3, value] of rateWindows) if (value.resetAt <= now) rateWindows.delete(key3);
   }
-  const key = `${clientAddress(req)}:${req.path}`;
-  const current = rateWindows.get(key);
+  const key2 = `${clientAddress(req)}:${req.path}`;
+  const current = rateWindows.get(key2);
   if (!current || current.resetAt <= now) {
     if (!current && rateWindows.size >= 1e4) return res.set("Retry-After", "60").status(429).json({ error: "too_many_requests" });
-    rateWindows.set(key, { count: 1, resetAt: now + 6e4 });
+    rateWindows.set(key2, { count: 1, resetAt: now + 6e4 });
   } else if (++current.count > 15) return res.status(429).json({ error: "too_many_requests" });
   next();
 }
@@ -2359,10 +2805,10 @@ async function allowRestaurantRequest(req, res, restaurantId2, action, limit) {
   }
   return true;
 }
-async function resolveRestaurantId(identifier) {
-  if (restaurantUuid.test(identifier)) return identifier.toLowerCase();
-  const { data } = await supabase.rpc("resolve_restaurant_id", { p_identifier: identifier });
-  return data || identifier;
+async function resolveRestaurantId(identifier2) {
+  if (restaurantUuid.test(identifier2)) return identifier2.toLowerCase();
+  const { data } = await supabase.rpc("resolve_restaurant_id", { p_identifier: identifier2 });
+  return data || identifier2;
 }
 function parseCustomerLocation(value) {
   if (!value || typeof value !== "object") return null;
@@ -2383,11 +2829,11 @@ app.use(express.json({ limit: "256kb", verify: (req, _res, body) => {
 } }));
 app.use("/api/loyalty", loyaltyRouter(supabaseAdmin, rateLimit));
 async function waylRequest(path, options) {
-  const token = process.env.WAYL_API_KEY;
-  if (!token) throw new Error("wayl_not_configured");
+  const token2 = process.env.WAYL_API_KEY;
+  if (!token2) throw new Error("wayl_not_configured");
   const response = await fetch(`${WAYL_API}${path}`, {
     ...options,
-    headers: { "X-WAYL-AUTHENTICATION": token, "Content-Type": "application/json", ...options?.headers },
+    headers: { "X-WAYL-AUTHENTICATION": token2, "Content-Type": "application/json", ...options?.headers },
     signal: AbortSignal.timeout(12e3)
   });
   const payload = await response.json().catch(() => null);
@@ -2596,7 +3042,7 @@ app.post("/api/restaurants/:restaurantId/subscription/checkout", rateLimit, asyn
   }
   if (pending) await supabaseAdmin.from("subscription_payments").update({ status: "superseded" }).eq("reference_id", pending.reference_id);
   const referenceId = `renewal-${randomUUID3()}`;
-  const webhookSecret = randomBytes5(32).toString("hex");
+  const webhookSecret = randomBytes6(32).toString("hex");
   const inserted = await supabaseAdmin.from("subscription_payments").insert({
     reference_id: referenceId,
     restaurant_id: restaurantId2,
@@ -2701,15 +3147,15 @@ app.post("/api/auth/login", rateLimit, async (req, res) => {
   const requestedRestaurantId = await resolveRestaurantId(String(req.body?.restaurantId || ""));
   if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(requestedRestaurantId)) return res.status(401).json({ error: "invalid_credentials" });
   let digest;
-  let key;
+  let key2;
   try {
-    key = getPasscodeKey();
-    digest = passcodeDigest(code, key);
+    key2 = getPasscodeKey();
+    digest = passcodeDigest(code, key2);
   } catch {
     return res.status(503).json({ error: "passcode_secret_not_configured" });
   }
-  const ipKey = createHmac5("sha256", key).update(`ip:${clientAddress(req)}`).digest("hex");
-  const globalKey = createHmac5("sha256", key).update(`restaurant:${requestedRestaurantId}`).digest("hex");
+  const ipKey = createHmac5("sha256", key2).update(`ip:${clientAddress(req)}`).digest("hex");
+  const globalKey = createHmac5("sha256", key2).update(`restaurant:${requestedRestaurantId}`).digest("hex");
   const [ipLimit, restaurantLimit] = await Promise.all([
     supabaseAdmin.rpc("claim_passcode_attempt", { p_restaurant_id: requestedRestaurantId, p_client_key: ipKey, p_limit: 8, p_window_seconds: 600 }),
     supabaseAdmin.rpc("claim_passcode_attempt", { p_restaurant_id: requestedRestaurantId, p_client_key: globalKey, p_limit: 80, p_window_seconds: 3600 })
@@ -2807,6 +3253,8 @@ app.post("/api/staff", async (req, res) => {
   const body = req.body || {};
   const restaurantId2 = String(body.restaurantId || "");
   const role = ["kitchen", "waiter", "cashier"].includes(body.role) ? body.role : null;
+  const sendInvitation = !body.id && body.whatsappConsent === true;
+  if (sendInvitation && !platformPhone(body.phone)) return res.status(400).json({ error: "invalid_phone" });
   const requestedPasscode = body.passcode === "" || body.passcode == null ? void 0 : body.passcode;
   if (!role) return res.status(400).json({ error: "invalid_staff_role" });
   if (requestedPasscode !== void 0 && !isPasscode(requestedPasscode)) return res.status(400).json({ error: "invalid_passcode" });
@@ -2846,7 +3294,7 @@ app.post("/api/staff", async (req, res) => {
   }
   const username = `staff-${randomUUID3()}`;
   const email = `${username}@accounts.novx.invalid`;
-  const { data: created, error: authError } = await supabaseAdmin.auth.admin.createUser({ email, password: randomBytes5(48).toString("base64url"), email_confirm: true, user_metadata: { name: body.name }, app_metadata: { role, restaurant_id: restaurantId2 } });
+  const { data: created, error: authError } = await supabaseAdmin.auth.admin.createUser({ email, password: randomBytes6(48).toString("base64url"), email_confirm: true, user_metadata: { name: body.name }, app_metadata: { role, restaurant_id: restaurantId2 } });
   if (authError || !created.user) return res.status(400).json({ error: authError?.message });
   const staffInsert = await supabaseAdmin.from("staff").insert({ restaurant_id: restaurantId2, auth_user_id: created.user.id, role, name: body.name, phone: body.phone, username }).select().single();
   if (staffInsert.error) {
@@ -2861,7 +3309,13 @@ app.post("/api/staff", async (req, res) => {
   }
   try {
     const passcode = await setMemberPasscode(created.user.id, restaurantId2, role, requestedPasscode);
-    return res.status(201).json({ ...camelRow(staffInsert.data), passcode });
+    const whatsappInvitation = sendInvitation ? await queuePlatformInvitation(supabaseAdmin, {
+      restaurantId: restaurantId2,
+      userId: created.user.id,
+      actorId: identity.user.id,
+      phone: body.phone
+    }) : void 0;
+    return res.status(201).json({ ...camelRow(staffInsert.data), passcode, whatsappInvitation });
   } catch (error) {
     await supabaseAdmin.from("staff").delete().eq("id", staffInsert.data.id).eq("restaurant_id", restaurantId2);
     await supabaseAdmin.auth.admin.deleteUser(created.user.id);
@@ -2909,6 +3363,8 @@ app.post("/api/admin/restaurants", async (req, res) => {
   const { data: identity } = await supabaseAdmin.auth.getUser(bearer || "");
   if (identity.user?.app_metadata?.system_role !== "admin") return res.status(403).json({ error: "admin_required" });
   const body = req.body || {};
+  const sendInvitation = !body.id && body.whatsappConsent === true;
+  if (sendInvitation && !platformPhone(body.managerPhone)) return res.status(400).json({ error: "invalid_phone" });
   const requestedPasscode = !body.id || body.passcode === "" || body.passcode == null ? void 0 : body.passcode;
   if (requestedPasscode !== void 0 && !isPasscode(requestedPasscode)) return res.status(400).json({ error: "invalid_passcode" });
   if (requestedPasscode && isWeakPasscode(requestedPasscode)) return res.status(400).json({ error: "weak_passcode" });
@@ -2944,7 +3400,7 @@ app.post("/api/admin/restaurants", async (req, res) => {
     return res.status(204).end();
   }
   const email = `${username}@accounts.novx.invalid`;
-  const authResult = await supabaseAdmin.auth.admin.createUser({ email, password: randomBytes5(48).toString("base64url"), email_confirm: true, user_metadata: { name: body.restaurantName }, app_metadata: { role: "restaurant" } });
+  const authResult = await supabaseAdmin.auth.admin.createUser({ email, password: randomBytes6(48).toString("base64url"), email_confirm: true, user_metadata: { name: body.restaurantName }, app_metadata: { role: "restaurant" } });
   if (authResult.error || !authResult.data.user) return res.status(400).json({ error: "account_creation_failed", details: authResult.error?.message });
   const restaurant = await supabaseAdmin.from("restaurants").insert({ ...row, theme_id: "ordova" }).select().single();
   if (restaurant.error) {
@@ -2965,7 +3421,13 @@ app.post("/api/admin/restaurants", async (req, res) => {
   }
   try {
     const passcode = await setMemberPasscode(authResult.data.user.id, restaurant.data.id, "owner", requestedPasscode);
-    return res.status(201).json({ ...camelRow(restaurant.data), passcode });
+    const whatsappInvitation = sendInvitation ? await queuePlatformInvitation(supabaseAdmin, {
+      restaurantId: restaurant.data.id,
+      userId: authResult.data.user.id,
+      actorId: identity.user.id,
+      phone: body.managerPhone
+    }) : void 0;
+    return res.status(201).json({ ...camelRow(restaurant.data), passcode, whatsappInvitation });
   } catch (error) {
     await supabaseAdmin.from("restaurants").delete().eq("id", restaurant.data.id).eq("username", row.username);
     await supabaseAdmin.auth.admin.deleteUser(authResult.data.user.id);

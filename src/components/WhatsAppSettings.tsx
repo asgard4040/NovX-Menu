@@ -20,17 +20,19 @@ type Usage = {
   cached_input_tokens?: number; inbound_messages?: number; outbound_messages?: number;
   blocked_requests?: number; duplicate_events?: number; batched_messages?: number; estimated_provider_usd?: number | null;
 };
-type Connection = { account: Account | null; manual: { callback: string; verifyToken: string } | null; gupshup: { callback: string } | null };
-type Dashboard = Connection & {
-  settings: Settings; setup: SignupConfig | null; aiConfigured: boolean;
+type Limits = Pick<Settings, "daily_ai_limit" | "ai_policy">;
+type OwnerSettings = Omit<Settings, keyof Limits>;
+type Connection = { account: Account | null; manual: { callback: string; verifyToken: string } | null; gupshup: { callback: string } | null;
+  setup: SignupConfig | null; limits: Limits; usage: Usage };
+type Dashboard = {
+  settings: OwnerSettings; connected: boolean; aiConfigured: boolean;
   conversations: Conversation[];
   orders: { order_id: string; orders: { order_number: number; status: string; total_amount: number } }[];
   failures: { id: string; conversation_id: string; state: string; error_code: string; created_at: string;
     order_number?: number; retryable: boolean }[];
-  usage: Usage;
 };
 type Thread = {
-  conversation: Conversation; windowOpen: boolean; before: string | null; usage: Usage;
+  conversation: Conversation; windowOpen: boolean; before: string | null;
   messages: { id: string; direction: "in" | "out"; kind: string; state: string; created_at: string;
     payload: { text?: string; status?: string; order_number?: number } }[];
 };
@@ -42,6 +44,7 @@ function clearSignupReturn() {
   const url = new URL(window.location.href);
   if (!url.searchParams.has("whatsappSignup")) return;
   url.searchParams.delete("whatsappSignup");
+  url.searchParams.delete("whatsappRestaurant");
   window.history.replaceState(window.history.state, "", url);
 }
 
@@ -57,7 +60,8 @@ export default function WhatsAppSettings({ restaurantId, connectionOnly = false 
   const [connection, setConnection] = useState<Connection | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
   const [provider, setProvider] = useState<"gupshup" | "meta">("gupshup");
-  const [settings, setSettings] = useState<Settings | null>(null);
+  const [settings, setSettings] = useState<OwnerSettings | null>(null);
+  const [limits, setLimits] = useState<Limits | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [pending, setPending] = useState("");
@@ -87,15 +91,17 @@ export default function WhatsAppSettings({ restaurantId, connectionOnly = false 
   const refresh = useCallback(async (replace = false) => {
     if (connectionOnly) {
       const data = await api<Connection>("/connection");
-      if (live.current) setConnection(data);
+      if (live.current) {
+        setConnection(data);
+        setLimits(current => replace || !current ? data.limits : current);
+      }
       return;
     }
     const data = await api<Dashboard>();
-    if (!data.settings || !data.usage || !Array.isArray(data.conversations)
+    if (!data.settings || !Array.isArray(data.conversations)
       || !Array.isArray(data.orders) || !Array.isArray(data.failures)) throw new Error("whatsapp_unavailable");
     if (!live.current) return;
     setDashboard(data);
-    setConnection(data);
     setSettings(current => replace || !current ? {
       ...data.settings, opens_at: data.settings.opens_at?.slice(0, 5) ?? null, closes_at: data.settings.closes_at?.slice(0, 5) ?? null,
     } : current);
@@ -109,8 +115,10 @@ export default function WhatsAppSettings({ restaurantId, connectionOnly = false 
   }, [refresh]);
 
   useEffect(() => {
-    if (connectionOnly) return;
-    const returned = new URLSearchParams(window.location.search).get("whatsappSignup");
+    if (!connectionOnly) return;
+    const url = new URLSearchParams(window.location.search);
+    const returned = url.get("whatsappSignup");
+    if (url.get("whatsappRestaurant") !== restaurantId) return;
     if (!returned) return;
     if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(returned)) {
       setError(["signup_expired", "subscription_inactive", "cancelled"].includes(returned) ? returned : "meta_return_failed");
@@ -126,7 +134,7 @@ export default function WhatsAppSettings({ restaurantId, connectionOnly = false 
       if (current) setPending("");
     });
     return () => { current = false; };
-  }, [api, connectionOnly]);
+  }, [api, connectionOnly, restaurantId]);
 
   const run = async (name: string, fn: () => Promise<void>) => {
     setPending(name);
@@ -143,7 +151,7 @@ export default function WhatsAppSettings({ restaurantId, connectionOnly = false 
   };
 
   const begin = (sameTab: boolean) => void run("signup", async () => {
-    if (!dashboard?.setup) return;
+    if (!connection?.setup) return;
     clearSignupReturn();
     setPin("");
     if (sameTab) {
@@ -151,7 +159,7 @@ export default function WhatsAppSettings({ restaurantId, connectionOnly = false 
       setSignup(session);
       return;
     }
-    const sdk = await signupSdk(dashboard.setup);
+    const sdk = await signupSdk(connection.setup);
     const session = await api<{ id: string }>("/signup", "POST");
     setSignup({ id: session.id, sdk });
   });
@@ -205,9 +213,9 @@ export default function WhatsAppSettings({ restaurantId, connectionOnly = false 
   };
 
   const launch = () => {
-    if (!signup?.sdk || !dashboard?.setup) return;
+    if (!signup?.sdk || !connection?.setup) return;
     const sdk = signup.sdk;
-    const setup = dashboard.setup;
+    const setup = connection.setup;
     abort.current = new AbortController();
     const signal = abort.current.signal;
     void run("popup", async () => {
@@ -235,7 +243,7 @@ export default function WhatsAppSettings({ restaurantId, connectionOnly = false 
     });
   };
 
-  const change = <K extends keyof Settings>(key: K, value: Settings[K]) =>
+  const change = <K extends keyof OwnerSettings>(key: K, value: OwnerSettings[K]) =>
     setSettings(current => current && { ...current, [key]: value });
 
   const labels: Record<string, string> = {
@@ -251,6 +259,7 @@ export default function WhatsAppSettings({ restaurantId, connectionOnly = false 
     skipped: tr("تم التخطي", "Skipped"), sending: tr("جارٍ الإرسال", "Sending"),
   };
   const errors: Record<string, string> = {
+    assistant_unavailable: tr("تعذّر تشغيل المساعد. تواصل مع الإدارة.", "The assistant is unavailable. Contact ORDOVA support."),
     invalid_delivery_zones: tr("تأكد من المدينة والمنطقة ورسوم التوصيل لكل منطقة، بدون مناطق مكررة.","Check each delivery city, area and fee; duplicate areas are not allowed."),
     delivery_zones_required: tr("أضف مناطق التوصيل ورسومها قبل تفعيل طلبات التوصيل.","Add delivery areas and fees before enabling delivery orders."),
     invalid_delivery_settings: tr("إعدادات التوصيل غير صالحة.","Delivery settings are invalid."),
@@ -305,7 +314,8 @@ export default function WhatsAppSettings({ restaurantId, connectionOnly = false 
   return <div className="min-w-0 space-y-5" dir={dir}>
     <header className="flex flex-wrap items-center justify-between gap-3">
       <h1 className="flex items-center gap-3 font-display text-2xl font-bold text-brand-primary">
-        <MessageCircle className="h-6 w-6 text-emerald-700" /> {tr("طلبات واتساب بالذكاء الاصطناعي", "WhatsApp AI ordering")}
+        <MessageCircle className="h-6 w-6 text-emerald-700" /> {connectionOnly
+          ? tr("واتساب المطعم", "Restaurant WhatsApp") : tr("طلبات واتساب", "WhatsApp orders")}
       </h1>
       <button type="button" className={secondary} disabled={disabled || loading} onClick={() => void run("refresh", async () => {
         await refresh();
@@ -315,8 +325,8 @@ export default function WhatsAppSettings({ restaurantId, connectionOnly = false 
     {loading && <p role="status" className={panel}>{tr("جارٍ تحميل الإعدادات…", "Loading WhatsApp settings…")}</p>}
     {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-900">{describe(error)}</p>}
     {notice && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">{notice}</p>}
-    {connection && <>
-      <div className={connectionOnly ? "grid gap-5" : "grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]"}>
+    {connectionOnly && connection && <>
+      <div className="grid gap-5">
         <section className={panel}>
           <h2 className={heading}>{tr("ربط رقم واتساب", "WhatsApp connection")}</h2>
           <div className="flex flex-wrap items-center gap-3">
@@ -350,11 +360,11 @@ export default function WhatsAppSettings({ restaurantId, connectionOnly = false 
             {connection.manual && <button type="button" className={primary} disabled={disabled} onClick={() => { setProvider(account?.provider || "gupshup"); setManualOpen(open => !open); }}>
               {account?.status === "connected" ? tr("استبدال بيانات الربط", "Replace credentials") : tr("ربط واتساب يدوياً", "Connect WhatsApp manually")}
             </button>}
-            {dashboard?.setup && <button type="button" className={secondary} disabled={disabled}
+            {connection.setup && <button type="button" className={secondary} disabled={disabled}
               onClick={() => begin(preferSameTab)}>
               {tr("الربط عبر ميتا", "Connect with Meta signup")}
             </button>}
-            {dashboard?.setup && !preferSameTab && <button type="button" className={secondary} disabled={disabled} onClick={() => begin(true)}>
+            {connection.setup && !preferSameTab && <button type="button" className={secondary} disabled={disabled} onClick={() => begin(true)}>
               {tr("فتح ميتا في نفس الصفحة", "Open Meta in this tab")}
             </button>}
             {account?.status === "connected" && <button type="button" className={secondary} disabled={disabled} onClick={() => void run("health", async () => {
@@ -452,8 +462,14 @@ export default function WhatsAppSettings({ restaurantId, connectionOnly = false 
               : tr("جارٍ التحقق من ميتا…", "Verifying with Meta…")}</p>}
           </div>}
         </section>
+      </div>
+    </>}
         {dashboard && settings && <form onSubmit={save} className={panel}>
-          <h2 className={heading}>{tr("إعدادات المساعد", "Assistant settings")}</h2>
+          <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-lg font-bold text-brand-primary">{tr("إعدادات المساعد", "Assistant settings")}</h2>
+            <span className="text-sm font-semibold text-text-muted">{dashboard.connected && dashboard.aiConfigured
+              ? tr("المساعد جاهز", "Assistant ready") : tr("المساعد غير جاهز · تواصل مع الإدارة", "Assistant unavailable · Contact ORDOVA support")}</span>
+          </div>
           <div className="flex flex-wrap gap-x-6 gap-y-3 text-sm">
             {([
               ["enabled", tr("تشغيل المساعد", "Enable assistant")],
@@ -464,6 +480,12 @@ export default function WhatsAppSettings({ restaurantId, connectionOnly = false 
                 onChange={event => change(key, event.target.checked)} className="h-4 w-4 accent-brand-primary" /> {label}
             </label>)}
           </div>
+          <label className="mt-4 block space-y-1 text-sm">
+            <span>{tr("رسالة ترحيب اختيارية", "Custom welcome message")}</span>
+            <textarea className={field} rows={2} maxLength={300} value={settings.welcome} onChange={e => change("welcome", e.target.value)} />
+          </label>
+          <details className="my-3 rounded-xl border border-border-delicate p-3" onInvalid={event => { event.currentTarget.open = true; }}>
+            <summary className="cursor-pointer text-sm font-semibold">{tr("الدوام والتوصيل وخيارات الرد", "Hours, delivery, and reply options")}</summary>
           <fieldset className="mt-4 space-y-3 rounded-xl border border-border-delicate p-3">
             <legend className="px-1 text-sm font-semibold">{tr("طلبات التوصيل", "Delivery ordering")}</legend>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="h-4 w-4 accent-brand-primary"
@@ -482,10 +504,6 @@ export default function WhatsAppSettings({ restaurantId, connectionOnly = false 
             <button type="button" className={secondary} disabled={disabled||(settings.delivery_zones||[]).length>=100}
               onClick={()=>change("delivery_zones",[...(settings.delivery_zones||[]),{id:crypto.randomUUID(),city:"",area:"",fee:0}])}>{tr("إضافة منطقة توصيل", "Add delivery area")}</button>
           </fieldset>
-          <label className="mt-4 block space-y-1 text-sm">
-            <span>{tr("رسالة ترحيب اختيارية", "Custom welcome message")}</span>
-            <textarea className={field} rows={2} maxLength={300} value={settings.welcome} onChange={e => change("welcome", e.target.value)} />
-          </label>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <label className="space-y-1 text-sm">{tr("اللغة الافتراضية", "Default language")}
               <select className={field} value={settings.language} onChange={e => change("language", e.target.value === "en" ? "en" : "ar")}>
@@ -508,11 +526,25 @@ export default function WhatsAppSettings({ restaurantId, connectionOnly = false 
                 <option value="Asia/Baghdad">{tr("بغداد", "Baghdad")}</option><option value="UTC">UTC</option>
               </select>
             </label>
-            <label className="space-y-1 text-sm">{tr("حد محاولات الذكاء الاصطناعي يومياً", "Daily AI request limit")}
-              <input className={field} type="number" min={1} max={500} required value={settings.daily_ai_limit || ""} onChange={e => change("daily_ai_limit", Number(e.target.value))} />
-            </label>
           </div>
-          <details className="my-3 rounded-xl border border-border-delicate p-3">
+          <p className="my-3 text-xs text-text-muted">{tr("اترك الوقتين فارغين لاستقبال الطلبات طوال اليوم.", "Leave both times empty to accept orders all day.")}</p>
+          </details>
+          <button type="submit" className={primary} disabled={disabled}>{pending === "save" ? tr("جارٍ الحفظ…", "Saving…") : tr("حفظ الإعدادات", "Save settings")}</button>
+        </form>}
+    {connectionOnly && connection && limits && <>
+          <form className={panel} onSubmit={event => {
+            event.preventDefault();
+            void run("limits", async () => {
+              await api("/limits", "PUT", { ...limits, ai_policy: { ...defaultPolicy, ...limits.ai_policy } });
+              await refresh(true);
+              setNotice(tr("تم حفظ الحدود.", "Limits saved."));
+            });
+          }}>
+          <label className="block space-y-1 text-sm">{tr("حد محاولات الذكاء الاصطناعي يومياً", "Daily AI request limit")}
+            <input className={field} type="number" min={1} max={500} required value={limits.daily_ai_limit || ""}
+              onChange={e => setLimits({ ...limits, daily_ai_limit: Number(e.target.value) })} />
+          </label>
+          <details className="my-3 rounded-xl border border-border-delicate p-3" onInvalid={event => { event.currentTarget.open = true; }}>
             <summary className="cursor-pointer text-sm font-semibold">{tr("حدود استخدام المساعد", "Assistant usage limits")}</summary>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               {([
@@ -522,34 +554,32 @@ export default function WhatsAppSettings({ restaurantId, connectionOnly = false 
                 ["customer_daily_requests", tr("رسائل الزبون يومياً", "Customer messages per day"), 1, 1000, 1],
               ] as const).map(([key, label, min, max, step]) => <label key={key} className="space-y-1 text-sm">
                 <span>{label}</span><input className={field} type="number" min={min} max={max} step={step} required
-                  value={{ ...defaultPolicy, ...settings.ai_policy }[key]}
-                  onChange={event => change("ai_policy", { ...defaultPolicy, ...settings.ai_policy, [key]: Number(event.target.value) })} />
+                  value={{ ...defaultPolicy, ...limits.ai_policy }[key]}
+                  onChange={event => setLimits({ ...limits, ai_policy: { ...defaultPolicy, ...limits.ai_policy, [key]: Number(event.target.value) } })} />
               </label>)}
             </div>
             <p className="mt-2 text-xs text-text-muted">{tr("الحدود المالية تستخدم حجزاً احتياطياً لكل محاولة؛ وقد توقف المساعد قبل الوصول إلى التكلفة الفعلية المعروضة. الصفر يوقف محاولات الذكاء الاصطناعي المدفوعة.", "Budget limits reserve a conservative amount per attempt and may stop AI calls before the displayed actual estimate reaches the limit. Zero disables paid AI attempts.")}</p>
           </details>
-          <p className="my-3 text-xs text-text-muted">{tr("اترك الوقتين فارغين لاستقبال الطلبات طوال اليوم.", "Leave both times empty to accept orders all day.")}</p>
-          <button type="submit" className={primary} disabled={disabled}>{pending === "save" ? tr("جارٍ الحفظ…", "Saving…") : tr("حفظ الإعدادات", "Save settings")}</button>
-        </form>}
-      </div>
-    </>}
-    {dashboard && settings && <>
+          <button type="submit" className={primary} disabled={disabled}>{tr("حفظ الحدود", "Save limits")}</button>
+        </form>
       <section className={panel}>
         <h2 className={heading}>{tr("استخدام الذكاء الاصطناعي هذا الشهر", "AI usage this month")}</h2>
         <dl className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
           {[
-            [tr("المحاولات", "Attempts"), dashboard.usage.attempts],
-            [tr("رموز الإدخال", "Input tokens"), dashboard.usage.input_tokens],
-            [tr("رموز الإخراج", "Output tokens"), dashboard.usage.output_tokens],
-            [tr("تكلفة OpenAI المقدّرة", "Estimated OpenAI cost"), cost(dashboard.usage)],
-            [tr("رموز الإدخال المخزّنة", "Cached input tokens"), dashboard.usage.cached_input_tokens ?? 0],
-            [tr("رسائل واردة / صادرة", "Inbound / submitted messages"), `${dashboard.usage.inbound_messages ?? 0} / ${dashboard.usage.outbound_messages ?? 0}`],
-            [tr("محظورة / مكررة / مجمّعة", "Blocked / duplicate / batched"), `${dashboard.usage.blocked_requests ?? 0} / ${dashboard.usage.duplicate_events ?? 0} / ${dashboard.usage.batched_messages ?? 0}`],
-            [tr("رسوم Gupshup المقدّرة فقط", "Estimated Gupshup fee only"), dashboard.usage.estimated_provider_usd == null ? tr("غير متوفر", "Unavailable") : "$" + dashboard.usage.estimated_provider_usd.toFixed(4)],
+            [tr("المحاولات", "Attempts"), connection.usage.attempts],
+            [tr("رموز الإدخال", "Input tokens"), connection.usage.input_tokens],
+            [tr("رموز الإخراج", "Output tokens"), connection.usage.output_tokens],
+            [tr("تكلفة OpenAI المقدّرة", "Estimated OpenAI cost"), cost(connection.usage)],
+            [tr("رموز الإدخال المخزّنة", "Cached input tokens"), connection.usage.cached_input_tokens ?? 0],
+            [tr("رسائل واردة / صادرة", "Inbound / submitted messages"), (connection.usage.inbound_messages ?? 0) + " / " + (connection.usage.outbound_messages ?? 0)],
+            [tr("محظورة / مكررة / مجمّعة", "Blocked / duplicate / batched"), (connection.usage.blocked_requests ?? 0) + " / " + (connection.usage.duplicate_events ?? 0) + " / " + (connection.usage.batched_messages ?? 0)],
+            [tr("رسوم Gupshup المقدّرة فقط", "Estimated Gupshup fee only"), connection.usage.estimated_provider_usd == null ? tr("غير متوفر", "Unavailable") : "$" + connection.usage.estimated_provider_usd.toFixed(4)],
           ].map(([label, value]) => <div key={label} className="rounded-xl bg-bg-paper p-3"><dt className="text-text-muted">{label}</dt><dd className="mt-1 break-words text-xl font-bold text-brand-primary">{value}</dd></div>)}
         </dl>
-        <p className="mt-2 text-xs text-text-muted">{tr("عدد المحاولات المقاسة", "Measured attempts")} · {dashboard.usage.measured}/{dashboard.usage.attempts} · {tr("المقدّرة", "Estimated")} · {dashboard.usage.estimated_attempts}/{dashboard.usage.attempts}</p>
+        <p className="mt-2 text-xs text-text-muted">{tr("عدد المحاولات المقاسة", "Measured attempts")} · {connection.usage.measured}/{connection.usage.attempts} · {tr("المقدّرة", "Estimated")} · {connection.usage.estimated_attempts}/{connection.usage.attempts}</p>
       </section>
+    </>}
+    {dashboard && settings && <>
       <div className="grid gap-5 xl:grid-cols-2">
         <section className={panel}>
           <h2 className={heading}>{tr("أحدث المحادثات", "Recent conversations")}</h2>
@@ -570,7 +600,6 @@ export default function WhatsAppSettings({ restaurantId, connectionOnly = false 
                 await api("/conversations/" + threadId, "POST", { action: thread.conversation.handoff ? "resume" : "take" });
                 await Promise.all([loadThread(threadId), refresh()]);
               })}>{thread.conversation.handoff ? tr("إعادة تشغيل المساعد", "Resume assistant") : tr("استلام المحادثة", "Take over conversation")}</button>
-              <span className="self-center text-xs text-text-muted">OpenAI · {cost(thread.usage)}</span>
             </div>
             <ol className="flex max-h-72 flex-col gap-2 overflow-auto">
               {thread.messages.map(item => <li key={item.id} className={item.direction === "in" ? "me-5 rounded-xl bg-bg-paper p-3" : "ms-5 rounded-xl border border-border-delicate p-3"}>

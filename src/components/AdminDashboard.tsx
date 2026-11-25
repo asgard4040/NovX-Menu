@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import WhatsAppSettings from "./WhatsAppSettings";
+import PlatformWhatsApp from "./PlatformWhatsApp";
 import AdminSaasConsole from "./AdminSaasConsole";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -98,7 +99,7 @@ export default function AdminDashboard({
     null,
   );
   const [searchQuery, setSearchQuery] = useState("");
-  const [whatsappRestaurant, setWhatsAppRestaurant] = useState<string | null>(null);
+  const [whatsappRestaurant, setWhatsAppRestaurant] = useState(() => new URLSearchParams(window.location.search).get("whatsappRestaurant"));
   const [filterProvince, setFilterProvince] = useState("");
   const [filterType, setFilterType] = useState("");
   const [filterExpiry, setFilterExpiry] = useState<"all" | "expired" | "soon">("all");
@@ -484,6 +485,7 @@ export default function AdminDashboard({
             <div><p className="mb-1 text-xs font-bold text-brand-gold">{tr('ضبط النظام', 'System control')}</p><h2 className="text-2xl font-bold text-brand-primary sm:text-3xl">{tr('الإعدادات', 'Settings')}</h2><p className="mt-1 text-sm text-text-muted">{tr('أسعار الاشتراكات والدعم وهوية النظام في مكان واحد.', 'Subscription pricing, support, and branding in one place.')}</p></div>
             <AdminSaasConsole section="billing" />
             <AdminSubscriptionSettings onSaved={() => void fetchFinancialOverview()} />
+            <PlatformWhatsApp />
             {/* Support and System Branding Card */}
             <details className="bg-white border border-border-delicate rounded-2xl overflow-hidden group">
               <summary className="list-none cursor-pointer p-5 sm:p-6 flex items-center justify-between gap-4 font-bold text-brand-primary">
@@ -998,6 +1000,8 @@ function RestaurantModal({
   const [passcodeDirty, setPasscodeDirty] = useState(false);
   const [passcodeLoadError, setPasscodeLoadError] = useState(false);
   const [createdPasscode, setCreatedPasscode] = useState<string | null>(null);
+  const [whatsappConsent, setWhatsAppConsent] = useState(false);
+  const [invitationStatus, setInvitationStatus] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [planPrices, setPlanPrices] = useState<PlanPrices>(emptyPlanPrices);
@@ -1095,6 +1099,7 @@ function RestaurantModal({
       setSaving(true);
       const payload = {
         ...formData,
+        whatsappConsent: !restaurant && whatsappConsent,
         passcode: restaurant && passcodeDirty ? ownerPasscode : undefined,
         endDate: new Date(endDate).toISOString(),
         startDate: new Date(formData.startDate).toISOString(),
@@ -1110,11 +1115,13 @@ function RestaurantModal({
         const result = await response.json();
         if (result.error === 'passcode_taken') throw new Error(tr('هذا الرمز مستخدم بالفعل. اختر رمزاً آخر.', 'That passcode is already in use. Choose another.'));
         if (result.error === 'weak_passcode') throw new Error(tr('اختر رمزاً أقل قابلية للتخمين.', 'Choose a less predictable passcode.'));
+        if (result.error === 'invalid_phone') throw new Error(tr('أدخل رقم واتساب صحيح للمالك.', 'Enter a valid owner WhatsApp number.'));
         throw new Error(result.error || 'restaurant_save_failed');
       }
       if (!restaurant) {
         const result = await response.json();
         setCreatedPasscode(result.passcode);
+        setInvitationStatus(result.whatsappInvitation || "");
         return;
       }
       onSuccess();
@@ -1132,6 +1139,9 @@ function RestaurantModal({
         <h2 className="text-2xl font-bold text-brand-primary">{tr('تم إنشاء المطعم', 'Restaurant created')}</h2>
         <p className="text-sm text-text-muted">{tr('رمز دخول المالك. يمكنك عرضه أو تغييره لاحقاً من تعديل المطعم.', 'Owner passcode. You can view or change it later in restaurant settings.')}</p>
         <p className="text-4xl font-bold tracking-[.3em] text-brand-primary" dir="ltr">{createdPasscode}</p>
+        {invitationStatus && <p role="status" className="text-sm text-text-muted">{invitationStatus === 'queued'
+          ? tr('تمت إضافة دعوة واتساب إلى قائمة الإرسال.', 'WhatsApp invitation queued.')
+          : tr('تعذّر جدولة دعوة واتساب. يمكنك مشاركة الرمز يدوياً.', 'Could not queue the WhatsApp invitation. You can share the passcode manually.')}</p>}
         <button type="button" onClick={onSuccess} className="w-full rounded-xl bg-brand-primary py-4 font-bold text-white">{tr('تم', 'Done')}</button>
       </div>
     </div>
@@ -1301,6 +1311,10 @@ function RestaurantModal({
                   </div>
                 </div>
 
+                {!restaurant && <label className="flex items-start gap-2 text-sm text-brand-primary">
+                  <input type="checkbox" className="mt-1 accent-brand-primary" checked={whatsappConsent} onChange={event => setWhatsAppConsent(event.target.checked)} />
+                  {tr('المالك وافق يستلم بيانات الدخول وإشعارات ORDOVA على واتساب بهذا الرقم.', 'The owner agreed to receive ORDOVA login details and account notices at this WhatsApp number.')}
+                </label>}
                 <div className="max-w-sm">
                   {restaurant ? <div className="relative">
                     <label className="text-[9px] font-bold text-brand-gold uppercase tracking-[0.3em] mb-3 block opacity-60">

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   BarChart3, 
@@ -41,6 +41,7 @@ import { UserSession } from './types';
 import { supabase } from './lib/supabase';
 import SubscriptionGuard from './components/SubscriptionGuard';
 import FirstVisitGuide from './components/FirstVisitGuide';
+import MobileWorkspaceNav from './components/MobileWorkspaceNav';
 import { db, doc, onSnapshot } from './lib/supabase-db';
 import { DEFAULT_THEME, resolveTheme, themeStyle } from './lib/themes';
 import type { MenuTheme } from './lib/themes';
@@ -57,6 +58,7 @@ const WaiterDashboard = React.lazy(() => import('./components/WaiterDashboard'))
 const KitchenDashboard = React.lazy(() => import('./components/KitchenDashboard'));
 const CashierDashboard = React.lazy(() => import('./components/CashierDashboard'));
 const FloorPlanSettings = React.lazy(() => import('./components/FloorPlanSettings'));
+const OwnerSetup = React.lazy(() => import('./components/OwnerSetup'));
 const CustomerMenu = React.lazy(() => import('./components/CustomerMenu'));
 const LoginPage = React.lazy(() => import('./components/LoginPage'));
 
@@ -70,25 +72,12 @@ export default function App() {
   const [workspaceTheme, setWorkspaceTheme] = useState<MenuTheme>(DEFAULT_THEME);
   const [systemLogo, setSystemLogo] = useState(() => localStorage.getItem('novix_system_logo') || '');
   const [appAlert, setAppAlert] = useState<string | null>(null);
-  const mobileNavRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const originalAlert = window.alert;
     window.alert = (message) => setAppAlert(String(message ?? ''));
     return () => { window.alert = originalAlert; };
   }, []);
-
-  useEffect(() => {
-    const nav = mobileNavRef.current;
-    if (!nav) return;
-    const scrollNavWithWheel = (event: WheelEvent) => {
-      if (nav.scrollWidth <= nav.clientWidth || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
-      event.preventDefault();
-      nav.scrollLeft += event.deltaY * (getComputedStyle(nav).direction === 'rtl' ? -1 : 1);
-    };
-    nav.addEventListener('wheel', scrollNavWithWheel, { passive: false });
-    return () => nav.removeEventListener('wheel', scrollNavWithWheel);
-  }, [session?.role]);
 
   useEffect(() => {
     // Set initial sidebar state based on screen size
@@ -137,8 +126,8 @@ export default function App() {
     if (session) {
       if (session.role === 'kitchen') {
         setActiveTab('orders');
-      } else if (session.membershipRole === 'owner' && new URLSearchParams(window.location.search).has('whatsappSignup')) {
-        setActiveTab('whatsapp');
+      } else if (session.role === 'admin' && new URLSearchParams(window.location.search).has('whatsappRestaurant')) {
+        setActiveTab('restaurants');
       } else {
         setActiveTab('overview');
       }
@@ -261,8 +250,7 @@ export default function App() {
 
   const currentMenuItems = menuItems[session.role] || [];
 
-  return (
-    <SubscriptionGuard session={session}>
+  const workspace = (
     <div
       className={`workspace-theme ${session.role === 'admin' ? 'admin-shell' : 'partner-shell'} min-h-screen bg-bg-paper font-sans text-text-main selection:bg-brand-primary/10 flex overflow-hidden`}
       data-workspace-theme={workspaceTheme.id}
@@ -472,19 +460,8 @@ export default function App() {
         </main>
       </div>
 
-      {session.role !== 'waiter' && session.role !== 'kitchen' && session.role !== 'cashier' && (
-        <nav ref={mobileNavRef} className="mobile-bottom-nav lg:hidden fixed bottom-[calc(.5rem+env(safe-area-inset-bottom))] inset-x-3 z-50 flex items-stretch gap-1 overflow-x-auto rounded-2xl border border-border-delicate workspace-shell-panel p-2 shadow-[0_10px_30px_rgba(0,0,0,.16)]" aria-label={tr('التنقل الرئيسي', 'Main navigation')}>
-          {currentMenuItems.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              className={`min-w-[72px] flex-1 h-16 px-2 flex flex-col items-center justify-center gap-1 rounded-2xl transition-colors ${activeTab === item.id ? 'bg-brand-primary text-white' : 'text-text-muted'}`}
-            >
-              {item.icon}
-              <span className="text-[10px] font-bold whitespace-nowrap">{item.label}</span>
-            </button>
-          ))}
-        </nav>
+      {(session.role === 'admin' || session.role === 'restaurant') && (
+        <MobileWorkspaceNav items={currentMenuItems} role={session.role} active={activeTab} onSelect={setActiveTab} />
       )}
 
       <div key={`${session.role}-${session.restaurantId || 'system'}`}><FirstVisitGuide role={session.role} restaurantId={session.restaurantId} /></div>
@@ -494,8 +471,13 @@ export default function App() {
       <div className="fixed top-12 left-12 w-24 h-24 border-t border-l border-brand-gold/20 pointer-events-none opacity-40 z-0" />
       <div className="fixed bottom-12 left-12 w-24 h-24 border-b border-l border-brand-gold/20 pointer-events-none opacity-40 z-0" />
     </div>
-    </SubscriptionGuard>
   );
+  return <SubscriptionGuard session={session}>
+    {session.role === 'restaurant' && session.membershipRole === 'owner' && session.restaurantId
+      ? <React.Suspense fallback={loadingView}><OwnerSetup key={session.restaurantId} restaurantId={session.restaurantId}
+          onComplete={setWorkspaceTheme} onLogout={handleLogout}>{workspace}</OwnerSetup></React.Suspense>
+      : workspace}
+  </SubscriptionGuard>;
 }
 
 function SystemNotice({ message, onClose }: { message: string | null; onClose: () => void }) {

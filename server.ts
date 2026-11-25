@@ -1,5 +1,6 @@
 import express from "express";
 import { whatsappRouter } from "./whatsapp/routes";
+import { platformPhone, queuePlatformInvitation } from "./whatsapp/platform";
 import { loyaltyCardHash, loyaltyRouter } from "./loyalty/routes";
 import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
@@ -574,6 +575,8 @@ async function reconcileWaylPayment(referenceId: string) {
     if (!identity.user) return res.status(401).json({ error: "authentication_required" });
     const body = req.body || {}; const restaurantId = String(body.restaurantId || "");
     const role = ["kitchen", "waiter", "cashier"].includes(body.role) ? body.role as "kitchen" | "waiter" | "cashier" : null;
+    const sendInvitation = !body.id && body.whatsappConsent === true;
+    if (sendInvitation && !platformPhone(body.phone)) return res.status(400).json({ error: "invalid_phone" });
     const requestedPasscode = body.passcode === "" || body.passcode == null ? undefined : body.passcode;
     if (!role) return res.status(400).json({ error: "invalid_staff_role" });
     if (requestedPasscode !== undefined && !isPasscode(requestedPasscode)) return res.status(400).json({ error: "invalid_passcode" });
@@ -615,7 +618,10 @@ async function reconcileWaylPayment(referenceId: string) {
     }
     try {
       const passcode = await setMemberPasscode(created.user.id, restaurantId, role, requestedPasscode);
-      return res.status(201).json({ ...camelRow(staffInsert.data), passcode });
+      const whatsappInvitation = sendInvitation ? await queuePlatformInvitation(supabaseAdmin, {
+        restaurantId, userId: created.user.id, actorId: identity.user.id, phone: body.phone,
+      }) : undefined;
+      return res.status(201).json({ ...camelRow(staffInsert.data), passcode, whatsappInvitation });
     } catch (error) {
       await supabaseAdmin.from("staff").delete().eq("id", staffInsert.data.id).eq("restaurant_id", restaurantId);
       await supabaseAdmin.auth.admin.deleteUser(created.user.id);
@@ -662,6 +668,8 @@ async function reconcileWaylPayment(referenceId: string) {
     const bearer = req.headers.authorization?.replace(/^Bearer /, ""); const { data: identity } = await supabaseAdmin.auth.getUser(bearer || "");
     if (identity.user?.app_metadata?.system_role !== "admin") return res.status(403).json({ error: "admin_required" });
     const body = req.body || {};
+    const sendInvitation = !body.id && body.whatsappConsent === true;
+    if (sendInvitation && !platformPhone(body.managerPhone)) return res.status(400).json({ error: "invalid_phone" });
     // New restaurants always receive a server-generated, globally unique code.
     // Administrators can choose a replacement only when editing an existing restaurant.
     const requestedPasscode = !body.id || body.passcode === "" || body.passcode == null ? undefined : body.passcode;
@@ -706,7 +714,10 @@ async function reconcileWaylPayment(referenceId: string) {
     }
     try {
       const passcode = await setMemberPasscode(authResult.data.user.id, restaurant.data.id, "owner", requestedPasscode);
-      return res.status(201).json({ ...camelRow(restaurant.data), passcode });
+      const whatsappInvitation = sendInvitation ? await queuePlatformInvitation(supabaseAdmin, {
+        restaurantId: restaurant.data.id, userId: authResult.data.user.id, actorId: identity.user.id, phone: body.managerPhone,
+      }) : undefined;
+      return res.status(201).json({ ...camelRow(restaurant.data), passcode, whatsappInvitation });
     } catch (error) {
       await supabaseAdmin.from("restaurants").delete().eq("id", restaurant.data.id).eq("username", row.username);
       await supabaseAdmin.auth.admin.deleteUser(authResult.data.user.id);
